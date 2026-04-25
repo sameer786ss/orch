@@ -2,6 +2,7 @@ import * as fsPromises from 'node:fs/promises'
 import * as path from 'node:path'
 import chokidar, { FSWatcher } from 'chokidar'
 import { indexFile } from './ai'
+import { dbDeleteIndexedFile, dbDeleteIndexedPathPrefix } from './db'
 
 // ── Ignored patterns ─────────────────────────────────────────────
 // Using regex-style checks rather than naive string.includes to avoid
@@ -38,11 +39,21 @@ const TEXT_EXTS = new Set([
   '.c', '.cpp', '.h', '.hpp', '.cs', '.rb', '.php', '.swift',
   '.kt', '.vue', '.svelte', '.html', '.css', '.scss', '.sass',
   '.less', '.json', '.yaml', '.yml', '.toml', '.md', '.mdx',
-  '.txt', '.sh', '.bash', '.zsh', '.env', '.gitignore',
+  '.txt', '.sh', '.bash', '.zsh',
+])
+
+const TEXT_FILENAMES = new Set([
+  '.env',
+  '.gitignore',
+  '.npmrc',
+  '.eslintrc',
+  '.prettierrc',
 ])
 
 export function isIndexable(filePath: string): boolean {
-  return TEXT_EXTS.has(path.extname(filePath).toLowerCase())
+  const baseName = path.basename(filePath).toLowerCase()
+  if (TEXT_FILENAMES.has(baseName)) return true
+  return TEXT_EXTS.has(path.extname(baseName).toLowerCase())
 }
 
 // ── Watcher ───────────────────────────────────────────────────────
@@ -64,9 +75,15 @@ export function startWatcher(
   watcher
     .on('add',       p => { onChange({ type: 'add',       path: p }); if (isIndexable(p)) indexFile(workspace, p) })
     .on('change',    p => { onChange({ type: 'change',    path: p }); if (isIndexable(p)) indexFile(workspace, p) })
-    .on('unlink',    p =>   onChange({ type: 'unlink',    path: p }))
+    .on('unlink',    p => {
+      onChange({ type: 'unlink', path: p })
+      dbDeleteIndexedFile(workspace, p).catch(() => {})
+    })
     .on('addDir',    p =>   onChange({ type: 'addDir',    path: p }))
-    .on('unlinkDir', p =>   onChange({ type: 'unlinkDir', path: p }))
+    .on('unlinkDir', p => {
+      onChange({ type: 'unlinkDir', path: p })
+      dbDeleteIndexedPathPrefix(workspace, p).catch(() => {})
+    })
 }
 
 export function stopWatcher() {

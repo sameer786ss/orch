@@ -36,28 +36,22 @@ const ipc = {
     ipcRenderer.send('ai:start-chat', { conversationId, messages, workspacePath }),
 
   onTextChunk: (cb: (data: { conversationId: string; text: string; isThought?: boolean }) => void) => {
-    const fn = (_: any, d: any) => {
-      console.log('[PRELOAD] ai:text-chunk received')
-      cb(d)
-    }
+    const fn = (_: any, d: any) => cb(d)
     ipcRenderer.on('ai:text-chunk', fn)
     return () => ipcRenderer.off('ai:text-chunk', fn)
   },
-  onToolCall: (cb: (data: any) => void) => {
+  onToolCall: (cb: (data: { conversationId: string; toolCallId: string; name: string; args: Record<string, unknown> }) => void) => {
     const fn = (_: any, d: any) => cb(d)
     ipcRenderer.on('ai:tool-call', fn)
     return () => ipcRenderer.off('ai:tool-call', fn)
   },
-  onToolResult: (cb: (data: any) => void) => {
+  onToolResult: (cb: (data: { conversationId: string; toolCallId: string; name: string; result: string }) => void) => {
     const fn = (_: any, d: any) => cb(d)
     ipcRenderer.on('ai:tool-result', fn)
     return () => ipcRenderer.off('ai:tool-result', fn)
   },
   onAiDone: (cb: (data: { conversationId: string }) => void) => {
-    const fn = (_: any, d: any) => {
-      console.log('[PRELOAD] ai:done received')
-      cb(d)
-    }
+    const fn = (_: any, d: any) => cb(d)
     ipcRenderer.on('ai:done', fn)
     return () => ipcRenderer.off('ai:done', fn)
   },

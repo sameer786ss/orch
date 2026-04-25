@@ -57,6 +57,14 @@ function persistDebounced(delayMs = 800) {
   }, delayMs)
 }
 
+export function dbFlushNow() {
+  if (_persistTimer) {
+    clearTimeout(_persistTimer)
+    _persistTimer = null
+  }
+  persist()
+}
+
 // ── Schema ────────────────────────────────────────────────────────
 function initSchema() {
   db.run(`
@@ -195,6 +203,9 @@ export async function dbSaveEmbeddingsBatch(
   const d = await getDb()
   d.run('BEGIN TRANSACTION')
   try {
+    // Replace previous chunks for this file to avoid stale vectors.
+    d.run('DELETE FROM embeddings WHERE file_id = ?', [fileId])
+
     for (const { idx, text, emb } of chunks) {
       d.run(
         `INSERT OR REPLACE INTO embeddings (id, file_id, chunk_index, chunk_text, embedding_json)
@@ -277,4 +288,59 @@ export async function dbGetIndexedFile(workspace: string, filePath: string) {
   const obj: any = {}
   cols.forEach((c, i) => (obj[c] = rows[0].values[0][i]))
   return obj
+}
+
+export async function dbDeleteIndexedFile(workspace: string, filePath: string) {
+  const d = await getDb()
+  d.run('BEGIN TRANSACTION')
+  try {
+    const rows = d.exec(
+      'SELECT id FROM indexed_files WHERE workspace = ? AND file_path = ?',
+      [workspace, filePath],
+    )
+    if (rows.length && rows[0].values.length) {
+      const fileId = String(rows[0].values[0][0])
+      d.run('DELETE FROM embeddings WHERE file_id = ?', [fileId])
+    }
+    d.run('DELETE FROM indexed_files WHERE workspace = ? AND file_path = ?', [workspace, filePath])
+    d.run('COMMIT')
+  } catch (err) {
+    d.run('ROLLBACK')
+    throw err
+  }
+  persistDebounced()
+}
+
+export async function dbDeleteIndexedPathPrefix(workspace: string, dirPath: string) {
+  const d = await getDb()
+  const dirPrefix = `${dirPath}${path.sep}`
+  d.run('BEGIN TRANSACTION')
+  try {
+    const rows = d.exec(
+      `SELECT id FROM indexed_files
+       WHERE workspace = ? AND (file_path = ? OR file_path LIKE ?)`,
+      [workspace, dirPath, `${dirPrefix}%`],
+    )
+
+    const ids = rows.length
+      ? rows[0].values.map(v => String(v[0]))
+      : []
+
+    if (ids.length) {
+      const placeholders = ids.map(() => '?').join(',')
+      d.run(`DELETE FROM embeddings WHERE file_id IN (${placeholders})`, ids)
+    }
+
+    d.run(
+      `DELETE FROM indexed_files
+       WHERE workspace = ? AND (file_path = ? OR file_path LIKE ?)`,
+      [workspace, dirPath, `${dirPrefix}%`],
+    )
+
+    d.run('COMMIT')
+  } catch (err) {
+    d.run('ROLLBACK')
+    throw err
+  }
+  persistDebounced()
 }

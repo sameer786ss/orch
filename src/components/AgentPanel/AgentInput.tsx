@@ -4,6 +4,7 @@ import { Image, Mic, Bot, Monitor, Send, Globe } from 'lucide-react'
 import { useConversationStore } from '../../stores/useConversationStore'
 import { useFileSystemStore } from '../../stores/useFileSystemStore'
 import { nanoid } from 'nanoid'
+import { getPathBaseName } from '../../utils/path'
 
 interface AgentInputProps {
   conversationId: string
@@ -57,30 +58,28 @@ export const AgentInput: React.FC<AgentInputProps> = ({ conversationId, disabled
       .filter(m => m.type === 'text' && (m.role === 'user' || m.role === 'assistant') && !m.streaming)
       .map(m => ({ role: m.role, content: m.content }))
 
-    // Track tool call message IDs (name → msgId)
+    // Track tool call message IDs by toolCallId for stable correlation.
     const toolMsgIds = new Map<string, string>()
 
     // ── Register one-shot listeners (using named fns for cleanup) ──
     const unsubChunk = window.orch.onTextChunk(({ conversationId: cid, text: chunk, isThought }) => {
-      console.log('[RENDERER] raw onTextChunk, cid:', cid, 'len:', chunk?.length, 'isThought:', isThought)
       if (cid !== conversationId) return
       appendToLastAssistantMessage(cid, chunk, isThought)
     })
 
-    const unsubTool = window.orch.onToolCall(({ conversationId: cid, name, args }) => {
+    const unsubTool = window.orch.onToolCall(({ conversationId: cid, toolCallId, name, args }) => {
       if (cid !== conversationId) return
       const msgId = addToolCall(cid, name, args)
-      toolMsgIds.set(name, msgId)
+      toolMsgIds.set(toolCallId, msgId)
     })
 
-    const unsubResult = window.orch.onToolResult(({ conversationId: cid, name, result }) => {
+    const unsubResult = window.orch.onToolResult(({ conversationId: cid, toolCallId, result }) => {
       if (cid !== conversationId) return
-      const msgId = toolMsgIds.get(name)
+      const msgId = toolMsgIds.get(toolCallId)
       if (msgId) resolveToolCall(cid, msgId, result)
     })
 
     const cleanup = () => {
-      console.log('[RENDERER] CLEANUP FIRED! Listeners being unsubscribed.')
       unsubChunk()
       unsubTool()
       unsubResult()
@@ -91,25 +90,23 @@ export const AgentInput: React.FC<AgentInputProps> = ({ conversationId, disabled
 
     const unsubDone = window.orch.onAiDone(({ conversationId: cid }) => {
       if (cid !== conversationId) return
-      console.log('[RENDERER] onAiDone received')
-      finalizeStreaming(cid)
+      finalizeStreaming(cid, 'done')
       cleanup()
     })
 
     const unsubError = window.orch.onAiError(({ conversationId: cid, error }) => {
       if (cid !== conversationId) return
-      console.error('[RENDERER] onAiError received:', error)
       addMessage(cid, {
         id: nanoid(), role: 'assistant', type: 'text',
         content: `⚠️ Error: ${error}`, timestamp: Date.now(),
       })
-      finalizeStreaming(cid)
+      setStatus(cid, 'error')
+      finalizeStreaming(cid, 'error')
       cleanup()
     })
 
     cleanupRef.current = cleanup
 
-    console.log('[RENDERER] startChat firing, convId:', conversationId, 'msgs:', messages.length)
     window.orch.startChat(conversationId, messages, workspacePath)
   }, [
     conversationId, disabled, workspacePath,
@@ -167,7 +164,7 @@ export const AgentInput: React.FC<AgentInputProps> = ({ conversationId, disabled
       </div>
       <div className="workspace-selector">
         <Monitor size={11} />
-        <span>{workspacePath ? workspacePath.split('/').pop() : 'Local'}</span>
+        <span>{workspacePath ? getPathBaseName(workspacePath) : 'Local'}</span>
       </div>
     </div>
   )

@@ -41,6 +41,38 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   : RENDERER_DIST
 
 let win: BrowserWindow | null = null
+let currentWorkspacePath: string | null = null
+
+function resolveSafePath(inputPath: string): string {
+  return path.resolve(inputPath)
+}
+
+function isPathInside(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(rootPath, candidatePath)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+function ensureWorkspacePath(): string {
+  if (!currentWorkspacePath) {
+    throw new Error('No workspace selected')
+  }
+  return currentWorkspacePath
+}
+
+function assertPathInWorkspace(targetPath: string): string {
+  const workspace = ensureWorkspacePath()
+  const resolved = resolveSafePath(targetPath)
+  if (!isPathInside(resolved, workspace)) {
+    throw new Error('Path is outside the active workspace')
+  }
+  return resolved
+}
+
+function setWorkspacePath(workspacePath: string): string {
+  const resolved = resolveSafePath(workspacePath)
+  currentWorkspacePath = resolved
+  return resolved
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -70,11 +102,13 @@ function createWindow() {
 
   win.once('ready-to-show', () => win?.show())
 
-  // ── Forward renderer logs to terminal ───────────────────────────
-  win.webContents.on('console-message', (_event, level, message, _line, _sourceId) => {
-    const levelName = ['DEBUG', 'INFO', 'WARN', 'ERROR'][level] || 'LOG'
-    console.log(`[RENDERER-${levelName}] ${message}`)
-  })
+  // ── Forward renderer logs to terminal only in dev ───────────────
+  if (VITE_DEV_SERVER_URL) {
+    win.webContents.on('console-message', (_event, level, message, _line, _sourceId) => {
+      const levelName = ['DEBUG', 'INFO', 'WARN', 'ERROR'][level] || 'LOG'
+      console.log(`[RENDERER-${levelName}] ${message}`)
+    })
+  }
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)
@@ -89,43 +123,52 @@ ipcMain.handle('fs:open-folder', async () => {
   const result = await dialog.showOpenDialog(win, {
     properties: ['openDirectory'],
   })
-  return result.filePaths[0] ?? null
+  const selected = result.filePaths[0] ?? null
+  if (selected) setWorkspacePath(selected)
+  return selected
 })
 
-ipcMain.handle('fs:read-file', async (_, filePath: string) =>
-  fsPromises.readFile(filePath, 'utf-8'),
-)
+ipcMain.handle('fs:read-file', async (_, filePath: string) => {
+  const safePath = assertPathInWorkspace(filePath)
+  return fsPromises.readFile(safePath, 'utf-8')
+})
 
 ipcMain.handle('fs:write-file', async (_, filePath: string, content: string) => {
-  await fsPromises.writeFile(filePath, content, 'utf-8')
+  const safePath = assertPathInWorkspace(filePath)
+  await fsPromises.writeFile(safePath, content, 'utf-8')
   return true
 })
 
 ipcMain.handle('fs:create-file', async (_, filePath: string, content = '') => {
-  await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
-  await fsPromises.writeFile(filePath, content, 'utf-8')
+  const safePath = assertPathInWorkspace(filePath)
+  await fsPromises.mkdir(path.dirname(safePath), { recursive: true })
+  await fsPromises.writeFile(safePath, content, 'utf-8')
   return true
 })
 
 ipcMain.handle('fs:delete-file', async (_, filePath: string) => {
-  await fsPromises.rm(filePath, { recursive: true, force: true })
+  const safePath = assertPathInWorkspace(filePath)
+  await fsPromises.rm(safePath, { recursive: true, force: true })
   return true
 })
 
 ipcMain.handle('fs:list-dir', async (_, dirPath: string) => {
+  const safePath = assertPathInWorkspace(dirPath)
   const { expandDir } = await import('./indexer')
-  return expandDir(dirPath)
+  return expandDir(safePath)
 })
 
 ipcMain.handle('fs:build-tree', async (_, dirPath: string) => {
+  const safePath = assertPathInWorkspace(dirPath)
   const { buildFileTree } = await import('./indexer')
-  return buildFileTree(dirPath)
+  return buildFileTree(safePath)
 })
 
 // ── IPC: File Watcher ─────────────────────────────────────────────
 ipcMain.handle('fs:watch-start', async (_, workspace: string) => {
+  const safeWorkspace = setWorkspacePath(workspace)
   const { startWatcher } = await import('./indexer')
-  startWatcher(workspace, event => {
+  startWatcher(safeWorkspace, event => {
     win?.webContents.send('fs:watcher-event', event)
   })
   return true
@@ -139,8 +182,9 @@ ipcMain.handle('fs:watch-stop', async () => {
 
 // ── IPC: Indexing ─────────────────────────────────────────────────
 ipcMain.handle('index:start', async (_, workspace: string) => {
+  const safeWorkspace = setWorkspacePath(workspace)
   const { startIndexing } = await import('./indexer')
-  startIndexing(workspace, (indexed, total, file) => {
+  startIndexing(safeWorkspace, (indexed, total, file) => {
     win?.webContents.send('index:progress', { indexed, total, file })
   })
   return true
@@ -219,6 +263,15 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow()
+})
+
+app.on('before-quit', async () => {
+  const [{ stopWatcher }, { dbFlushNow }] = await Promise.all([
+    import('./indexer'),
+    import('./db'),
+  ])
+  stopWatcher()
+  dbFlushNow()
 })
 
 app.whenReady().then(createWindow)

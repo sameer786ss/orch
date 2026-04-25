@@ -19,7 +19,7 @@ interface ConversationStore {
   appendToLastAssistantMessage:(id: string, text: string, isThought?: boolean) => void
   addToolCall:                (id: string, name: string, args: Record<string, unknown>) => string
   resolveToolCall:            (id: string, msgId: string, result: string) => void
-  finalizeStreaming:          (id: string) => void
+  finalizeStreaming:          (id: string, finalStatus?: ConversationStatus) => void
 }
 
 export const useConversationStore = create<ConversationStore>()(
@@ -35,6 +35,10 @@ export const useConversationStore = create<ConversationStore>()(
         const convs = await window.orch.getConversations()
         set(state => {
           convs.forEach((c: Conversation) => { state.conversations[c.id] = c })
+          const sorted = convs
+            .slice()
+            .sort((a: Conversation, b: Conversation) => b.updatedAt - a.updatedAt)
+          state.activeConversationId = sorted[0]?.id ?? null
           state.hydrated = true
         })
       } catch {
@@ -98,6 +102,8 @@ export const useConversationStore = create<ConversationStore>()(
           state.conversations[id].updatedAt = Date.now()
         }
       })
+      const conv = get().conversations[id]
+      if (conv) window.orch.saveConversation(conv)
     },
 
     addMessage: (id, msg) => {
@@ -163,29 +169,41 @@ export const useConversationStore = create<ConversationStore>()(
       })
     },
 
-    // ── Finalize: clear streaming flag + PERSIST assistant message ─
-    finalizeStreaming: (id) => {
+    // ── Finalize: clear streaming flag + persist only streamed assistant messages ─
+    finalizeStreaming: (id, finalStatus = 'done') => {
+      const streamedAssistantMessages: Message[] = []
+
       set(state => {
         const conv = state.conversations[id]
         if (!conv) return
+
         conv.messages.forEach(m => {
           if (m.streaming) {
+            if (m.role === 'assistant' && m.type === 'text') {
+              streamedAssistantMessages.push({
+                ...m,
+                streaming: false,
+              })
+            }
             m.streaming = false
           }
+
+          if (finalStatus === 'error' && m.type === 'tool_call' && m.toolCall?.status === 'running') {
+            m.toolCall.status = 'error'
+            m.toolCall.result = m.toolCall.result ?? 'Tool execution interrupted by agent error.'
+          }
         })
-        conv.status    = 'done'
+
+        conv.status    = finalStatus
         conv.updatedAt = Date.now()
       })
 
-      // Persist everything: conversation metadata + all streamed messages
+      // Persist conversation metadata plus the assistant messages that were streamed.
       const conv = get().conversations[id]
       if (!conv) return
       window.orch.saveConversation(conv)
 
-      // Save every assistant message that was built during streaming
-      conv.messages
-        .filter(m => m.role === 'assistant' && m.type === 'text')
-        .forEach(m => window.orch.saveMessage(id, m))
+      streamedAssistantMessages.forEach(m => window.orch.saveMessage(id, m))
     },
   })),
 )

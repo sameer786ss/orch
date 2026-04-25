@@ -33,6 +33,59 @@ const tvly = tavily({ apiKey: process.env.TAVILY_API_KEY || '' })
 const CHAT_MODEL = 'z-ai/glm4.7' // fastest Kimi-K2 variant on NIM
 const EMBED_MODEL = 'nvidia/nv-embedqa-e5-v5'      // NVIDIA NIM embedding model
 
+const DEFAULT_TOOL_TIMEOUT_MS = 30_000
+const MAX_TOOL_TIMEOUT_MS = 120_000
+const TOOL_OUTPUT_BUFFER_BYTES = 2 * 1024 * 1024
+
+function isPathInside(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(rootPath, candidatePath)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+function requireWorkspaceRoot(workspaceRoot: string | null): string {
+  if (!workspaceRoot) {
+    throw new Error('This tool requires an open workspace.')
+  }
+  return workspaceRoot
+}
+
+function resolveWorkspacePath(workspaceRoot: string, candidatePath: string): string {
+  const resolved = path.isAbsolute(candidatePath)
+    ? path.resolve(candidatePath)
+    : path.resolve(workspaceRoot, candidatePath)
+
+  if (!isPathInside(resolved, workspaceRoot)) {
+    throw new Error('Tool path is outside the active workspace.')
+  }
+  return resolved
+}
+
+function clampTimeout(timeoutMs: unknown): number {
+  const value = Number(timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS)
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TOOL_TIMEOUT_MS
+  return Math.min(value, MAX_TOOL_TIMEOUT_MS)
+}
+
+function assertSafeShellCommand(command: string) {
+  const dangerousPatterns = [
+    /\bsudo\b/i,
+    /\bshutdown\b/i,
+    /\breboot\b/i,
+    /\bmkfs(\.[\w-]+)?\b/i,
+    /:\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\};\s*:/,
+    /\bdd\s+if=.*\s+of=\/dev\//i,
+    /\brm\s+-rf\s+\/$/i,
+    /\brm\s+-rf\s+\/\s+/i,
+  ]
+  if (dangerousPatterns.some(p => p.test(command))) {
+    throw new Error('Blocked potentially dangerous command.')
+  }
+}
+
+function sanitizeIncludeGlob(input: string): string {
+  return input.replace(/[\r\n\0]/g, '').trim().slice(0, 120)
+}
+
 // ── System Prompt ─────────────────────────────────────────────────────────────
 function buildSystemPrompt(workspacePath: string | null): string {
   const ws = workspacePath ?? '/tmp'
@@ -229,7 +282,11 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
 ]
 
 // ── Tool execution ────────────────────────────────────────────────────────────
-async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+async function executeTool(
+  name: string,
+  args: Record<string, unknown>,
+  workspaceRoot: string | null,
+): Promise<string> {
   try {
     switch (name) {
       case 'web_search': {
@@ -250,15 +307,17 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       }
 
       case 'read_file': {
-        const filePath = args.path as string
+        const root = requireWorkspaceRoot(workspaceRoot)
+        const filePath = resolveWorkspacePath(root, String(args.path ?? ''))
         console.log('[AI] read_file:', filePath)
         const content = await fsPromises.readFile(filePath, 'utf-8')
         return content
       }
 
       case 'write_file': {
-        const filePath = args.path as string
-        const content = args.content as string
+        const root = requireWorkspaceRoot(workspaceRoot)
+        const filePath = resolveWorkspacePath(root, String(args.path ?? ''))
+        const content = String(args.content ?? '')
         console.log('[AI] write_file:', filePath, 'len:', content.length)
         await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
         await fsPromises.writeFile(filePath, content, 'utf-8')
@@ -266,7 +325,8 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       }
 
       case 'list_directory': {
-        const dirPath = args.path as string
+        const root = requireWorkspaceRoot(workspaceRoot)
+        const dirPath = resolveWorkspacePath(root, String(args.path ?? ''))
         console.log('[AI] list_directory:', dirPath)
         const entries = await fsPromises.readdir(dirPath, { withFileTypes: true })
         const lines = entries.map(e => `${e.isDirectory() ? 'DIR ' : 'FILE'} ${e.name}`)
@@ -274,14 +334,22 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       }
 
       case 'run_command': {
-        const command = args.command as string
-        const cwd = (args.cwd as string) ?? process.env.HOME ?? '/tmp'
-        const timeoutMs = Math.min(Number(args.timeout_ms ?? 30000), 120000)
+        const root = requireWorkspaceRoot(workspaceRoot)
+        const command = String(args.command ?? '').trim()
+        if (!command) {
+          return 'run_command requires a non-empty command.'
+        }
+        assertSafeShellCommand(command)
+
+        const requestedCwd = String(args.cwd ?? '').trim()
+        const cwd = requestedCwd ? resolveWorkspacePath(root, requestedCwd) : root
+        const timeoutMs = clampTimeout(args.timeout_ms)
+
         console.log('[AI] run_command:', command, 'cwd:', cwd)
         try {
           const { stdout, stderr } = await execFileAsync(
             '/bin/sh', ['-c', command],
-            { cwd, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 }
+            { cwd, timeout: timeoutMs, maxBuffer: TOOL_OUTPUT_BUFFER_BYTES },
           )
           const out = [stdout, stderr].filter(Boolean).join('\n--- stderr ---\n')
           return out || '(command completed with no output)'
@@ -292,22 +360,49 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       }
 
       case 'search_codebase': {
-        const query = args.query as string
-        const fileGlob = (args.file_glob as string) ?? '**/*'
+        const root = requireWorkspaceRoot(workspaceRoot)
+        const query = String(args.query ?? '').trim()
+        if (!query) {
+          return 'search_codebase requires a non-empty query.'
+        }
+
+        const fileGlobRaw = String(args.file_glob ?? '').trim()
+        const fileGlob = fileGlobRaw ? sanitizeIncludeGlob(fileGlobRaw) : ''
         console.log('[AI] search_codebase:', query, 'glob:', fileGlob)
+
+        const grepArgs = [
+          '-R',
+          '-n',
+          '-I',
+          '--line-number',
+          '--exclude-dir=.git',
+          '--exclude-dir=node_modules',
+          '--exclude-dir=dist',
+          '--exclude-dir=dist-electron',
+        ]
+        if (fileGlob) grepArgs.push(`--include=${fileGlob}`)
+        grepArgs.push(query, '.')
+
         try {
-          const { stdout } = await execFileAsync(
-            '/bin/sh', ['-c', `grep -r --include="${fileGlob.replace('**/', '')}" -n -l "${query.replace(/"/g, '\\"')}" . 2>/dev/null | head -20`],
-            { cwd: process.env.HOME ?? '/tmp', timeout: 10000, maxBuffer: 512 * 1024 }
-          )
-          return stdout || '(no matches found)'
-        } catch {
+          const { stdout } = await execFileAsync('/usr/bin/grep', grepArgs, {
+            cwd: root,
+            timeout: 10_000,
+            maxBuffer: 1024 * 1024,
+          })
+          const matches = stdout
+            .split('\n')
+            .filter(Boolean)
+            .slice(0, 50)
+          return matches.join('\n') || '(no matches found)'
+        } catch (err: any) {
+          if (err?.code === 1) return '(no matches found)'
           return '(no matches found)'
         }
       }
 
       case 'delete_file': {
-        const filePath = args.path as string
+        const root = requireWorkspaceRoot(workspaceRoot)
+        const filePath = resolveWorkspacePath(root, String(args.path ?? ''))
         console.log('[AI] delete_file:', filePath)
         await fsPromises.rm(filePath, { recursive: true, force: true })
         return `Deleted: ${filePath}`
@@ -330,10 +425,11 @@ export async function runAgentChat(
   workspacePath: string | null,
 ) {
   console.log('[AI] runAgentChat — Kimi-K2 via NVIDIA NIM, convId:', conversationId)
+  const workspaceRoot = workspacePath ? path.resolve(workspacePath) : null
 
   // Build OpenAI-format message history
   const history: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: 'system', content: buildSystemPrompt(workspacePath) },
+    { role: 'system', content: buildSystemPrompt(workspaceRoot) },
     ...messages
       .filter(m => m.content.trim())
       .map(m => ({
@@ -441,13 +537,23 @@ export async function runAgentChat(
         console.log('[AI] calling tool:', tc.name, 'args:', JSON.stringify(parsedArgs).slice(0, 120))
 
         // Notify renderer — tool is starting
-        event.reply('ai:tool-call', { conversationId, name: tc.name, args: parsedArgs })
+        event.reply('ai:tool-call', {
+          conversationId,
+          toolCallId: tcId,
+          name: tc.name,
+          args: parsedArgs,
+        })
 
-        const result = await executeTool(tc.name, parsedArgs)
+        const result = await executeTool(tc.name, parsedArgs, workspaceRoot)
         console.log('[AI] tool result preview:', result.slice(0, 120))
 
         // Notify renderer — tool finished
-        event.reply('ai:tool-result', { conversationId, name: tc.name, result: result.slice(0, 300) })
+        event.reply('ai:tool-result', {
+          conversationId,
+          toolCallId: tcId,
+          name: tc.name,
+          result: result.slice(0, 300),
+        })
 
         // Push tool result into history
         history.push({

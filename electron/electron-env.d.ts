@@ -30,8 +30,8 @@ interface OrchBridge {
   // AI Agent (streaming via IPC events)
   startChat(conversationId: string, messages: Array<{ role: string; content: string }>, workspacePath: string | null): void
   onTextChunk(cb: (data: { conversationId: string; text: string; isThought?: boolean }) => void):                               () => void
-  onToolCall(cb: (data: { conversationId: string; name: string; args: Record<string, unknown> }) => void): () => void
-  onToolResult(cb: (data: { conversationId: string; name: string; result: string }) => void):             () => void
+  onToolCall(cb: (data: { conversationId: string; toolCallId: string; name: string; args: Record<string, unknown> }) => void): () => void
+  onToolResult(cb: (data: { conversationId: string; toolCallId: string; name: string; result: string }) => void):             () => void
   onAiDone(cb: (data: { conversationId: string }) => void):                                               () => void
   onAiError(cb: (data: { conversationId: string; error: string }) => void):                               () => void
 
@@ -41,6 +41,9 @@ interface OrchBridge {
   saveConversation(conv: any):                      Promise<boolean>
   saveMessage(conversationId: string, msg: any):    Promise<boolean>
   deleteConversation(id: string):                   Promise<boolean>
+
+  // Web search
+  webSearch(query: string, depth?: string): Promise<any>
 
   // Platform
   platform: string
