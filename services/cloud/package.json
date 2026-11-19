@@ -1,0 +1,11 @@
+{
+  "name": "orch-cloud-harness",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "deploy": "bash ../../infra/cloud/deploy.sh",
+    "deploy:env": "bash ../../infra/cloud/deploy.sh --env",
+    "dev": "eval \"$(ruby -ryaml -rshellwords -e 'YAML.load_file(\".env.yaml\").each { |k, v| puts \"export #{k}=#{Shellwords.escape(v.to_s)}\" }')\" && PORT=8080 cargo run",
+    "check": "cargo check"
+  }
+}

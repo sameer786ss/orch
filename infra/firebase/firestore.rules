@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /budget/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /orch_cloud_sessions/{sessionId} {
+      allow read: if request.auth != null
+                  && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+
+      match /entries/{entryId} {
+        allow read: if request.auth != null
+                    && get(/databases/$(database)/documents/orch_cloud_sessions/$(sessionId)).data.user_id == request.auth.uid;
+        allow write: if false;
+      }
+    }
+
+    match /orch_cloud_workspaces/{workspaceId} {
+      allow read: if request.auth != null
+                  && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+    }
+  }
+}

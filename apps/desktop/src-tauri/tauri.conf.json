@@ -1,0 +1,101 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Orch",
+  "version": "1.0.0",
+  "identifier": "com.orch.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Orch",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 480,
+        "center": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 16
+        },
+        "shadow": true,
+        "visible": false,
+        "backgroundColor": "#0B0A09",
+        "theme": "Dark"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob: https:; media-src 'self' asset: http://asset.localhost data: blob:; connect-src 'self' https: ipc: http://ipc.localhost; font-src 'self' data: blob:; frame-src 'none'; object-src 'self' blob:; worker-src 'self' blob:",
+      "dangerousDisableAssetCspModification": ["style-src"]
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "orch"
+        ]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM0MUVEQzFDMUQ1RUI0QUUKUldTdXRGNGRITndlTkd3bW14aUtXM1RMVjljZE1GVXhHcHRtSFFYVFF6TXJZc0d6YzBXdm1iQ3MK",
+      "endpoints": [
+        "https://github.com/sameer786ss/orch/releases/latest/download/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": [
+      "nsis",
+      "app",
+      "dmg"
+    ],
+    "publisher": "Orch",
+    "copyright": "Copyright © 2026 Orch",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "startMenuFolder": "Orch",
+        "installerHooks": "installer-hooks.nsh"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "entitlements": "Entitlements.plist",
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
+      }
+    }
+  }
+}

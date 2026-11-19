@@ -1,0 +1,42 @@
+[package]
+name = "orch-cloud-harness"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "orch-cloud-harness"
+path = "src/main.rs"
+
+[dependencies]
+orchharness = { path = "../../crates/harness" }
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.7", features = ["json", "macros", "ws"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["std"] }
+dashmap = "6"
+futures = "0.3"
+gcp_auth = "0.12"
+http = "1"
+mimalloc = { version = "0.1", default-features = false }
+mime_guess = "2"
+moka = { version = "0.12", features = ["future"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "multipart", "form", "query"] }
+rig = { version = "0.45.0", default-features = false, features = ["agent", "derive"] }
+rig-http = "0.45.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util"] }
+tokio-stream = "0.1"
+tokio-util = "0.7"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

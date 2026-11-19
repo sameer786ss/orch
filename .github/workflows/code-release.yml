@@ -1,0 +1,185 @@
+name: Build & Release
+
+# Builds apps/desktop. Release by pushing a tag:  git tag code-v1.0.0 && git push origin code-v1.0.0
+# The tag is the version: it is stamped into tauri.conf.json, Cargo.toml and package.json.
+# One release per version (code-vX.Y.Z). Desktop releases are flagged as GitHub's "latest", so
+# releases/latest/download/<file> always serves the newest desktop installer and latest.json.
+# The desktop updater and the website download links use that fixed URL.
+on:
+  push:
+    tags: ['code-v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  NODE_OPTIONS: "--max-old-space-size=8192"
+  GCP_FUNCTIONS_URL: ${{ secrets.GCP_FUNCTIONS_URL }}
+  FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+  FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+  SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/code-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: Orch Desktop
+          draft: false
+          prerelease: false
+          make_latest: true
+
+  build-mac:
+    name: Build & Publish macOS (${{ matrix.target }})
+    if: ${{ !cancelled() }}
+    runs-on: macos-latest
+    needs: create-release
+    defaults:
+      run:
+        working-directory: apps/desktop
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            artifact: Orch-macOS-arm64.dmg
+          - target: x86_64-apple-darwin
+            artifact: Orch-macOS-x64.dmg
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp version from tag
+        if: startsWith(github.ref, 'refs/tags/code-v')
+        shell: bash
+        run: |
+          export VERSION="${GITHUB_REF_NAME#code-v}"
+          node - <<'EOF'
+          const fs = require("fs");
+          const v = process.env.VERSION;
+          const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
+          conf.version = v;
+          fs.writeFileSync("src-tauri/tauri.conf.json", JSON.stringify(conf, null, 2) + "\n");
+          const cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+          fs.writeFileSync("src-tauri/Cargo.toml", cargo.replace(/^version = ".*"$/m, `version = "${v}"`));
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          pkg.version = v;
+          fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          EOF
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Build macOS (${{ matrix.target }})
+        if: startsWith(github.ref, 'refs/tags/code-v') || github.event_name == 'workflow_dispatch'
+        run: npx tauri build --target ${{ matrix.target }}
+
+      - name: Prepare macOS Asset
+        if: startsWith(github.ref, 'refs/tags/code-v')
+        run: cp src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg ${{ matrix.artifact }}
+
+      - name: Publish macOS Asset
+        if: startsWith(github.ref, 'refs/tags/code-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Orch Desktop
+          files: apps/desktop/${{ matrix.artifact }}
+
+  build-windows:
+    name: Build & Publish Windows
+    if: ${{ !cancelled() }}
+    runs-on: windows-latest
+    needs: create-release
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp version from tag
+        if: startsWith(github.ref, 'refs/tags/code-v')
+        shell: bash
+        run: |
+          export VERSION="${GITHUB_REF_NAME#code-v}"
+          node - <<'EOF'
+          const fs = require("fs");
+          const v = process.env.VERSION;
+          const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
+          conf.version = v;
+          fs.writeFileSync("src-tauri/tauri.conf.json", JSON.stringify(conf, null, 2) + "\n");
+          const cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+          fs.writeFileSync("src-tauri/Cargo.toml", cargo.replace(/^version = ".*"$/m, `version = "${v}"`));
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          pkg.version = v;
+          fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          EOF
+
+      - name: Disable Windows Defender
+        shell: powershell
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Build Windows Setup Executable
+        if: startsWith(github.ref, 'refs/tags/code-v') || github.event_name == 'workflow_dispatch'
+        run: npx tauri build
+
+      - name: Prepare Windows Asset & Updater Manifest
+        if: startsWith(github.ref, 'refs/tags/code-v')
+        shell: powershell
+        run: |
+          $setup = (Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe).FullName
+          Copy-Item $setup -Destination Orch-Windows-Setup.exe
+
+          $sigPath = (Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe.sig).FullName
+          $signature = (Get-Content $sigPath -Raw).Trim()
+
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^code-v', ''
+          $manifest = [ordered]@{
+            version   = $version
+            notes     = "Automated release $tag. See the GitHub release page for details."
+            pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $signature
+                url       = "https://github.com/${{ github.repository }}/releases/download/$tag/Orch-Windows-Setup.exe"
+              }
+            }
+          }
+          $json = $manifest | ConvertTo-Json -Depth 6
+          [System.IO.File]::WriteAllText("$PWD\latest.json", $json)
+
+      - name: Publish Windows Asset & Updater Manifest
+        if: startsWith(github.ref, 'refs/tags/code-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Orch Desktop
+          files: |
+            apps/desktop/Orch-Windows-Setup.exe
+            apps/desktop/latest.json

@@ -1,0 +1,28 @@
+[Unit]
+Description=OrchCloud harness
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orch
+Group=orch
+EnvironmentFile=/etc/orch.env
+ExecStart=/opt/orch/orch-cloud-harness
+Restart=always
+RestartSec=2
+# Allows the graceful-shutdown hook to flush active runs.
+TimeoutStopSec=30
+LimitNOFILE=65536
+MemoryMax=700M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

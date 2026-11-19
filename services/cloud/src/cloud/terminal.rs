@@ -1,0 +1,240 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::State;
+use axum::response::Response;
+use axum::Extension;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
+use futures::{SinkExt, StreamExt};
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+use crate::cloud::e2b::{ConnectFrame, ConnectFrameDecoder, SandboxLease};
+use crate::cloud::workspace;
+use crate::shared::auth::VerifiedUser;
+use crate::shared::error::ApiResult;
+use crate::shared::extract::ApiQuery;
+use crate::state::ServerState;
+
+#[derive(Deserialize)]
+pub struct TerminalQuery {
+    pub workspace: String,
+    pub cols: Option<u16>,
+    pub rows: Option<u16>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum ClientMsg {
+    Input { data: String },
+    Resize { cols: u16, rows: u16 },
+    Close,
+}
+
+#[derive(Default)]
+struct Utf8Decoder {
+    pending: Vec<u8>,
+}
+
+impl Utf8Decoder {
+    fn decode(&mut self, chunk: &[u8]) -> String {
+        self.pending.extend_from_slice(chunk);
+        match std::str::from_utf8(&self.pending) {
+            Ok(s) => {
+                let out = s.to_string();
+                self.pending.clear();
+                out
+            }
+            Err(err) => {
+                let valid_up_to = err.valid_up_to();
+                let mut out = String::from_utf8_lossy(&self.pending[..valid_up_to]).into_owned();
+                if let Some(err_len) = err.error_len() {
+                    out.push('\u{FFFD}');
+                    self.pending.drain(..valid_up_to + err_len);
+                    if !self.pending.is_empty() {
+                        let rest = std::mem::take(&mut self.pending);
+                        out.push_str(&self.decode(&rest));
+                    }
+                } else {
+                    self.pending.drain(..valid_up_to);
+                }
+                out
+            }
+        }
+    }
+
+    fn flush(&mut self) -> String {
+        if self.pending.is_empty() {
+            return String::new();
+        }
+        let rest = std::mem::take(&mut self.pending);
+        String::from_utf8_lossy(&rest).into_owned()
+    }
+}
+
+pub async fn ws_handler(
+    State(state): State<ServerState>,
+    Extension(user): Extension<VerifiedUser>,
+    ApiQuery(query): ApiQuery<TerminalQuery>,
+    ws: WebSocketUpgrade,
+) -> ApiResult<Response> {
+    let cloud_ws = workspace::normalize(&query.workspace)?;
+    let lease = Arc::new(state.sandbox_manager.acquire(&user.id, &cloud_ws).await?);
+    let cols = query.cols.unwrap_or(80).clamp(10, 500);
+    let rows = query.rows.unwrap_or(24).clamp(4, 200);
+
+    let mut envs = HashMap::new();
+    envs.insert("TERM".to_string(), "xterm-256color".to_string());
+    envs.insert("COLORTERM".to_string(), "truecolor".to_string());
+    envs.insert("TERM_PROGRAM".to_string(), "Orch".to_string());
+
+    let resp = lease
+        .manager
+        .start_process_stream(
+            &lease.conn,
+            "/bin/bash",
+            &["-l"],
+            Some(&cloud_ws.repo_dir),
+            Some(envs),
+            Some((cols, rows)),
+            true,
+        )
+        .await?;
+
+    Ok(ws.on_upgrade(move |socket| bridge(socket, lease, resp)))
+}
+
+async fn send_ws(sender: &mut futures::stream::SplitSink<WebSocket, Message>, val: Value) -> bool {
+    sender.send(Message::Text(val.to_string())).await.is_ok()
+}
+
+async fn bridge(socket: WebSocket, lease: Arc<SandboxLease>, resp: reqwest::Response) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let mut pty_stream = resp.bytes_stream();
+    let mut decoder = ConnectFrameDecoder::default();
+    let mut utf8 = Utf8Decoder::default();
+    let mut pid: Option<u64> = None;
+    let mut pending_inputs: Vec<Vec<u8>> = Vec::new();
+    let mut pending_resize: Option<(u16, u16)> = None;
+    let mut exited = false;
+
+    loop {
+        tokio::select! {
+            ws_item = ws_rx.next() => {
+                match ws_item {
+                    Some(Ok(Message::Text(text))) => {
+                        match serde_json::from_str::<ClientMsg>(&text) {
+                            Ok(ClientMsg::Input { data }) => {
+                                let bytes = data.into_bytes();
+                                if let Some(p) = pid {
+                                    if lease.manager.send_input_pty(&lease.conn, p, &bytes).await.is_err() {
+                                        break;
+                                    }
+                                } else if pending_inputs.len() < 64 {
+                                    pending_inputs.push(bytes);
+                                }
+                            }
+                            Ok(ClientMsg::Resize { cols, rows }) => {
+                                let c = cols.clamp(10, 500);
+                                let r = rows.clamp(4, 200);
+                                if let Some(p) = pid {
+                                    let _ = lease.manager.update_pty(&lease.conn, p, c, r).await;
+                                } else {
+                                    pending_resize = Some((c, r));
+                                }
+                            }
+                            Ok(ClientMsg::Close) => break,
+                            Err(_) => {}
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+            pty_item = pty_stream.next() => {
+                match pty_item {
+                    None => break,
+                    Some(Err(err)) => {
+                        tracing::warn!(error = %err, "E2B terminal stream ended with error");
+                        break;
+                    }
+                    Some(Ok(chunk)) => {
+                        decoder.push(&chunk);
+                        loop {
+                            match decoder.next_frame() {
+                                Ok(None) => break,
+                                Ok(Some(ConnectFrame::EndStream(_))) => {
+                                    exited = true;
+                                    break;
+                                }
+                                Ok(Some(ConnectFrame::Message(val))) => {
+                                    if let Some(event) = val.get("event") {
+                                        if let Some(start) = event.get("start") {
+                                            if let Some(p) = start.get("pid").and_then(|v| {
+                                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                                            }).filter(|&p| p > 0) {
+                                                pid = Some(p);
+                                                if let Some((c, r)) = pending_resize.take() {
+                                                    let _ = lease.manager.update_pty(&lease.conn, p, c, r).await;
+                                                }
+                                                for bytes in pending_inputs.drain(..) {
+                                                    let _ = lease.manager.send_input_pty(&lease.conn, p, &bytes).await;
+                                                }
+                                            }
+                                        }
+                                        if let Some(data) = event.get("data") {
+                                            for field in ["pty", "stdout", "stderr"] {
+                                                if let Some(b64) = data.get(field).and_then(Value::as_str) {
+                                                    if let Ok(bytes) = STANDARD.decode(b64) {
+                                                        let text = utf8.decode(&bytes);
+                                                        if !text.is_empty()
+                                                            && !send_ws(&mut ws_tx, json!({ "type": "data", "data": text })).await
+                                                        {
+                                                            exited = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if event.get("end").is_some() {
+                                            exited = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    exited = true;
+                                    break;
+                                }
+                            }
+                            if exited {
+                                break;
+                            }
+                        }
+                        if exited {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let tail = utf8.flush();
+    if !tail.is_empty() {
+        let _ = send_ws(&mut ws_tx, json!({ "type": "data", "data": tail })).await;
+    }
+    let _ = send_ws(&mut ws_tx, json!({ "type": "exit" })).await;
+    let _ = ws_tx.close().await;
+
+    if let Some(p) = pid {
+        let _ = lease
+            .manager
+            .send_signal(&lease.conn, p, "SIGNAL_SIGKILL")
+            .await;
+    }
+    drop(lease);
+}

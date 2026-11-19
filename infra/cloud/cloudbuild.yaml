@@ -1,0 +1,19 @@
+steps:
+  - name: rust:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        apt-get update
+        apt-get install -y --no-install-recommends musl-tools clang mold ca-certificates pkg-config
+        rustup target add x86_64-unknown-linux-musl
+        cargo build --release --locked --target x86_64-unknown-linux-musl
+artifacts:
+  objects:
+    location: gs://orchllc-artifacts/orch-cloud-harness/$BUILD_ID/
+    paths:
+      - target/x86_64-unknown-linux-musl/release/orch-cloud-harness
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY

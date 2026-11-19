@@ -1,0 +1,53 @@
+[package]
+name = "orchharness"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+local-fs = [
+    "dep:dunce",
+    "dep:grep-regex",
+    "dep:grep-searcher",
+    "dep:ignore",
+    "dep:command-group",
+    "dep:tempfile",
+]
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+command-group = { version = "5.0", features = ["with-tokio"], optional = true }
+dunce = { version = "1", optional = true }
+envvars = "0.1.10"
+futures = "0.3"
+gray_matter = "0.2"
+grep-regex = { version = "0.1", optional = true }
+grep-searcher = { version = "0.1", optional = true }
+http = "1"
+ignore = { version = "0.4", optional = true }
+include_dir = { version = "0.7", features = ["glob"] }
+mime_guess = "2"
+moka = { version = "0.12", features = ["future", "sync"] }
+parking_lot = "0.13"
+path-clean = "1.0"
+regex = "1.11"
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "multipart", "form", "query"] }
+reqwest-middleware = { version = "0.5.2", features = ["json", "multipart"] }
+reqwest-retry = "0.9.1"
+rig = { version = "0.45.0", default-features = false, features = ["agent", "derive", "reqwest", "rustls", "reqwest-middleware-rustls"] }
+rig-http = "0.45.0"
+rig-memory = { version = "0.45.0", default-features = false }
+schemars = "0.8"
+secrecy = "0.10.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "3.2.1"
+tempfile = { version = "3", optional = true }
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }

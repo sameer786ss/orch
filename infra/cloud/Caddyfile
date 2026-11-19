@@ -1,0 +1,6 @@
+orchapi.duckdns.org {
+	reverse_proxy 127.0.0.1:8080 {
+		# Do not buffer SSE streams.
+		flush_interval -1
+	}
+}

@@ -1,0 +1,46 @@
+# OS and editors
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+*.log
+
+# Secrets and local environment: never commit
+.env
+.env.*
+!.env.example
+.env.yaml
+*.jks
+*.keystore
+*.key
+*.key.pub
+google-services.json
+local.properties
+
+# Rust
+target/
+apps/desktop/src-tauri/gen/schemas/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.next/
+next-env.d.ts
+
+# Android / Gradle
+.gradle/
+.kotlin/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
