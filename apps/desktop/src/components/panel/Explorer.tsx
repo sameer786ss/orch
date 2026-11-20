@@ -218,8 +218,8 @@ export function Explorer() {
 
   return (
     <aside className="explorer" aria-label="Files">
-      <div className="explorer-head">
-        <span>Files</span>
+      <div className="toolbar">
+        <span className="bar-title grow">Files</span>
         <IconButton label="Refresh" size="sm" onClick={() => void refresh()}>
           <LuRefreshCw />
         </IconButton>

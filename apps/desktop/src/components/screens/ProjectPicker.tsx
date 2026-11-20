@@ -24,15 +24,15 @@ export function ProjectPicker() {
       subtitle="Pick where you want to work. You can add more projects from the sidebar later."
     >
       <div className="choices" aria-busy={busy}>
-        <button type="button" className="choice" disabled={busy} onClick={() => void pickAndOpen()}>
+        <button type="button" className="card" disabled={busy} onClick={() => void pickAndOpen()}>
           <LuFolderOpen />
           <strong>Local folder</strong>
-          <span>Work on files on this computer</span>
+          <span className="card-text">Work on files on this computer</span>
         </button>
-        <button type="button" className="choice" disabled={busy} onClick={() => openRepoDialog(true)}>
+        <button type="button" className="card" disabled={busy} onClick={() => openRepoDialog(true)}>
           <ConnectorIcon id={GITHUB_ID} />
           <strong>GitHub repository</strong>
-          <span>Work in a cloud workspace</span>
+          <span className="card-text">Work in a cloud workspace</span>
         </button>
       </div>
       {error && (

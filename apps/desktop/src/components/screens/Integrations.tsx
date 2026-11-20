@@ -13,7 +13,7 @@ const CONNECT_WAIT_MS = 120_000;
 
 const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-function ConnectorRow({
+function ConnectorCard({
   connector,
   pending,
   onConnect,
@@ -26,20 +26,24 @@ function ConnectorRow({
 }) {
   const own = pending?.id === connector.id ? pending.kind : null;
   return (
-    <div className="row">
-      <ConnectorIcon id={connector.id} />
-      <span className="row-body">
-        <span className="truncate">{connector.name}</span>
-        <span className="truncate">{connector.description}</span>
-      </span>
-      <span className="row-meta">
-        {titleCase(connector.category)} · {connector.toolCount} tools
-      </span>
-      {connector.connected && (
-        <span className="badge" data-tone="ok">
-          Connected
+    <article className="card">
+      <div className="card-head">
+        <span className="card-icon">
+          <ConnectorIcon id={connector.id} />
         </span>
-      )}
+        <span className="row-body">
+          <span className="truncate">{connector.name}</span>
+          <span className="truncate">
+            {titleCase(connector.category)} · {connector.toolCount} tools
+          </span>
+        </span>
+        {connector.connected && (
+          <span className="badge" data-tone="ok">
+            Connected
+          </span>
+        )}
+      </div>
+      <p className="card-text">{connector.description}</p>
       {connector.connected ? (
         <Button size="sm" variant="subtle" disabled={pending !== null} onClick={() => onDisconnect(connector.id)}>
           {own === "disconnect" ? "Disconnecting…" : "Disconnect"}
@@ -49,7 +53,7 @@ function ConnectorRow({
           {own === "connect" ? "Waiting for sign-in…" : "Connect"}
         </Button>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -172,7 +176,7 @@ export function Integrations() {
           ))}
         </div>
       </div>
-      <div className="list">
+      <div className="list" data-grid="">
         {error && (
           <div className="alert" role="alert">
             <span>{error}</span>
@@ -182,7 +186,7 @@ export function Integrations() {
           </div>
         )}
         {visible.map((c) => (
-          <ConnectorRow key={c.id} connector={c} pending={pending} onConnect={connect} onDisconnect={disconnect} />
+          <ConnectorCard key={c.id} connector={c} pending={pending} onConnect={connect} onDisconnect={disconnect} />
         ))}
         {visible.length === 0 && <p className="empty">No integrations in this category</p>}
       </div>

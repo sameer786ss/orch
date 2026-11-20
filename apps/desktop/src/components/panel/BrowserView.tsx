@@ -185,7 +185,7 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
 
   return (
     <>
-      <div className="browser-bar">
+      <div className="toolbar">
         <IconButton label="Back" size="sm" disabled={!ready} onClick={() => history("back")}>
           <LuArrowLeft />
         </IconButton>

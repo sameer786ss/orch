@@ -59,7 +59,7 @@ function ContentSplit({ children }: { children: ReactNode }) {
       <Panel id="view" className="pane" style={{ overflow: "hidden" }} minSize={220}>
         {children}
       </Panel>
-      <Separator className="divider" disabled={!open} />
+      <Separator className="gutter" disabled={!open} />
       <Panel
         id="explorer"
         panelRef={explorerRef}
@@ -199,15 +199,15 @@ function Launcher() {
   return (
     <div className="launch">
       <div className="launch-grid">
-        <button type="button" className="tile" onClick={showExplorer}>
+        <button type="button" className="card" data-center="" onClick={showExplorer}>
           <LuFolderTree />
           Files
         </button>
-        <button type="button" className="tile" onClick={() => openBrowser()}>
+        <button type="button" className="card" data-center="" onClick={() => openBrowser()}>
           <ChromeIcon />
           Browser
         </button>
-        <button type="button" className="tile" onClick={openTerminal}>
+        <button type="button" className="card" data-center="" onClick={openTerminal}>
           <LuTerminal />
           Terminal
         </button>
