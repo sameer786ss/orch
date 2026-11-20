@@ -1,11 +1,10 @@
-import { useLayoutEffect } from "react";
 import { LuFolderOpen, LuX } from "react-icons/lu";
 import { useAuthStore } from "../../lib/auth";
 import { GITHUB_ID } from "../../lib/connectors";
 import { useWorkspaceStore } from "../../lib/workspace";
 import { ConnectorIcon } from "../common/ConnectorIcon";
 import { IconButton } from "../ui/Button";
-import { RepoDialog, useRepoDialog } from "../projects/RepoDialog";
+import { useRepoDialog } from "../projects/RepoDialog";
 import { Screen } from "./Screen";
 
 export function ProjectPicker() {
@@ -15,8 +14,6 @@ export function ProjectPicker() {
   const pickAndOpen = useWorkspaceStore((s) => s.pickAndOpen);
   const dismissError = useWorkspaceStore((s) => s.dismissError);
   const openRepoDialog = useRepoDialog((s) => s.setOpen);
-
-  useLayoutEffect(() => () => useRepoDialog.getState().setOpen(false), []);
 
   return (
     <Screen
@@ -43,7 +40,6 @@ export function ProjectPicker() {
           </IconButton>
         </div>
       )}
-      <RepoDialog />
     </Screen>
   );
 }

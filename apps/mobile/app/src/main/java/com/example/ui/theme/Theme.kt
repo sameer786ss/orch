@@ -13,29 +13,29 @@ object OrchDimens {
     val ItemGap = 8.dp
     val TightGap = 4.dp
     val CardPaddingH = 16.dp
-    val CardPaddingV = 14.dp
-    val ButtonHeight = 48.dp
+    val CardPaddingV = 12.dp
+    val ButtonHeight = 44.dp
     val TouchTarget = 48.dp
-    val TopBarHeight = 64.dp
-    val ComposerActionVisualSize = 38.dp
-    val AvatarSmall = 36.dp
-    val AvatarLarge = 44.dp
+    val TopBarHeight = 56.dp
+    val ComposerActionVisualSize = 36.dp
+    val AvatarSmall = 32.dp
+    val AvatarLarge = 40.dp
 }
 
 val OrchShapes = Shapes(
     extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(20.dp),
-    extraLarge = RoundedCornerShape(26.dp)
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(20.dp)
 )
 
 private val OrchColorScheme = darkColorScheme(
-    primary = OrchAccentCoral,
-    onPrimary = OrchTextPrimary,
+    primary = OrchAccent,
+    onPrimary = OrchBackground,
     primaryContainer = OrchSurfaceElevated,
     onPrimaryContainer = OrchTextPrimary,
-    secondary = OrchAccentAmber,
+    secondary = OrchTextSecondary,
     onSecondary = OrchBackground,
     secondaryContainer = OrchSurfaceElevated,
     onSecondaryContainer = OrchTextPrimary,

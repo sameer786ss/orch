@@ -61,6 +61,7 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
     var screen by rememberSaveable { mutableStateOf(AppScreen.Chat) }
 
     val sessions by vm.sessions.collectAsStateWithLifecycle()
+    val sessionsFailed by vm.sessionsFailed.collectAsStateWithLifecycle()
     val chat by vm.chat.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
     val selectedModelId by vm.selectedModelId.collectAsStateWithLifecycle()
@@ -98,6 +99,8 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
             ) {
                 SessionsDrawer(
                     sessions = sessions,
+                    loadFailed = sessionsFailed,
+                    onRetry = vm::refreshSessions,
                     activeId = chat.sessionId,
                     userName = userName,
                     onConnectorsScreen = screen == AppScreen.Connectors,

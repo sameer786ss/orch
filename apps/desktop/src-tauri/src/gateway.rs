@@ -207,9 +207,9 @@ impl Gateway {
         Ok(check_status(resp).await?.bytes().await?.to_vec())
     }
 
-    pub async fn cloud_session_workspace(&self, session_id: &str) -> AppResult<CloudWorkspaceInfo> {
-        let url = config::cloud_url(&format!("/sessions/{session_id}/workspace"));
-        self.get(&url, Duration::from_secs(60)).await
+    pub async fn cloud_list_all_sessions(&self) -> AppResult<Vec<SessionSummary>> {
+        let url = config::cloud_url("/sessions");
+        self.get(&url, Duration::from_secs(20)).await
     }
 
     pub async fn cloud_list_sessions(&self, workspace: &str) -> AppResult<Vec<SessionSummary>> {

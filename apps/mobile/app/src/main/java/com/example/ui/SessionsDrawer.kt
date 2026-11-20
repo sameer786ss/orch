@@ -38,17 +38,46 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.chat.Repo
 import com.example.data.SessionSummary
 import com.example.ui.components.OrchAlertDialog
+import com.example.ui.components.OrchBanner
 import com.example.ui.components.OrchEmptyMessage
 import com.example.ui.components.OrchIconBadge
 import com.example.ui.components.OrchSecondaryButton
 import com.example.ui.theme.OrchDimens
 import com.example.ui.theme.OrchSuccess
 
+private const val NO_REPOSITORY = "No repository"
+
+private sealed interface DrawerRow {
+    val key: String
+
+    data class Header(val title: String) : DrawerRow {
+        override val key: String = "header:$title"
+    }
+
+    data class Chat(val session: SessionSummary) : DrawerRow {
+        override val key: String = session.id
+    }
+}
+
+private fun groupByRepo(sessions: List<SessionSummary>): List<DrawerRow> {
+    val groups = LinkedHashMap<String, MutableList<SessionSummary>>()
+    for (session in sessions) {
+        val label = Repo.fromWorkspacePath(session.workspacePath)?.name ?: NO_REPOSITORY
+        groups.getOrPut(label) { mutableListOf() }.add(session)
+    }
+    return groups.flatMap { (label, chats) ->
+        listOf<DrawerRow>(DrawerRow.Header(label)) + chats.map { DrawerRow.Chat(it) }
+    }
+}
+
 @Composable
 fun SessionsDrawer(
     sessions: List<SessionSummary>,
+    loadFailed: Boolean,
+    onRetry: () -> Unit,
     activeId: String,
     userName: String?,
     onConnectorsScreen: Boolean,
@@ -60,6 +89,7 @@ fun SessionsDrawer(
     onAccount: () -> Unit
 ) {
     var pendingDelete by remember { mutableStateOf<SessionSummary?>(null) }
+    val rows = remember(sessions) { groupByRepo(sessions) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -94,7 +124,7 @@ fun SessionsDrawer(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Extension,
@@ -125,24 +155,42 @@ fun SessionsDrawer(
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-        if (sessions.isEmpty()) {
-            OrchEmptyMessage(
+        when {
+            sessions.isEmpty() && loadFailed -> OrchEmptyMessage(
+                text = "Couldn't load chats",
+                isError = true,
+                actionLabel = "Retry",
+                onAction = onRetry,
+                modifier = Modifier.weight(1f)
+            )
+            sessions.isEmpty() -> OrchEmptyMessage(
                 text = "No chats yet",
                 modifier = Modifier.weight(1f)
             )
-        } else {
-            LazyColumn(
+            else -> LazyColumn(
                 contentPadding = PaddingValues(horizontal = OrchDimens.ItemGap, vertical = OrchDimens.ItemGap),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                items(sessions, key = { it.id }) { session ->
-                    SessionItem(
-                        session = session,
-                        selected = !onConnectorsScreen && session.id == activeId,
-                        onClick = { onOpen(session.id) },
-                        onDelete = { pendingDelete = session }
-                    )
+                if (loadFailed) {
+                    item(key = "load-failed") {
+                        OrchBanner(
+                            text = "Couldn't refresh chats",
+                            isError = true,
+                            modifier = Modifier.padding(bottom = OrchDimens.ItemGap)
+                        )
+                    }
+                }
+                items(rows, key = { it.key }) { row ->
+                    when (row) {
+                        is DrawerRow.Header -> RepoHeader(row.title)
+                        is DrawerRow.Chat -> SessionItem(
+                            session = row.session,
+                            selected = !onConnectorsScreen && row.session.id == activeId,
+                            onClick = { onOpen(row.session.id) },
+                            onDelete = { pendingDelete = row.session }
+                        )
+                    }
                 }
             }
         }
@@ -169,7 +217,7 @@ fun SessionsDrawer(
             }
             Text(
                 text = userName ?: "Account",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -197,6 +245,20 @@ fun SessionsDrawer(
 }
 
 @Composable
+private fun RepoHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = OrchDimens.ItemGap, bottom = OrchDimens.TightGap)
+    )
+}
+
+@Composable
 private fun SessionItem(
     session: SessionSummary,
     selected: Boolean,
@@ -216,11 +278,11 @@ private fun SessionItem(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(vertical = 6.dp)
+                .padding(vertical = 4.dp)
         ) {
             Text(
                 text = session.title ?: "New chat",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -254,4 +316,3 @@ private fun SessionItem(
         }
     }
 }
-

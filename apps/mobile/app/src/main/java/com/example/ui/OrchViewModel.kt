@@ -128,6 +128,9 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     private val _sessions = MutableStateFlow<List<SessionSummary>>(emptyList())
     val sessions: StateFlow<List<SessionSummary>> = _sessions.asStateFlow()
 
+    private val _sessionsFailed = MutableStateFlow(false)
+    val sessionsFailed: StateFlow<Boolean> = _sessionsFailed.asStateFlow()
+
     private val _models = MutableStateFlow<List<ModelInfo>>(emptyList())
     val models: StateFlow<List<ModelInfo>> = _models.asStateFlow()
 
@@ -333,8 +336,14 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshSessions() {
+        viewModelScope.launch { loadSessions() }
+    }
+
     private suspend fun loadSessions(): List<SessionSummary>? {
-        val remote = runCatchingSuspend { api.sessions() }.getOrNull() ?: return null
+        val remote = runCatchingSuspend { api.sessions() }.getOrNull()
+        _sessionsFailed.value = remote == null
+        if (remote == null) return null
         val ids = remote.mapTo(HashSet()) { it.id }
         val previous = _sessions.value.associateBy { it.id }
         val currentId = _chat.value.sessionId

@@ -2,20 +2,18 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val OrchBackground = Color(0xFF11100F)
-val OrchSurface = Color(0xFF201E1C)
-val OrchSurfaceElevated = Color(0xFF2F2C29)
-val OrchBorder = Color(0xFF2A2724)
+val OrchBackground = Color(0xFF0A0A0A)
+val OrchSurface = Color(0xFF171717)
+val OrchSurfaceElevated = Color(0xFF1C1C1C)
+val OrchBorder = Color(0xFF2A2A2A)
 
-val OrchTextPrimary = Color(0xFFF2EFE9)
-val OrchTextSecondary = Color(0xFFA8A29A)
+val OrchTextPrimary = Color(0xFFF5F5F5)
+val OrchTextSecondary = Color(0xFFA3A3A3)
 
-val OrchAccentCoral = Color(0xFFF2643D)
-val OrchAccentAmber = Color(0xFFF5A623)
+val OrchAccent = Color(0xFFEDEDED)
 
-val OrchSuccess = Color(0xFF34D399)
-val OrchError = Color(0xFFEF5350)
+val OrchSuccess = Color(0xFF6FC48E)
+val OrchError = Color(0xFFF2736B)
 
 val OrchAdded = OrchSuccess
 val OrchRemoved = OrchError
-

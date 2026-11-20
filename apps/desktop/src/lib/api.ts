@@ -217,6 +217,10 @@ export function listSessionsForWorkspace(workspacePath: string): Promise<Session
   return invoke("list_sessions_for_workspace", { workspacePath });
 }
 
+export function listCloudSessions(): Promise<SessionSummary[]> {
+  return invoke("list_cloud_sessions");
+}
+
 export function listModels(forceRefresh?: boolean): Promise<ModelDto[]> {
   return invoke("list_models", { forceRefresh });
 }

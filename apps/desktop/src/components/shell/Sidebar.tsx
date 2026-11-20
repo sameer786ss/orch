@@ -231,7 +231,7 @@ export function Sidebar() {
   const newChat = useChatStore((s) => s.newChat);
 
   return (
-    <aside className="side" inert={!sidebarOpen}>
+    <aside className="side" hidden={!sidebarOpen}>
       <div className="side-body">
         <Button
           variant="subtle"

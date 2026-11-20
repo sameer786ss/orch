@@ -13,9 +13,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.OrchMonoBody
 import com.example.ui.theme.OrchMonoLabel
-import com.example.ui.theme.SpaceGroteskFontFamily
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -64,8 +64,8 @@ fun ChatMarkdown(
         val heading = { size: Int ->
             val scaled = if (compact) (size - 4).coerceAtLeast(13) else size
             TextStyle(
-                fontFamily = SpaceGroteskFontFamily,
-                fontWeight = FontWeight.Bold,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.SemiBold,
                 fontSize = scaled.sp,
                 lineHeight = (scaled + 6).sp,
                 color = color
@@ -77,11 +77,11 @@ fun ChatMarkdown(
             color = color
         )
         CachedMarkdownStyles(
-            h1 = heading(24),
-            h2 = heading(20),
-            h3 = heading(18),
-            h4 = heading(16),
-            h5 = heading(15),
+            h1 = heading(22),
+            h2 = heading(18),
+            h3 = heading(16),
+            h4 = heading(15),
+            h5 = heading(14),
             h6 = heading(14),
             body = body,
             mono = mono,

@@ -11,6 +11,7 @@ import {
   setWorkspace,
   initCloudWorkspace,
   forgetWorkspace,
+  listCloudSessions,
 } from "./api";
 
 export interface WorkspaceMeta {
@@ -50,6 +51,7 @@ interface WorkspaceActions {
   openCloudRepo: (repoUrl: string, customName?: string) => Promise<void>;
   switchTo: (id: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
+  syncCloudProjects: () => Promise<void>;
   dismissError: () => void;
   reset: () => void;
 }
@@ -58,6 +60,7 @@ type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
 const PREF_LAST_WORKSPACE = "lastWorkspaceId";
 const PREF_ALL_WORKSPACES = "allWorkspaces";
+const PREF_HIDDEN_CLOUD = "hiddenCloudWorkspaces";
 
 const INITIAL_STATE: WorkspaceState = {
   current: null,
@@ -105,9 +108,28 @@ async function saveLastId(id: string): Promise<void> {
   await setUserPref(PREF_LAST_WORKSPACE, id, true).catch(() => undefined);
 }
 
+async function loadHiddenCloud(): Promise<string[]> {
+  const raw = await getUserPref(PREF_HIDDEN_CLOUD, true).catch(() => null);
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveHiddenCloud(list: string[]): Promise<void> {
+  await setUserPref(PREF_HIDDEN_CLOUD, JSON.stringify(list), true).catch(() => undefined);
+}
+
 function cloudDisplayName(workspaceUri: string): string {
   const stripped = workspaceUri.replace(/^cloud:\/\/[^/]+\//, "");
   return stripped || getBasename(workspaceUri) || workspaceUri;
+}
+
+function cloudRepoUrl(workspaceUri: string): string {
+  return `https://${workspaceUri.replace(/^cloud:\/\//, "")}`;
 }
 
 async function activateWorkspace(meta: WorkspaceMeta): Promise<WorkspaceMeta> {
@@ -174,6 +196,7 @@ export const useWorkspaceStore = create(
         s.error = null;
       });
       clearImageCache();
+      void get().syncCloudProjects();
     };
 
     return {
@@ -228,6 +251,7 @@ export const useWorkspaceStore = create(
             s.status = "ready";
           });
           clearImageCache();
+          void get().syncCloudProjects();
         } catch (e) {
           if (epoch !== initializeEpoch) return;
           set((s) => {
@@ -268,6 +292,8 @@ export const useWorkspaceStore = create(
             repoDir: info.repoDir,
             createdAt: existing?.createdAt ?? Date.now(),
           };
+          const hidden = await loadHiddenCloud();
+          if (hidden.includes(meta.path)) await saveHiddenCloud(hidden.filter((path) => path !== meta.path));
           await commit(meta, upsert(get().all, meta));
         }),
 
@@ -284,6 +310,10 @@ export const useWorkspaceStore = create(
           const target = get().all.find((w) => w.id === id);
           if (!target) return;
           await forgetWorkspace(target.path);
+          if (workspaceMode(target) === "cloud") {
+            const hidden = await loadHiddenCloud();
+            if (!hidden.includes(target.path)) await saveHiddenCloud([...hidden, target.path]);
+          }
           const next = get().all.filter((w) => w.id !== id);
           await saveAll(next);
           const wasCurrent = get().current?.id === id;
@@ -300,6 +330,35 @@ export const useWorkspaceStore = create(
           });
           if (wasCurrent) clearImageCache();
         }),
+
+      syncCloudProjects: async () => {
+        if (get().status !== "ready") return;
+        const sessions = await listCloudSessions().catch(() => null);
+        if (!sessions || get().status !== "ready") return;
+        const hidden = new Set(await loadHiddenCloud());
+        const newest = new Map<string, number>();
+        for (const session of sessions) {
+          const path = session.workspacePath;
+          if (!path || !isCloudWorkspace(path) || hidden.has(path)) continue;
+          newest.set(path, Math.max(newest.get(path) ?? 0, session.updatedAt));
+        }
+        let changed = false;
+        set((s) => {
+          const known = new Set(s.all.map((w) => w.path));
+          for (const [path, updatedAt] of newest) {
+            if (known.has(path)) continue;
+            s.all.push({
+              id: newId(),
+              name: cloudDisplayName(path),
+              path,
+              repoUrl: cloudRepoUrl(path),
+              createdAt: updatedAt,
+            });
+            changed = true;
+          }
+        });
+        if (changed) await saveAll(get().all);
+      },
 
       dismissError: () => {
         set((s) => {

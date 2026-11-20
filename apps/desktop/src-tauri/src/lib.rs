@@ -219,6 +219,7 @@ pub fn run() {
             ipc::set_workspace,
             ipc::init_cloud_workspace,
             ipc::list_sessions_for_workspace,
+            ipc::list_cloud_sessions,
             ipc::forget_workspace,
             ipc::list_models,
             ipc::get_budget,

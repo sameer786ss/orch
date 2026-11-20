@@ -79,7 +79,7 @@ fun OrchBottomSheet(
         sheetGesturesEnabled = !fullScreen,
         containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
-        shape = if (fullScreen) RectangleShape else RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        shape = if (fullScreen) RectangleShape else RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
         contentWindowInsets = {
             if (fullScreen) WindowInsets(0) else BottomSheetDefaults.windowInsets
         },

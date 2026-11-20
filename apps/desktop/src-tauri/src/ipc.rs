@@ -303,6 +303,21 @@ pub async fn list_sessions_for_workspace(
 }
 
 #[tauri::command]
+pub async fn list_cloud_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::persistence::SessionSummary>, String> {
+    if state.current_user_id().is_none() {
+        return Ok(Vec::new());
+    }
+    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+    state
+        .gateway
+        .cloud_list_all_sessions()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn forget_workspace(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -808,9 +823,6 @@ pub async fn get_session_records(
             .cloud_session_history(&session_id, capped_limit, before_seq)
             .await
         {
-            if let Ok(info) = state.gateway.cloud_session_workspace(&session_id).await {
-                state.set_workspace(Some(Workspace::from_cloud_info(info)));
-            }
             return Ok(page);
         }
     }

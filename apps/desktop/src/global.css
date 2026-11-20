@@ -72,6 +72,7 @@
   --bar-h: 36px;
   --titlebar-h: 36px;
   --row-h: 26px;
+  --side-w: 240px;
 
   --icon-xs: 12px;
   --icon-sm: 14px;
@@ -277,16 +278,16 @@ h1, h2, h3 { font-weight: 600; }
 .bar { display: flex; align-items: center; gap: var(--s1); flex: none; height: var(--bar-h); min-width: 0; padding: 0 var(--s2); }
 
 .pane { display: flex; min-width: 0; min-height: 0; }
-.pane-end { justify-content: flex-end; }
+.main { flex: 1; overflow: hidden; }
 .gutter { position: relative; z-index: 2; flex: none; width: 1px; background: var(--line); outline: none; transition: background 0.1s 0.1s; }
 .gutter::after { content: ""; position: absolute; inset: 0 -3px; }
 .gutter:is([data-separator="hover"], [data-separator="focus"]) { background: var(--line-3); }
 .gutter[data-separator="active"] { background: var(--fg-3); }
 .gutter[data-separator="disabled"] { background: transparent; cursor: default !important; }
-.gutter[data-separator="disabled"]::after, .shell[data-sidebar-closed] > .gutter::after, .workspace[data-maximized] > .gutter::after { display: none; }
-.shell[data-sidebar-closed] > .gutter, .workspace[data-maximized] > .gutter { width: 0; }
+.gutter[data-separator="disabled"]::after, .workspace[data-maximized] > .gutter::after { display: none; }
+.workspace[data-maximized] > .gutter { width: 0; }
 
-.side { display: flex; flex-direction: column; flex: 1 0 180px; min-height: 0; background: var(--bg); }
+.side { display: flex; flex-direction: column; flex: none; width: var(--side-w); min-height: 0; background: var(--bg); border-right: 1px solid var(--line); }
 .side-body { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; padding: var(--s2); }
 .side-nav { display: flex; flex-direction: column; gap: 1px; margin-top: 6px; }
 .side-section { display: flex; align-items: center; justify-content: space-between; height: var(--h-md); margin-top: var(--s3); padding: 0 2px 0 var(--s2); font-size: var(--fs-sm); color: var(--fg-3); }
