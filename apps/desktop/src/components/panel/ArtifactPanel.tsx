@@ -114,19 +114,21 @@ function Tabs() {
               }
             }}
           >
-            <TabIcon tab={tab} />
+            <span className="tab-icon">
+              <TabIcon tab={tab} />
+              <button
+                type="button"
+                className="tab-close"
+                aria-label={`Close ${name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(tab.id);
+                }}
+              >
+                <LuX />
+              </button>
+            </span>
             <span className="truncate tab-name">{name}</span>
-            <Button
-              icon
-              size="sm"
-              aria-label={`Close ${name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                closeTab(tab.id);
-              }}
-            >
-              <LuX />
-            </Button>
           </div>
         );
       })}

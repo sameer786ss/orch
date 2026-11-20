@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import * as Primitive from "@radix-ui/react-dropdown-menu";
-import { LuCheck, LuChevronRight } from "react-icons/lu";
+import { LuChevronRight } from "react-icons/lu";
 import { OverlayPresence } from "./overlay";
 
 export const Menu = Primitive.Root;
@@ -40,7 +40,6 @@ export function MenuItem({
   return (
     <Primitive.Item className={cls("row", className)} data-selected={selected || undefined} {...props}>
       {children}
-      {selected && <LuCheck className="row-end" aria-label="Selected" />}
     </Primitive.Item>
   );
 }
@@ -49,9 +48,6 @@ export function MenuCheckboxItem({ className, children, ...props }: ComponentPro
   return (
     <Primitive.CheckboxItem className={cls("row", className)} {...props}>
       {children}
-      <Primitive.ItemIndicator className="row-end">
-        <LuCheck />
-      </Primitive.ItemIndicator>
     </Primitive.CheckboxItem>
   );
 }
@@ -68,7 +64,6 @@ export function MenuSubTrigger({
       {children}
       <span className="row-end">
         {meta}
-        {selected && <LuCheck aria-label="Selected" />}
         <LuChevronRight />
       </span>
     </Primitive.SubTrigger>
@@ -78,7 +73,13 @@ export function MenuSubTrigger({
 export function MenuSubContent({ className, children, ...props }: ComponentProps<typeof Primitive.SubContent>) {
   return (
     <Primitive.Portal>
-      <Primitive.SubContent className={cls("menu", className)} sideOffset={6} collisionPadding={8} {...props}>
+      <Primitive.SubContent
+        className={cls("menu menu-sub", className)}
+        sideOffset={4}
+        alignOffset={-5}
+        collisionPadding={8}
+        {...props}
+      >
         <OverlayPresence />
         {children}
       </Primitive.SubContent>

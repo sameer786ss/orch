@@ -1,19 +1,8 @@
 import { LuX } from "react-icons/lu";
-import { useAuthStore } from "../../lib/auth";
 import { useChatStore } from "../../lib/store";
 import { IconButton } from "../ui/Button";
 import { Composer } from "../composer/Composer";
 import { MessageList } from "./MessageList";
-
-function Home() {
-  const name = useAuthStore((s) => s.user?.displayName?.split(" ")[0]);
-  return (
-    <div className="chat-home">
-      <img src="/icon.png" alt="" />
-      <h1>{name ? `Welcome back, ${name}. Where should we pick up?` : "Where should we pick up?"}</h1>
-    </div>
-  );
-}
 
 export function ChatView() {
   const hasMessages = useChatStore((s) => s.messages.length > 0);
@@ -23,7 +12,7 @@ export function ChatView() {
 
   return (
     <div className="chat" data-home={!hasMessages || undefined}>
-      {hasMessages ? <MessageList key={sessionId} /> : <Home />}
+      {hasMessages ? <MessageList key={sessionId} /> : null}
       <div className="dock">
         {error && (
           <div className="alert" role="alert">
