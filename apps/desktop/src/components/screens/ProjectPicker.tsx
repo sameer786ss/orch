@@ -1,7 +1,9 @@
 import { useLayoutEffect } from "react";
-import { LuCloud, LuFolderOpen, LuX } from "react-icons/lu";
+import { LuFolderOpen, LuX } from "react-icons/lu";
 import { useAuthStore } from "../../lib/auth";
+import { GITHUB_ID } from "../../lib/connectors";
 import { useWorkspaceStore } from "../../lib/workspace";
+import { ConnectorIcon } from "../common/ConnectorIcon";
 import { IconButton } from "../ui/Button";
 import { RepoDialog, useRepoDialog } from "../projects/RepoDialog";
 import { Screen } from "./Screen";
@@ -28,7 +30,7 @@ export function ProjectPicker() {
           <span>Work on files on this computer</span>
         </button>
         <button type="button" className="choice" disabled={busy} onClick={() => openRepoDialog(true)}>
-          <LuCloud />
+          <ConnectorIcon id={GITHUB_ID} />
           <strong>GitHub repository</strong>
           <span>Work in a cloud workspace</span>
         </button>

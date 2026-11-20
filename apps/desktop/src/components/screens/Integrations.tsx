@@ -11,7 +11,9 @@ type Pending = { id: string; kind: "connect" | "disconnect" };
 
 const CONNECT_WAIT_MS = 120_000;
 
-function ConnectorCard({
+const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function ConnectorRow({
   connector,
   pending,
   onConnect,
@@ -24,36 +26,30 @@ function ConnectorCard({
 }) {
   const own = pending?.id === connector.id ? pending.kind : null;
   return (
-    <article className="tile-card">
-      <div className="tile-card-top">
-        <span className="tile-card-icon">
-          <ConnectorIcon id={connector.id} />
+    <div className="row">
+      <ConnectorIcon id={connector.id} />
+      <span className="row-body">
+        <span className="truncate">{connector.name}</span>
+        <span className="truncate">{connector.description}</span>
+      </span>
+      <span className="row-meta">
+        {titleCase(connector.category)} · {connector.toolCount} tools
+      </span>
+      {connector.connected && (
+        <span className="badge" data-tone="ok">
+          Connected
         </span>
-        <div className="grow">
-          <h3 className="truncate">{connector.name}</h3>
-          <div className="tile-card-sub">
-            {connector.category} · {connector.toolCount} tools
-          </div>
-        </div>
-        {connector.connected && (
-          <span className="badge" data-tone="ok">
-            Connected
-          </span>
-        )}
-      </div>
-      <p>{connector.description}</p>
-      <div>
-        {connector.connected ? (
-          <Button size="sm" variant="subtle" disabled={pending !== null} onClick={() => onDisconnect(connector.id)}>
-            {own === "disconnect" ? "Disconnecting…" : "Disconnect"}
-          </Button>
-        ) : (
-          <Button size="sm" variant="primary" disabled={pending !== null} onClick={() => onConnect(connector.id)}>
-            {own === "connect" ? "Waiting for sign-in…" : "Connect"}
-          </Button>
-        )}
-      </div>
-    </article>
+      )}
+      {connector.connected ? (
+        <Button size="sm" variant="subtle" disabled={pending !== null} onClick={() => onDisconnect(connector.id)}>
+          {own === "disconnect" ? "Disconnecting…" : "Disconnect"}
+        </Button>
+      ) : (
+        <Button size="sm" variant="primary" disabled={pending !== null} onClick={() => onConnect(connector.id)}>
+          {own === "connect" ? "Waiting for sign-in…" : "Connect"}
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -131,13 +127,12 @@ export function Integrations() {
     [refresh, setError]
   );
 
-  const connectedCount = connectors.filter((c) => c.connected).length;
   const filters = useMemo(() => {
     const categories = Array.from(new Set(connectors.map((c) => c.category))).sort();
     return [
       { id: "all", label: "All", count: connectors.length },
       { id: "connected", label: "Connected", count: connectors.filter((c) => c.connected).length },
-      ...categories.map((id) => ({ id, label: id, count: connectors.filter((c) => c.category === id).length })),
+      ...categories.map((id) => ({ id, label: titleCase(id), count: connectors.filter((c) => c.category === id).length })),
     ];
   }, [connectors]);
   const visible = useMemo(
@@ -159,25 +154,25 @@ export function Integrations() {
   }
 
   return (
-    <div className="page">
-      <div className="page-inner">
-        <header className="page-head">
-          <h1>
-            Integrations
-            <span className="badge">
-              {connectedCount} of {connectors.length} connected
-            </span>
-          </h1>
-          <p>Connect your accounts, then pick which apps the agent can use in each conversation from the + menu.</p>
-        </header>
-        <nav className="filters" aria-label="Filter integrations">
+    <>
+      <div className="toolbar">
+        <div className="tabs" role="tablist" aria-label="Filter integrations">
           {filters.map((f) => (
-            <Button key={f.id} size="sm" active={filter === f.id} onClick={() => setFilter(f.id)}>
+            <button
+              key={f.id}
+              type="button"
+              className="tab"
+              role="tab"
+              aria-selected={filter === f.id}
+              onClick={() => setFilter(f.id)}
+            >
               {f.label}
               <span className="badge">{f.count}</span>
-            </Button>
+            </button>
           ))}
-        </nav>
+        </div>
+      </div>
+      <div className="list">
         {error && (
           <div className="alert" role="alert">
             <span>{error}</span>
@@ -186,18 +181,14 @@ export function Integrations() {
             </IconButton>
           </div>
         )}
-        <div className="grid">
-          {visible.map((c) => (
-            <ConnectorCard
-              key={c.id}
-              connector={c}
-              pending={pending}
-              onConnect={connect}
-              onDisconnect={disconnect}
-            />
-          ))}
-        </div>
+        {visible.map((c) => (
+          <ConnectorRow key={c.id} connector={c} pending={pending} onConnect={connect} onDisconnect={disconnect} />
+        ))}
+        {visible.length === 0 && <p className="empty">No integrations in this category</p>}
       </div>
-    </div>
+      <div className="foot">
+        Connect your accounts, then pick which apps the agent can use in each conversation from the + menu.
+      </div>
+    </>
   );
 }

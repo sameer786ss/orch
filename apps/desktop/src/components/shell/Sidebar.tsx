@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { LuBlocks, LuCheck, LuEllipsis, LuLogOut, LuPlus, LuTrash2, LuX } from "react-icons/lu";
+import { LuBlocks, LuEllipsis, LuLogOut, LuPlus, LuTrash2, LuX } from "react-icons/lu";
 import { formatRelativeTime, type SessionSummary } from "../../lib/api";
 import { useAuthStore } from "../../lib/auth";
 import { useChatStore } from "../../lib/store";
@@ -33,12 +33,11 @@ const SessionRow = memo(function SessionRow({
 }) {
   const selectSession = useChatStore((s) => s.selectSession);
   const deleteSession = useChatStore((s) => s.deleteSession);
-  const [confirming, setConfirming] = useState(false);
   const title = session.title || "New conversation";
 
   return (
     <Tooltip content={locked ? "Stop the agent to switch conversations" : undefined} side="right">
-      <div className="row" data-depth="1" data-active={active} onMouseLeave={() => setConfirming(false)}>
+      <div className="row" data-depth="1" data-active={active}>
         <button
           type="button"
           className="row-main"
@@ -53,21 +52,23 @@ const SessionRow = memo(function SessionRow({
           <span className="row-label">{title}</span>
         </button>
         <span className="row-meta">{formatRelativeTime(session.updatedAt)}</span>
-        <span className="row-actions" data-pinned={confirming || undefined}>
-          {confirming ? (
-            <>
-              <IconButton label="Delete conversation" side="right" size="sm" variant="danger" onClick={() => void deleteSession(session.id)}>
-                <LuCheck />
-              </IconButton>
-              <IconButton label="Cancel" side="right" size="sm" onClick={() => setConfirming(false)}>
-                <LuX />
-              </IconButton>
-            </>
-          ) : (
-            <IconButton label="Delete" side="right" size="sm" onClick={() => setConfirming(true)}>
-              <LuTrash2 />
-            </IconButton>
-          )}
+        <span className="row-actions">
+          <Menu>
+            <MenuTrigger asChild>
+              <Button icon size="sm" aria-label="Conversation options">
+                <LuEllipsis />
+              </Button>
+            </MenuTrigger>
+            <MenuContent align="start" side="right">
+              <MenuItem data-danger="" onSelect={() => void deleteSession(session.id)}>
+                <LuTrash2 />
+                <span className="row-label">
+                  Delete conversation
+                  <span className="menu-hint">This can't be undone</span>
+                </span>
+              </MenuItem>
+            </MenuContent>
+          </Menu>
         </span>
       </div>
     </Tooltip>

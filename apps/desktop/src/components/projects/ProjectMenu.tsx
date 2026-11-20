@@ -1,12 +1,14 @@
-import { LuChevronDown, LuCloud, LuFolder, LuFolderOpen } from "react-icons/lu";
+import { LuChevronDown, LuFolder, LuFolderOpen } from "react-icons/lu";
+import { GITHUB_ID } from "../../lib/connectors";
 import { useChatStore } from "../../lib/store";
 import { useWorkspaceStore, workspaceMode, type WorkspaceMeta } from "../../lib/workspace";
+import { ConnectorIcon } from "../common/ConnectorIcon";
 import { Button } from "../ui/Button";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../ui/Menu";
 import { useRepoDialog } from "./RepoDialog";
 
 export function ProjectIcon({ project, open }: { project: WorkspaceMeta; open?: boolean }) {
-  if (workspaceMode(project) === "cloud") return <LuCloud />;
+  if (workspaceMode(project) === "cloud") return <ConnectorIcon id={GITHUB_ID} />;
   return open ? <LuFolderOpen /> : <LuFolder />;
 }
 
@@ -26,7 +28,7 @@ export function OpenProjectItems() {
         </span>
       </MenuItem>
       <MenuItem disabled={locked} onSelect={() => openRepoDialog(true)}>
-        <LuCloud />
+        <ConnectorIcon id={GITHUB_ID} />
         <span className="row-label">
           Open GitHub repository
           <span className="menu-hint">Work in a cloud workspace</span>

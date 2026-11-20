@@ -95,21 +95,21 @@ function RepoPicker({ onDone }: { onDone: () => void }) {
           spellCheck={false}
         />
       </div>
-      <div className="dialog-list" aria-busy={repos === null}>
+      <div className="list" aria-busy={repos === null}>
         {repos === null && <div className="empty"><span className="spinner" /></div>}
         {error && <div className="empty">{error}</div>}
         {repos?.length === 0 && !error && <div className="empty">No repositories found</div>}
         {repos?.map((repo) => (
           <button key={repo.fullName} type="button" className="row" disabled={busy} onClick={() => void open(repo)}>
             <ConnectorIcon id={GITHUB_ID} />
-            <span className="dialog-item">
+            <span className="row-body">
               <span className="truncate">{repo.fullName}</span>
               {repo.description && <span className="truncate">{repo.description}</span>}
             </span>
           </button>
         ))}
       </div>
-      <div className="dialog-foot">
+      <div className="foot">
         {busy ? (
           <>
             <span className="spinner" />
