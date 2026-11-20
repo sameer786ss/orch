@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { getBasename, getExt } from "../../lib/utils";
 import { getGrammar, highlightLines } from "../chat/highlight";
 
-const LINE_HEIGHT = 22;
+const LINE_HEIGHT = 20;
 const PAD = 12;
 
 const EXT_LANG: Record<string, string> = {

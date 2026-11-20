@@ -36,7 +36,7 @@ function TabIcon({ tab }: { tab: ArtifactTab }) {
   return <FileIcon name={tab.path ? getBasename(tab.path) : `file.${tab.kind}`} />;
 }
 
-const EXPLORER_PX = 240;
+const EXPLORER_PX = 200;
 
 function ContentSplit({ children }: { children: ReactNode }) {
   const open = useArtifactsStore((s) => s.explorerOpen);
@@ -56,7 +56,7 @@ function ContentSplit({ children }: { children: ReactNode }) {
 
   return (
     <Group orientation="horizontal">
-      <Panel id="view" className="pane" style={{ overflow: "hidden" }} minSize={260}>
+      <Panel id="view" className="pane" style={{ overflow: "hidden" }} minSize={220}>
         {children}
       </Panel>
       <Separator className="divider" disabled={!open} />
@@ -66,8 +66,8 @@ function ContentSplit({ children }: { children: ReactNode }) {
         className="pane"
         style={{ overflow: "hidden" }}
         defaultSize={initiallyOpen ? EXPLORER_PX : 0}
-        minSize={180}
-        maxSize="60%"
+        minSize={160}
+        maxSize="50%"
         collapsible
         collapsedSize={0}
         groupResizeBehavior="preserve-pixel-size"

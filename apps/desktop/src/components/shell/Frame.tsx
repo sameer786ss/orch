@@ -4,7 +4,7 @@ import { Sidebar } from "./Sidebar";
 import { Workspace } from "./Workspace";
 import { useShell } from "./shellStore";
 
-const SIDEBAR_PX = 260;
+const SIDEBAR_PX = 240;
 
 export function Frame() {
   const sidebarOpen = useShell((s) => s.sidebarOpen);
@@ -27,8 +27,8 @@ export function Frame() {
         className="pane pane-end"
         style={{ overflow: "hidden" }}
         defaultSize={initiallyOpen ? SIDEBAR_PX : 0}
-        minSize={200}
-        maxSize={420}
+        minSize={180}
+        maxSize={360}
         collapsible
         collapsedSize={0}
         groupResizeBehavior="preserve-pixel-size"
@@ -41,7 +41,7 @@ export function Frame() {
         <Sidebar />
       </Panel>
       <Separator className="gutter" />
-      <Panel id="main" className="pane" style={{ overflow: "hidden" }} minSize={420}>
+      <Panel id="main" className="pane" style={{ overflow: "hidden" }} minSize={440}>
         <Workspace />
       </Panel>
     </Group>

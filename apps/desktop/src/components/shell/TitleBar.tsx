@@ -3,7 +3,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LuPanelLeftClose, LuPanelLeftOpen, LuPanelRightClose, LuPanelRightOpen } from "react-icons/lu";
 import { VscChromeClose, VscChromeMaximize, VscChromeMinimize, VscChromeRestore } from "react-icons/vsc";
 import { useArtifactsStore } from "../../lib/artifacts";
-import { useChatStore } from "../../lib/store";
 import { IS_MAC, IS_WIN } from "../../lib/utils";
 import { useWorkspaceStore } from "../../lib/workspace";
 import { IconButton } from "../ui/Button";
@@ -49,31 +48,15 @@ function WindowControls() {
 }
 
 function Title() {
-  const view = useShell((s) => s.view);
   const project = useWorkspaceStore((s) => s.current?.name);
-  const session = useChatStore((s) => s.sessions.find((x) => x.id === s.currentSessionId)?.title);
-  const hasMessages = useChatStore((s) => s.messages.length > 0);
-
-  return (
-    <div className="titlebar-title">
-      {view === "integrations" ? (
-        <span>Integrations</span>
-      ) : (
-        <>
-          {project && <span className="titlebar-dim">{project}</span>}
-          {project && <span className="titlebar-dim">/</span>}
-          <span>{session || (hasMessages ? "Conversation" : "New conversation")}</span>
-        </>
-      )}
-    </div>
-  );
+  return <div className="titlebar-title">{project ?? "Orch"}</div>;
 }
 
 function SidebarToggle() {
   const sidebarOpen = useShell((s) => s.sidebarOpen);
   const toggleSidebar = useShell((s) => s.toggleSidebar);
   return (
-    <IconButton label={sidebarOpen ? "Hide sidebar" : "Show sidebar"} size="sm" onClick={toggleSidebar}>
+    <IconButton label={sidebarOpen ? "Hide sidebar" : "Show sidebar"} onClick={toggleSidebar}>
       {sidebarOpen ? <LuPanelLeftClose /> : <LuPanelLeftOpen />}
     </IconButton>
   );
@@ -88,7 +71,6 @@ function PanelToggle() {
     <IconButton
       label={panelOpen ? "Hide panel" : "Show panel"}
       tip={panelOpen ? "Hide panel" : "Files, browser and terminal"}
-      size="sm"
       onClick={() => setPanelOpen(!panelOpen)}
     >
       {panelOpen ? <LuPanelRightClose /> : <LuPanelRightOpen />}

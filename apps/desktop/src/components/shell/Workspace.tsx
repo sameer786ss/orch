@@ -5,9 +5,10 @@ import { useArtifactsStore } from "../../lib/artifacts";
 import { ChatView } from "../chat/ChatView";
 import { ArtifactPanel } from "../panel/ArtifactPanel";
 import { Integrations } from "../screens/Integrations";
+import { ChatHeader } from "./ChatHeader";
 import { useShell } from "./shellStore";
 
-const DEFAULT_PANEL_PCT = 50;
+const DEFAULT_PANEL_PCT = 42;
 
 function layoutFor(shown: boolean, maximized: boolean, panelPct: number): Layout {
   if (!shown) return { chat: 100, artifacts: 0 };
@@ -72,8 +73,9 @@ export function Workspace() {
         else if (chat === 0) store.toggleMaximized();
       }}
     >
-      <Panel id="chat" className="pane" style={{ overflow: "hidden" }} minSize={360} collapsible collapsedSize={0}>
-        <section className="col col-chat">
+      <Panel id="chat" className="pane" style={{ overflow: "hidden" }} minSize={300} collapsible collapsedSize={0}>
+        <section className="col">
+          <ChatHeader />
           <div className="stage">
             <div className="view" hidden={view !== "chat"}>
               <ChatView />
@@ -87,8 +89,8 @@ export function Workspace() {
         </section>
       </Panel>
       <Separator className="gutter" disabled={!split} />
-      <Panel id="artifacts" className="pane" style={{ overflow: "hidden" }} minSize={340} collapsible collapsedSize={0}>
-        <section className="col col-panel" inert={!panelShown}>
+      <Panel id="artifacts" className="pane" style={{ overflow: "hidden" }} minSize={300} collapsible collapsedSize={0}>
+        <section className="col" inert={!panelShown}>
           <ArtifactPanel visible={panelShown} />
         </section>
       </Panel>

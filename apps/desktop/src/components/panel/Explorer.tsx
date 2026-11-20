@@ -9,8 +9,8 @@ import { FileIcon } from "../common/FileIcon";
 import { IconButton } from "../ui/Button";
 
 const ROOT = "";
-const ROW_HEIGHT = 28;
-const INDENT = 16;
+const ROW_HEIGHT = 26;
+const INDENT = 14;
 const SEARCH_LIMIT = 200;
 
 interface TreeRow {

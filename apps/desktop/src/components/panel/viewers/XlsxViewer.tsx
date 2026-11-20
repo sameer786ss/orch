@@ -61,7 +61,7 @@ export function XlsxViewer({ path }: { path: string }) {
 
   const sheet = sheets?.[active];
   const rowHeight = Math.max(22, Math.round(28 * zoom.zoom));
-  const fontSize = Math.round(13 * zoom.zoom);
+  const fontSize = Math.round(12 * zoom.zoom);
   const colSpan = (sheet?.rows[0]?.length ?? 0) + 1;
 
   const virtualizer = useVirtualizer({
