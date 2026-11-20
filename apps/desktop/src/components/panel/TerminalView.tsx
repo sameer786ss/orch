@@ -5,27 +5,27 @@ import "@xterm/xterm/css/xterm.css";
 import * as api from "../../lib/api";
 
 const THEME = {
-  background: "#121212",
-  foreground: "#e6e6e6",
-  cursor: "#e6e6e6",
-  cursorAccent: "#121212",
-  selectionBackground: "rgba(255, 255, 255, 0.2)",
-  black: "#1f1f1f",
-  red: "#f2736b",
-  green: "#8fcf86",
-  yellow: "#e6b45c",
-  blue: "#7fc4b2",
-  magenta: "#e58a9e",
-  cyan: "#86cfc4",
-  white: "#d6d6d6",
-  brightBlack: "#6e6e6e",
-  brightRed: "#ff8f86",
-  brightGreen: "#a8dd9e",
-  brightYellow: "#f0c878",
-  brightBlue: "#9ad6c6",
-  brightMagenta: "#f0a2b4",
-  brightCyan: "#a4ddd4",
-  brightWhite: "#f5f5f5",
+  background: "#191a1b",
+  foreground: "#bfbfbf",
+  cursor: "#bfbfbf",
+  cursorAccent: "#191a1b",
+  selectionBackground: "rgba(57, 148, 188, 0.3)",
+  black: "#242526",
+  red: "#f48771",
+  green: "#73c991",
+  yellow: "#e5ba7d",
+  blue: "#57a3f8",
+  magenta: "#ad80d7",
+  cyan: "#48a0c7",
+  white: "#bfbfbf",
+  brightBlack: "#7b7e80",
+  brightRed: "#ff9d8a",
+  brightGreen: "#86cf86",
+  brightYellow: "#f0c987",
+  brightBlue: "#79c0ff",
+  brightMagenta: "#d2a8ff",
+  brightCyan: "#7dc4e0",
+  brightWhite: "#e6e6e6",
 };
 
 export function TerminalView({ id }: { id: string }) {
@@ -39,7 +39,7 @@ export function TerminalView({ id }: { id: string }) {
     let opened = false;
 
     const term = new Terminal({
-      fontSize: 12,
+      fontSize: 13,
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono").trim(),
       lineHeight: 1.35,
       cursorBlink: false,
