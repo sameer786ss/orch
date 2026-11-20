@@ -22,7 +22,7 @@ export function ChatView() {
   const dismissError = useChatStore((s) => s.dismissError);
 
   return (
-    <div className="chat">
+    <div className="chat" data-home={!hasMessages || undefined}>
       {hasMessages ? <MessageList key={sessionId} /> : <Home />}
       <div className="dock">
         {error && (

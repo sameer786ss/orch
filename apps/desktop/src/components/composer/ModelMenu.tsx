@@ -20,7 +20,7 @@ export function ModelMenu() {
   return (
     <Menu>
       <MenuTrigger asChild>
-        <Button size="sm" className="model-btn" aria-label="Choose model">
+        <Button className="model-btn" aria-label="Choose model">
           <span>{selected?.name ?? "Select model"}</span>
           <span className="model-effort">{effortLabel}</span>
           <LuChevronDown />

@@ -209,7 +209,7 @@ export function Composer({ home }: { home: boolean }) {
           <Menu onOpenChange={(open) => open && void refreshConnectors()}>
             <Tooltip content="Add files, images, or connectors">
               <MenuTrigger asChild>
-                <Button icon size="sm" aria-label="Add attachment">
+                <Button icon aria-label="Add attachment">
                   <LuPlus />
                 </Button>
               </MenuTrigger>
@@ -238,7 +238,6 @@ export function Composer({ home }: { home: boolean }) {
           <IconButton
             label={dictation.recording ? "Stop dictation" : "Voice dictation"}
             side="top"
-            size="sm"
             className="composer-mic"
             active={dictation.recording}
             disabled={streaming}
