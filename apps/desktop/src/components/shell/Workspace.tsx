@@ -5,7 +5,6 @@ import { useArtifactsStore } from "../../lib/artifacts";
 import { ChatView } from "../chat/ChatView";
 import { ArtifactPanel } from "../panel/ArtifactPanel";
 import { Integrations } from "../screens/Integrations";
-import { MainBar } from "./Bars";
 import { useShell } from "./shellStore";
 
 const DEFAULT_PANEL_PCT = 50;
@@ -75,7 +74,6 @@ export function Workspace() {
     >
       <Panel id="chat" className="pane" style={{ overflow: "hidden" }} minSize={360} collapsible collapsedSize={0}>
         <section className="col col-chat">
-          <MainBar panelShown={panelShown} />
           <div className="stage">
             <div className="view" hidden={view !== "chat"}>
               <ChatView />

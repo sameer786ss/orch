@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 import { reportError } from "./lib/api";
@@ -10,6 +10,7 @@ import { Button } from "./components/ui/Button";
 import { TooltipProvider } from "./components/ui/Tooltip";
 import { RepoDialog } from "./components/projects/RepoDialog";
 import { Frame } from "./components/shell/Frame";
+import { TitleBar } from "./components/shell/TitleBar";
 import { ProjectPicker } from "./components/screens/ProjectPicker";
 import { SignIn } from "./components/screens/SignIn";
 
@@ -24,7 +25,7 @@ function Shell() {
 
 function Loading() {
   return (
-    <div className="center" data-tauri-drag-region>
+    <div className="center">
       <span className="spinner" data-size="lg" role="status" aria-label="Loading" />
     </div>
   );
@@ -38,14 +39,25 @@ function Fatal({ error, resetErrorBoundary }: FallbackProps) {
   }, [err]);
 
   return (
-    <div className="center">
-      <div className="fatal" role="alert">
-        <h2>Something went wrong</h2>
-        <p>{err.message}</p>
-        <Button variant="subtle" onClick={resetErrorBoundary}>
-          Try again
-        </Button>
+    <Window>
+      <div className="center">
+        <div className="fatal" role="alert">
+          <h2>Something went wrong</h2>
+          <p>{err.message}</p>
+          <Button variant="subtle" onClick={resetErrorBoundary}>
+            Try again
+          </Button>
+        </div>
       </div>
+    </Window>
+  );
+}
+
+function Window({ shell = false, children }: { shell?: boolean; children: ReactNode }) {
+  return (
+    <div className="window">
+      <TitleBar shell={shell} />
+      <div className="window-body">{children}</div>
     </div>
   );
 }
@@ -71,11 +83,15 @@ function Root() {
     if (workspaceStatus === "ready") void initializeChat();
   }, [workspaceStatus, initializeChat]);
 
-  if (authStatus === "loading") return <Loading />;
-  if (authStatus === "signedOut") return <SignIn />;
-  if (workspaceStatus === "loading" || workspaceStatus === "idle") return <Loading />;
-  if (workspaceStatus === "needs_pick" || workspaceStatus === "error") return <ProjectPicker />;
-  return <Shell />;
+  if (authStatus === "loading") return <Window><Loading /></Window>;
+  if (authStatus === "signedOut") return <Window><SignIn /></Window>;
+  if (workspaceStatus === "loading" || workspaceStatus === "idle") return <Window><Loading /></Window>;
+  if (workspaceStatus === "needs_pick" || workspaceStatus === "error") return <Window><ProjectPicker /></Window>;
+  return (
+    <Window shell>
+      <Shell />
+    </Window>
+  );
 }
 
 export default function App() {

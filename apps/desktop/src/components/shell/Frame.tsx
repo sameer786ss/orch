@@ -20,7 +20,7 @@ export function Frame() {
   }, [sidebarOpen, sidebarRef]);
 
   return (
-    <Group orientation="horizontal">
+    <Group orientation="horizontal" className="shell" data-sidebar-closed={!sidebarOpen || undefined}>
       <Panel
         id="sidebar"
         panelRef={sidebarRef}

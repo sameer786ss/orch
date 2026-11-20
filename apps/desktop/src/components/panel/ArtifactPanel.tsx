@@ -8,7 +8,6 @@ import { ChromeIcon, FileIcon } from "../common/FileIcon";
 import { Button, IconButton } from "../ui/Button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/Menu";
 import { Tooltip } from "../ui/Tooltip";
-import { SidebarOpener } from "../shell/Bars";
 import { BrowserView } from "./BrowserView";
 import { Explorer } from "./Explorer";
 import { TerminalView } from "./TerminalView";
@@ -94,7 +93,7 @@ function Tabs() {
   const showExplorer = useArtifactsStore((s) => s.showExplorer);
 
   return (
-    <div className="tabs" role="tablist" data-tauri-drag-region>
+    <div className="tabs" role="tablist">
       {tabs.map((tab) => {
         const name = tabName(tab);
         return (
@@ -227,8 +226,7 @@ export function ArtifactPanel({ visible }: { visible: boolean }) {
 
   return (
     <>
-      <div className="bar" data-tauri-drag-region>
-        {maximized && <SidebarOpener />}
+      <div className="bar">
         <Tabs />
         <IconButton label={explorerOpen ? "Hide files" : "Show files"} active={explorerOpen} onClick={toggleExplorer}>
           <LuFolderTree />

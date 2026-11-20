@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { LuBlocks, LuCheck, LuEllipsis, LuLogOut, LuPanelLeft, LuPlus, LuTrash2, LuX } from "react-icons/lu";
+import { LuBlocks, LuCheck, LuEllipsis, LuLogOut, LuPlus, LuTrash2, LuX } from "react-icons/lu";
 import { formatRelativeTime, type SessionSummary } from "../../lib/api";
 import { useAuthStore } from "../../lib/auth";
 import { useChatStore } from "../../lib/store";
@@ -9,7 +9,6 @@ import { Avatar } from "../common/Avatar";
 import { Button, IconButton } from "../ui/Button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/Menu";
 import { Tooltip } from "../ui/Tooltip";
-import { TrafficSpacer } from "../ui/TrafficSpacer";
 import { OpenProjectItems, ProjectIcon } from "../projects/ProjectMenu";
 import { useShell } from "./shellStore";
 
@@ -227,19 +226,11 @@ export function Sidebar() {
   const view = useShell((s) => s.view);
   const sidebarOpen = useShell((s) => s.sidebarOpen);
   const setView = useShell((s) => s.setView);
-  const toggleSidebar = useShell((s) => s.toggleSidebar);
   const streaming = useChatStore((s) => s.streaming);
   const newChat = useChatStore((s) => s.newChat);
 
   return (
     <aside className="side" inert={!sidebarOpen}>
-      <div className="bar" data-tauri-drag-region>
-        <TrafficSpacer />
-        <IconButton label="Hide sidebar" onClick={toggleSidebar}>
-          <LuPanelLeft />
-        </IconButton>
-        <div className="bar-fill" data-tauri-drag-region />
-      </div>
       <div className="side-body">
         <Button
           variant="subtle"
