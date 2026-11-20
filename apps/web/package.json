@@ -2,10 +2,8 @@
   "name": "orch",
   "version": "1.0.0",
   "description": "Orch (orch.live) — Agentic Engineering Lab",
-  "main": "index.js",
-  "directories": {
-    "lib": "lib"
-  },
+  "private": true,
+  "license": "ISC",
   "scripts": {
     "test": "tsx --test lib/orch.test.ts",
     "lint": "tsc --noEmit",
@@ -13,9 +11,6 @@
     "build": "next build",
     "start": "next start"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "next": "^16.4.5",
     "react": "^19.3.1",
@@ -26,7 +21,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "babel-plugin-react-compiler": "^1.0.0",
+    "tsx": "^4.19.2",
     "typescript": "^7.0.2"
-  },
-  "private": "true"
+  }
 }

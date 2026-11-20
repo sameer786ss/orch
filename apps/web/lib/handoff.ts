@@ -36,6 +36,7 @@ export function resolveHandoff(kind: HandoffKind, search: string): HandoffState 
     return {
       status: 'error',
       message: errorDescription && errorDescription.trim().length > 0 ? errorDescription : error,
+      target: `${SIGNIN_TARGET}${normalizedSearch}`,
     }
   }
 
@@ -49,6 +50,6 @@ export function resolveHandoff(kind: HandoffKind, search: string): HandoffState 
 
   return {
     status: 'error',
-    message: 'No authorisation code was received. Initiate the OAuth flow from Orch Desktop.',
+    message: 'No authorization code was received. Initiate the OAuth flow from Orch Desktop.',
   }
 }

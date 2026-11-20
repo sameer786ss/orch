@@ -1,10 +1,9 @@
 import type { Metadata } from 'next'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Subscribe } from '../../components/islands'
-import { Heat, JsonLd } from '../../components/ui'
-import { BLOG_POSTS } from '../../lib/blogs'
-import { DOWNLOAD_LINKS, JOURNAL_FILTERS, kinds } from '../../lib/content'
+import { DispatchBanner, DownloadButtons, Heat, JsonLd } from '../../components/ui'
+import { BLOG_KIND_LABELS, BLOG_POSTS } from '../../lib/blogs'
+import { JOURNAL_FILTERS } from '../../lib/content'
 import { buildBreadcrumbJsonLd, buildPageMetadata } from '../../lib/seo'
 
 export const metadata: Metadata = buildPageMetadata({
@@ -34,13 +33,13 @@ export default function BlogIndexPage() {
   const secondFeatured = BLOG_POSTS[1]
 
   return (
-    <main id="top">
+    <main>
       <JsonLd data={breadcrumbJsonLd} />
       <div data-split="hero">
         <article>
           <h1>{featured.title}</h1>
           <p>{featured.subtitle}</p>
-          <dl>
+          <dl data-metrics="">
             {featured.metrics.map(([dt, dd]) => (
               <div key={dt}>
                 <dt>{dt}</dt>
@@ -51,10 +50,10 @@ export default function BlogIndexPage() {
           <small>By {featured.author} on {featured.date} ({featured.readMinutes} min read, {featured.reads} reads)</small>
           <menu>
             <Link href={`/blog/${featured.slug}`} data-btn="hot">Read full paper ({featured.readMinutes} min)</Link>
-            <Link href={`/blog/${secondFeatured.slug}`} data-btn>Token Pricing Study</Link>
+            <Link href={`/blog/${secondFeatured.slug}`} data-btn="">Token Pricing Study</Link>
           </menu>
         </article>
-        <section data-hero-media>
+        <section data-hero-media="">
           <figure aria-label={featured.imageAlt}>
             <Image
               src={featured.image}
@@ -62,11 +61,10 @@ export default function BlogIndexPage() {
               width={1280}
               height={720}
               priority
-              referrerPolicy="no-referrer"
             />
             <figcaption>{featured.imageCaption}</figcaption>
           </figure>
-          <div data-subcard>
+          <div data-subcard="">
             <h3>
               <Link href={`/blog/${secondFeatured.slug}`}>{secondFeatured.title}</Link>
             </h3>
@@ -96,11 +94,11 @@ export default function BlogIndexPage() {
                 <h3><Link href={`/blog/${post.slug}`}>{post.title}</Link></h3>
                 <p>{post.excerpt}</p>
                 <menu>
-                  <Link href={`/blog/${post.slug}`} data-btn>Read report ({post.readMinutes} min)</Link>
+                  <Link href={`/blog/${post.slug}`} data-btn="">Read report ({post.readMinutes} min)</Link>
                 </menu>
               </div>
               <small>
-                {kinds[post.kind]}<br />
+                {BLOG_KIND_LABELS[post.kind]}<br />
                 {post.date} ({post.readMinutes} min)<br />
                 {post.reads} reads
               </small>
@@ -122,20 +120,14 @@ export default function BlogIndexPage() {
           <p>
             Every finding in these papers is compiled directly into the Orch agentic harness. Download for macOS or Windows and get $20/month free compute.
           </p>
-          <menu>
-            <a href={DOWNLOAD_LINKS.macArm64} data-btn="hot">macOS ARM64</a>
-            <a href={DOWNLOAD_LINKS.windowsExe} data-btn>Windows</a>
-          </menu>
+          <DownloadButtons compact />
         </aside>
       </div>
 
-      <div data-split="news">
-        <section>
-          <h2>Subscribe to the Orch Research Dispatch.</h2>
-          <p>New agentic harness benchmarks and token economics audits every other Friday.</p>
-        </section>
-        <section><Subscribe /></section>
-      </div>
+      <DispatchBanner
+        heading="Follow the Orch Research Dispatch."
+        description="New agentic harness benchmarks and token economics audits every other Friday via sameer@orch.live."
+      />
     </main>
   )
 }

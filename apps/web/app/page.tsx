@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
 import Image from 'next/image'
 import Link from 'next/link'
-import { HeatMap, Subscribe } from '../components/islands'
-import { ConnectorGrid, Heat, PaperList } from '../components/ui'
-import { BLOG_POSTS } from '../lib/blogs'
-import { DOWNLOAD_LINKS, JOURNAL_FILTERS, kinds, mostReadPosts, newest } from '../lib/content'
+import { HeatMap } from '../components/HeatMap'
+import { ConnectorGrid, DispatchBanner, DownloadButtons, Heat, PaperList } from '../components/ui'
+import { BLOG_KIND_LABELS, BLOG_POSTS } from '../lib/blogs'
+import { JOURNAL_FILTERS, mostReadPosts, newest } from '../lib/content'
 import { buildPageMetadata, DEFAULT_DESCRIPTION, DEFAULT_TITLE } from '../lib/seo'
 
 export const metadata: Metadata = buildPageMetadata({
@@ -26,7 +26,7 @@ export default function Home() {
   const tokenStudy = BLOG_POSTS[1]
 
   return (
-    <main id="top">
+    <main>
       <div data-split="hero">
         <section>
           <h1>We research agentic harnesses, audit AI compute economics, and ship Orch.</h1>
@@ -35,11 +35,11 @@ export default function Home() {
           </p>
           <menu>
             <Link href="/orch-code" data-btn="hot">Download Orch</Link>
-            <Link href="/blog" data-btn>Read the 6 Lab Reports</Link>
-            <Link href="/mobile" data-btn>Orch Mobile (Upcoming)</Link>
+            <Link href="/blog" data-btn="">Read the {BLOG_POSTS.length} Lab Reports</Link>
+            <Link href="/mobile" data-btn="">Orch Mobile (Upcoming)</Link>
           </menu>
         </section>
-        <section data-hero-media>
+        <section data-hero-media="">
           <div>
             <header>
               <h2>Newest from Orch Labs</h2>
@@ -56,10 +56,10 @@ export default function Home() {
               ))}
             </ol>
           </div>
-          <div data-subcard>
+          <div data-subcard="">
             <small>Open-Access Benchmark Archive</small>
             <h3>
-              <Link href="/blog">Browse all 6 research papers and harness traces</Link>
+              <Link href="/blog">Browse all {BLOG_POSTS.length} research papers and harness traces</Link>
             </h3>
           </div>
         </section>
@@ -75,22 +75,19 @@ export default function Home() {
         <HeatMap />
       </section>
 
-      <div data-split="orch" id="orch-code">
+      <div data-split="orch">
         <section>
-          <h2 data-big>Orch</h2>
+          <h2 data-big="">Orch</h2>
           <p>The protected agentic workspace for macOS and Windows. Connect your tools, pick your thinking depth, and ship verified diffs.</p>
           <ul>
             <li><b>Every user gets $20/month free compute:</b> Automatic monthly reset, no credit card traps, transparent token accounting.</li>
             <li><b>Low / Medium / High thinking modes:</b> Route test-time compute per turn, from 1.4s edits in Low to formal verification in High.</li>
-            <li><b>Native workspace connectors:</b> Link GitHub, Google Drive, Gmail, Jira, and Slack via local PKCE OAuth handoffs (<code>orch://</code>).</li>
+            <li><b>Native workspace connectors:</b> Link GitHub, Google Drive, Gmail, Jira, and Slack via system-browser OAuth and stateless <code>orch://</code> handoffs.</li>
             <li><b>Cloud Sessions (Coming Soon) &amp; Mobile:</b> Offload long test runs to isolated micro-VMs and steer them from the upcoming Orch Mobile app.</li>
           </ul>
-          <menu>
-            <a href={DOWNLOAD_LINKS.macArm64} data-btn="hot">macOS Apple Silicon (.dmg)</a>
-            <a href={DOWNLOAD_LINKS.macX64} data-btn>macOS Intel x64 (.dmg)</a>
-            <a href={DOWNLOAD_LINKS.windowsExe} data-btn>Windows Setup (.exe)</a>
-            <Link href="/orch-code" data-btn>Explore Orch</Link>
-          </menu>
+          <DownloadButtons>
+            <Link href="/orch-code" data-btn="">Explore Orch</Link>
+          </DownloadButtons>
         </section>
         <section>
           <figure aria-label="Orch agentic workspace">
@@ -101,9 +98,8 @@ export default function Home() {
               width={1280}
               height={720}
               priority
-              referrerPolicy="no-referrer"
             />
-            <p>Review Jira ORCH-89 &amp; Drive RFC, then patch the OAuth handoff flow<span data-cursor /></p>
+            <p>Review Jira ORCH-89 &amp; Drive RFC, then patch the OAuth handoff flow<span data-cursor="" /></p>
             <div>
               <b>GitHub #412 + Jira ORCH-89</b>
               <small>Checkpoint verified in 1.2s</small>
@@ -126,24 +122,24 @@ export default function Home() {
         <div><dt>Desktop</dt><dd>macOS (ARM64/x64) &amp; Windows</dd></div>
       </dl>
 
-      <section id="connectors">
+      <section>
         <header>
           <h2>Protected Workspace Connectors in Orch</h2>
-          <small>Local OAuth 2.0 PKCE &amp; Composio handoffs via orch:// protocol</small>
+          <small>System-browser OAuth &amp; Composio handoffs via orch:// protocol</small>
         </header>
         <p>
-          Orch connects directly to the tools where your engineering context actually lives. Credentials are exchanged locally via <code>orch://auth-callback</code> and <code>orch://oauth/composio</code> and stored in your OS keychain.
+          Orch connects directly to the tools where your engineering context actually lives. Sign-in refresh tokens are sealed in your OS keychain via <code>orch://auth-callback</code>, and scoped connector completions hand back to Desktop via <code>orch://oauth/composio</code>.
         </p>
         <ConnectorGrid />
       </section>
 
-      <div data-split="research" id="research">
+      <div data-split="research">
         <article>
           <h3>{tokenStudy.title}</h3>
           <p>
             Across 80,000 autonomous coding turns and 64 engineering teams, we audited why 78% reductions in headline per-million input token prices resulted in a 2.3x increase in monthly invoice spend. Hidden chain-of-thought output multipliers, quadratic multi-turn prefill, and 5-minute prompt cache evictions transfer the cost onto the developer.
           </p>
-          <dl>
+          <dl data-metrics="">
             <div><dt>-78%</dt><dd>headline input price cut</dd></div>
             <div><dt>+134%</dt><dd>median spend per merged PR</dd></div>
             <div><dt>64%</dt><dd>tokens saved by Orch harness</dd></div>
@@ -151,8 +147,8 @@ export default function Home() {
           <small>By {tokenStudy.author} on {tokenStudy.date} ({tokenStudy.readMinutes} min read)</small>
           <menu>
             <Link href={`/blog/${tokenStudy.slug}`} data-btn="hot">Read the full study</Link>
-            <Link href="/blog/agentic-harness-architecture" data-btn>Read Harness Paper</Link>
-            <Link href="/orch-code" data-btn>Claim $20/mo Free Compute</Link>
+            <Link href="/blog/agentic-harness-architecture" data-btn="">Read Harness Paper</Link>
+            <Link href="/orch-code" data-btn="">Claim $20/mo Free Compute</Link>
           </menu>
         </article>
         <section>
@@ -164,7 +160,7 @@ export default function Home() {
         </section>
       </div>
 
-      <div data-split="journal" id="journal">
+      <div data-split="journal">
         <section>
           <header>
             <h2>Orch Journal &amp; Engineering Blogs</h2>
@@ -185,7 +181,7 @@ export default function Home() {
                 <h3><Link href={`/blog/${post.slug}`}>{post.title}</Link></h3>
                 <p>{post.excerpt}</p>
               </div>
-              <small>{kinds[post.kind]}<br />{post.date} ({post.readMinutes} min)</small>
+              <small>{BLOG_KIND_LABELS[post.kind]}<br />{post.date} ({post.readMinutes} min)</small>
             </article>
           ))}
         </section>
@@ -201,22 +197,19 @@ export default function Home() {
           </ol>
           <h2>Upcoming: Orch Mobile</h2>
           <p>
-            Complete Cloud Session app for iOS and Android. Spawn isolated micro-VMs, inspect branch diffs, and steer Low/Medium/High agent runs from anywhere.
+            Complete Cloud Session companion app. Spawn isolated micro-VMs, inspect branch diffs, and steer Low/Medium/High agent runs from anywhere.
           </p>
           <progress max="100" value="78">78%</progress>
           <menu>
-            <Link href="/mobile" data-btn>Preview Orch Mobile</Link>
+            <Link href="/mobile" data-btn="">Preview Orch Mobile</Link>
           </menu>
         </aside>
       </div>
 
-      <div data-split="news" id="dispatch">
-        <section>
-          <h2>One dispatch every other Friday. Benchmarks, harness releases, and zero fluff.</h2>
-          <p>18,940 engineers subscribed. Unsubscribe in one click.</p>
-        </section>
-        <section><Subscribe /></section>
-      </div>
+      <DispatchBanner
+        heading="One dispatch every other Friday. Benchmarks, harness releases, and zero fluff."
+        description="Write to sameer@orch.live to join the Orch engineering dispatch or submit peer review."
+      />
     </main>
   )
 }

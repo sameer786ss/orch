@@ -3,10 +3,8 @@ import type { Metadata } from 'next'
 import Image from 'next/image'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { Subscribe } from '../../../components/islands'
-import { Heat, JsonLd } from '../../../components/ui'
-import { BLOG_POSTS, getBlogBySlug } from '../../../lib/blogs'
-import { DOWNLOAD_LINKS } from '../../../lib/content'
+import { DispatchBanner, DownloadButtons, Heat, JsonLd } from '../../../components/ui'
+import { BLOG_KIND_LABELS, BLOG_POSTS, getBlogBySlug } from '../../../lib/blogs'
 import { buildArticleJsonLd, buildPageMetadata } from '../../../lib/seo'
 
 export function generateStaticParams() {
@@ -33,7 +31,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     type: 'article',
     publishedTime: post.isoDate,
     authors: [post.author],
-    keywords: ['Orch', post.id, post.kindLabel, post.author],
+    keywords: ['Orch', post.id, BLOG_KIND_LABELS[post.kind], post.author],
   })
 }
 
@@ -45,22 +43,22 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
   const others = BLOG_POSTS.filter((p) => p.slug !== post.slug)
 
   return (
-    <main id="top">
+    <main>
       <JsonLd data={buildArticleJsonLd(post)} />
 
-      <header data-article-header>
-        <div data-article-meta>
+      <header data-article-header="">
+        <div data-article-meta="">
           <Link href="/blog">All lab reports</Link>
           <span>/</span>
           <time dateTime={post.isoDate}>{post.date}</time>
           <span>({post.readMinutes} min read)</span>
         </div>
 
-        <div data-article-top>
-          <div data-article-title>
+        <div data-article-top="">
+          <div data-article-title="">
             <h1>{post.title}</h1>
-            <p data-article-lead>{post.subtitle}</p>
-            <dl>
+            <p data-article-lead="">{post.subtitle}</p>
+            <dl data-metrics="">
               {post.metrics.map(([dt, dd]) => (
                 <div key={dt}>
                   <dt>{dt}</dt>
@@ -77,13 +75,12 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
               width={1280}
               height={720}
               priority
-              referrerPolicy="no-referrer"
             />
             <figcaption>{post.imageCaption}</figcaption>
           </figure>
         </div>
 
-        <div data-article-byline>
+        <div data-article-byline="">
           <span>
             By <b>{post.author}</b> ({post.authorRole}), {post.reads} reads
           </span>
@@ -112,16 +109,12 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
           <p>
             Every mechanism described in this report is shipped in Orch for macOS (Apple Silicon &amp; Intel) and Windows. Every user account includes $20/month in free compute credit across Low, Medium, and High thinking modes, plus native GitHub, Google Drive, Gmail, Jira, and Slack connectors.
           </p>
-          <menu>
-            <a href={DOWNLOAD_LINKS.macArm64} data-btn="hot">Download macOS ARM64 (.dmg)</a>
-            <a href={DOWNLOAD_LINKS.macX64} data-btn>Download macOS Intel (.dmg)</a>
-            <a href={DOWNLOAD_LINKS.windowsExe} data-btn>Download Windows Setup (.exe)</a>
-          </menu>
+          <DownloadButtons />
         </article>
 
         <aside>
           <h2>In This Report</h2>
-          <ul data-toc>
+          <ul data-toc="">
             {post.sections.map((sec, idx) => (
               <li key={sec.heading}>
                 <a href={`#section-${idx + 1}`}>{sec.heading}</a>
@@ -145,22 +138,20 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
 
           <h2>Orch</h2>
           <p>
-            Agentic workspace with $20/mo free compute, Low/Medium/High thinking modes, and protected local OAuth connectors.
+            Agentic workspace with $20/mo free compute, Low/Medium/High thinking modes, and protected OAuth connectors.
           </p>
           <menu>
             <Link href="/orch-code" data-btn="hot">Explore Orch</Link>
-            <Link href="/mobile" data-btn>Orch Mobile</Link>
+            <Link href="/mobile" data-btn="">Orch Mobile</Link>
           </menu>
         </aside>
       </div>
 
-      <div data-split="news">
-        <section>
-          <h2>Get the next Orch Labs technical report in your inbox.</h2>
-          <p>Published every other Friday. Questions or peer review: sameer@orch.live.</p>
-        </section>
-        <section><Subscribe /></section>
-      </div>
+      <DispatchBanner
+        heading="Get the next Orch Labs technical report in your inbox."
+        description="Published every other Friday. Questions or peer review: sameer@orch.live."
+        subject={`Feedback on ${post.id}: ${post.title}`}
+      />
     </main>
   )
 }

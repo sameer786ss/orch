@@ -1,5 +1,12 @@
 export type BlogKind = 'e' | 'f' | 'p' | 'r'
 
+export const BLOG_KIND_LABELS: Record<BlogKind, string> = {
+  e: 'Research',
+  f: 'Field note',
+  p: 'Postmortem',
+  r: 'Release',
+}
+
 export interface BlogSection {
   heading: string
   paragraphs: string[]
@@ -10,7 +17,6 @@ export interface BlogPost {
   slug: string
   id: string
   kind: BlogKind
-  kindLabel: string
   status: 'preprint' | 'published' | 'release' | 'replicated'
   title: string
   subtitle: string
@@ -34,7 +40,6 @@ export const BLOG_POSTS: BlogPost[] = [
     slug: 'agentic-harness-architecture',
     id: 'OR-018',
     kind: 'e',
-    kindLabel: 'Research',
     status: 'preprint',
     title: 'Anatomy of a Deterministic Agentic Harness: Why Raw Tool Loops Fail Past 40 Steps',
     subtitle: 'Most coding agents collapse not because the underlying frontier model cannot reason, but because unguarded tool-execution loops corrupt their own working memory after thirty turns.',
@@ -110,7 +115,6 @@ export const BLOG_POSTS: BlogPost[] = [
     slug: 'token-deflation-illusion-compute-costs',
     id: 'OR-017',
     kind: 'e',
-    kindLabel: 'Research',
     status: 'published',
     title: 'The Token Deflation Illusion: Why API Prices Drop 80% While Your Monthly AI Compute Bill Doubles',
     subtitle: 'Every quarter brings another headline proclaiming that per-token inference costs have fallen by half. Why, then, are engineering teams spending more on AI compute than ever before?',
@@ -185,7 +189,6 @@ export const BLOG_POSTS: BlogPost[] = [
     slug: 'test-time-compute-thinking-modes',
     id: 'OR-016',
     kind: 'f',
-    kindLabel: 'Field note',
     status: 'published',
     title: 'Low, Medium, High: Allocating Test-Time Compute Without Burning $400 on a Single Refactor',
     subtitle: 'Test-time reasoning scales accuracy on hard algorithmic bugs, but exhibits steep diminishing returns on routine CRUD and UI wiring. Here is our empirical routing curve.',
@@ -253,11 +256,10 @@ export const BLOG_POSTS: BlogPost[] = [
     slug: 'zero-trust-oauth-agent-connectors',
     id: 'OR-015',
     kind: 'r',
-    kindLabel: 'Release',
     status: 'release',
     title: 'Zero-Trust Agent Connectors: Bridging GitHub, Gmail, Drive, Jira, and Slack Without Leaking Tokens',
     subtitle: 'Connecting an autonomous coding agent to your company email, source control, and issue tracker requires a fundamentally different security model than traditional SaaS integrations.',
-    excerpt: 'How Orch pairs local PKCE OAuth handoffs (orch://) with scoped tool boundaries so your agent can read specs and ship PRs while your credentials remain locked to your machine.',
+    excerpt: 'How Orch pairs system-browser OAuth handoffs (orch://) with scoped tool boundaries so your agent can read specs and ship PRs while your sign-in tokens stay in your OS keychain.',
     date: '19 Oct 2026',
     isoDate: '2026-10-19',
     readMinutes: 15,
@@ -270,29 +272,28 @@ export const BLOG_POSTS: BlogPost[] = [
     imageCaption: 'Figure 4. Isolated connector architecture in Orch separates authentication handoff from scoped tool execution.',
     metrics: [
       ['5 Core', 'native connectors (GitHub, Drive, Gmail, Jira, Slack)'],
-      ['0 Bytes', 'plaintext OAuth secrets stored on public web tier'],
-      ['PKCE', 'RFC 7636 verified desktop protocol handoff'],
+      ['0 Bytes', 'OAuth tokens persisted on the public web tier'],
+      ['orch://', 'stateless desktop protocol handoff'],
     ],
     sections: [
       {
         heading: 'Why Traditional Cloud SaaS Connectors Fail Security Audits',
         paragraphs: [
           'Software engineering does not happen in a vacuum. Before a developer writes a single line of code, they read a product requirement document in Google Drive, check acceptance criteria on a Jira ticket, scan a customer bug report in Gmail, review a teammate’s comment in Slack, and inspect recent commits on GitHub. An AI coding workspace that can only see your local folder is blind to 80% of the context that governs why the code exists.',
-          'Yet most teams rightly refuse to paste omnibus API tokens into third-party AI dashboards. When a conventional cloud web app asks for OAuth access to your Gmail, Google Drive, and GitHub repositories, it typically stores long-lived refresh tokens in a centralized multi-tenant database and gives the model unrestricted tool access across every connected account.',
-          'That architecture fails two critical security invariants: first, a central database breach exposes every customer workspace simultaneously; second, an untrusted string inside an incoming email or public GitHub issue can attempt an indirect prompt injection to exfiltrate data through another connected tool.',
+          'Yet most teams rightly refuse to paste omnibus API tokens into third-party AI dashboards. Giving a model unrestricted tool access across every connected account without scoping or write confirmation fails two critical security invariants: broad credentials widen blast radius, and an untrusted string inside an incoming email or public GitHub issue can attempt an indirect prompt injection to exfiltrate data through another connected tool.',
         ],
       },
       {
-        heading: 'The orch:// Local PKCE Handoff Protocol',
+        heading: 'The orch:// Stateless Browser Handoff Protocol',
         paragraphs: [
-          'In Orch Desktop, the Orch web domain acts strictly as a zero-retention cryptographic relay during OAuth authentication and connector linking. When you click Connect GitHub, Google Drive, Gmail, Jira, or Slack inside Orch, the desktop client generates a high-entropy PKCE code verifier in local memory and opens your system browser.',
-          'Once you approve the minimum required scopes on the provider consent screen, the callback hits our stateless handoff routes (/auth-callback or /oauth/composio). Within milliseconds, the client-side handoff script scrubs the query string from your browser history via replaceState and dispatches the authorization payload directly to your local machine over the registered orch:// URI scheme.',
-          'Your local Orch binary completes the token exchange and seals the resulting credentials inside your operating system native keychain (macOS Keychain or Windows Credential Locker). Our web servers never log, persist, or inspect your authorization codes or workspace documents.',
+          'In Orch Desktop, the public web domain acts strictly as a stateless browser relay during sign-in and connector linking. When you sign in with Google or connect GitHub, Google Drive, Gmail, Jira, or Slack inside Orch, the desktop client opens your default system browser—never an embedded webview.',
+          'Once you approve scopes on the provider consent screen, the callback hits our stateless handoff routes (/auth-callback or /oauth/composio). Within milliseconds, the client-side handoff scrubs the query string from browser history via replaceState and hands control back to your local machine over the registered orch:// URI scheme.',
+          'For account sign-in, your local Orch binary completes the OAuth code flow with Firebase Authentication and seals your refresh token inside your operating system native keychain (macOS Keychain or Windows Credential Locker). For third-party connectors, Composio completes the scoped OAuth link server-side under your authenticated user ID and signals completion back to Desktop over orch://oauth/composio.',
         ],
         bullets: [
           'No embedded webviews: All OAuth consent happens in your trusted system browser with full hardware passkey and 2FA support.',
           'Immediate history scrubbing: Query parameters are wiped via window.history.replaceState before rendering the confirmation state.',
-          'OS Keychain encryption: Tokens are bound to your local user profile in macOS Keychain or Windows Credential Locker.',
+          'OS Keychain storage for session credentials: Sign-in refresh tokens are sealed in macOS Keychain or Windows Credential Locker, while connector access can be revoked in one click.',
         ],
       },
       {
@@ -321,7 +322,6 @@ export const BLOG_POSTS: BlogPost[] = [
     slug: 'cloud-sessions-ephemeral-microvms',
     id: 'OR-014',
     kind: 'f',
-    kindLabel: 'Field note',
     status: 'preprint',
     title: 'Ephemeral Cloud Enclaves for Coding Sessions: Sub-Second Handoff From Desktop to Mobile',
     subtitle: 'Long-running test suites and multi-branch agent refactors should not pin your laptop CPU at 100% or die when you close your lid to catch a train.',
@@ -339,7 +339,7 @@ export const BLOG_POSTS: BlogPost[] = [
     metrics: [
       ['380 ms', 'warm cloud enclave boot time'],
       ['100%', 'hardware-level memory isolation'],
-      ['iOS & Android', 'Orch Mobile cloud client (upcoming)'],
+      ['Mobile', 'Orch Mobile cloud client (upcoming)'],
     ],
     sections: [
       {
@@ -379,7 +379,7 @@ export const BLOG_POSTS: BlogPost[] = [
       {
         heading: 'Rollout Schedule for Cloud Sessions and Mobile',
         paragraphs: [
-          'Orch Desktop is available today for macOS (ARM64 and Intel x64) and Windows. Cloud Sessions and the Orch Mobile application for iOS and Android are currently in late-stage internal testing and will roll out progressively to registered Orch users.',
+          'Orch Desktop is available today for macOS (ARM64 and Intel x64) and Windows. Cloud Sessions and the Orch Mobile application are currently in late-stage internal testing and will roll out progressively to registered Orch users.',
         ],
       },
     ],
@@ -388,7 +388,6 @@ export const BLOG_POSTS: BlogPost[] = [
     slug: 'context-rot-60-file-repositories',
     id: 'OR-013',
     kind: 'p',
-    kindLabel: 'Postmortem',
     status: 'replicated',
     title: 'Measuring Context Rot Across 60-File Repositories: Why Retrieval Precision Beats 2M Context Windows',
     subtitle: 'We stuffed entire codebases into 1M and 2M token context windows and compared them against surgical call-graph retrieval. Giant prompts lost on accuracy, latency, and cost.',

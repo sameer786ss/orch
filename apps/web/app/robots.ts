@@ -1,33 +1,16 @@
 import type { MetadataRoute } from 'next'
+import { SITE_URL } from '../lib/seo'
 
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: [
       {
         userAgent: '*',
-        allow: [
-          '/',
-          '/orch-code',
-          '/mobile',
-          '/blog',
-          '/about',
-          '/security',
-          '/privacy',
-          '/terms',
-          '/cookies',
-          '/favicon.ico',
-          '/icon.svg',
-          '/icon-192.png',
-          '/icon-512.png',
-          '/apple-touch-icon.png',
-          '/orch-logo.svg',
-          '/images/',
-          '/connectors/',
-        ],
+        allow: '/',
         disallow: ['/auth-callback', '/composio', '/oauth/composio'],
       },
     ],
-    sitemap: 'https://orch.live/sitemap.xml',
-    host: 'https://orch.live',
+    sitemap: `${SITE_URL}/sitemap.xml`,
+    host: SITE_URL,
   }
 }

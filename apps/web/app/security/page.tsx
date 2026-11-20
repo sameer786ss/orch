@@ -1,16 +1,16 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { ConnectorGrid, JsonLd } from '../../components/ui'
+import { ConnectorGrid, JsonLd, LegalHubList } from '../../components/ui'
 import { buildBreadcrumbJsonLd, buildPageMetadata } from '../../lib/seo'
 
 export const metadata: Metadata = buildPageMetadata({
   title: 'Security, Trust & OAuth Data Governance',
   description:
-    'Comprehensive security architecture, OAuth 2.0 PKCE local keychain handoff, Google API Limited Use governance, and workspace connector protection standards for Orch.',
+    'Comprehensive security architecture, system-browser OAuth handoff, OS keychain credential storage, Google API Limited Use governance, and workspace connector protection standards for Orch.',
   path: '/security',
   keywords: [
     'Orch Security',
-    'Orch OAuth PKCE',
+    'Orch OAuth',
     'Google API Limited Use compliance',
     'zero-trust workspace connectors',
   ],
@@ -23,7 +23,7 @@ const breadcrumbJsonLd = buildBreadcrumbJsonLd([
 
 export default function SecurityPage() {
   return (
-    <main id="top">
+    <main>
       <JsonLd data={breadcrumbJsonLd} />
       <div data-split="hero">
         <article>
@@ -31,29 +31,16 @@ export default function SecurityPage() {
           <p>
             Orch is built for professional software engineers who require strict protection over their proprietary source code, credentials, and connected workspace accounts (GitHub, Google Drive, Gmail, Jira, and Slack). Here is how Orch safeguards your data and complies with global security and OAuth standards.
           </p>
-          <dl>
-            <div><dt>OAuth 2.0</dt><dd>verified PKCE local handoff</dd></div>
+          <dl data-metrics="">
+            <div><dt>OAuth 2.0</dt><dd>system-browser code flow handoff</dd></div>
             <div><dt>0 Training</dt><dd>strict non-training guarantee</dd></div>
             <div><dt>TLS 1.3</dt><dd>end-to-end encrypted transit</dd></div>
           </dl>
           <small>Security Team &amp; Vulnerability Disclosure: <a href="mailto:sameer@orch.live">sameer@orch.live</a></small>
         </article>
         <aside>
-          <h2>Verification &amp; Trust</h2>
-          <ol>
-            <li>
-              <small>Verified</small>
-              <Link href="/privacy">Google API Limited Use Compliance</Link>
-            </li>
-            <li>
-              <small>Active</small>
-              <Link href="/orch-code">Desktop PKCE Sign-In Architecture</Link>
-            </li>
-            <li>
-              <small>Active</small>
-              <Link href="/blog/zero-trust-oauth-agent-connectors">Scoped Workspace Connector Protocol</Link>
-            </li>
-          </ol>
+          <h2>Legal &amp; Compliance Hub</h2>
+          <LegalHubList current="security" />
           <p>All authentication callback routes enforce non-indexing rules and scrub query parameters immediately upon handoff.</p>
         </aside>
       </div>
@@ -62,17 +49,17 @@ export default function SecurityPage() {
         <article>
           <h2>1. Defense-in-Depth Security Philosophy</h2>
           <p>
-            An agentic coding workspace operates at the intersection of your source code and your engineering collaboration tools. At Orch, our security model is founded on three non-negotiable pillars: least-privilege authorization, local credential sovereignty, and explicit human-in-the-loop verification for external actions.
+            An agentic coding workspace operates at the intersection of your source code and your engineering collaboration tools. At Orch, our security model is founded on three non-negotiable pillars: least-privilege authorization, strict credential isolation, and explicit human-in-the-loop verification for external actions.
           </p>
 
-          <h2>2. OAuth 2.0 Authorization &amp; Credential Sovereignty</h2>
+          <h2>2. OAuth 2.0 Authorization &amp; Credential Protection</h2>
           <p>
             When you sign in to Orch or connect an external workspace integration (GitHub, Google Drive, Gmail, Jira, or Slack), Orch never asks for raw passwords and never uses insecure embedded webviews:
           </p>
           <ul>
-            <li><b>System-Browser OAuth with PKCE:</b> Authentication flows open in your default system browser using OAuth 2.0 with Proof Key for Code Exchange (PKCE), ensuring that authorization codes cannot be intercepted or replayed.</li>
-            <li><b>Stateless Handoff Relay:</b> Once you grant consent on the provider’s official screen, the callback route immediately scrubs the authorization parameters from your browser history and hands the payload directly to your local Orch application over the registered <code>orch://</code> application protocol.</li>
-            <li><b>Native Operating System Keychain Storage:</b> Resulting access tokens are sealed directly inside your operating system’s native encrypted credential vault (macOS Keychain or Windows Credential Locker).</li>
+            <li><b>System-Browser OAuth Code Flow:</b> Sign-in and connector consent flows always open in your default system browser with full passkey and hardware 2FA support.</li>
+            <li><b>Stateless Web Handoff Relay:</b> Once consent completes, our callback routes (<code>/auth-callback</code> and <code>/oauth/composio</code>) immediately scrub query parameters from your browser history and hand control back to Orch Desktop over the registered <code>orch://</code> application protocol.</li>
+            <li><b>OS Keychain &amp; Scoped Connector Brokerage:</b> Your account sign-in refresh token is sealed directly inside your operating system’s native encrypted credential vault (macOS Keychain or Windows Credential Locker). Optional third-party connectors are authorized through Composio under your verified user ID and can be disconnected in one click from Orch Desktop.</li>
           </ul>
 
           <h2>3. Connector Scope Transparency (GitHub, Drive, Gmail, Jira, Slack)</h2>
@@ -89,7 +76,7 @@ export default function SecurityPage() {
             <li><b>User-Initiated Access Only:</b> Orch only reads Google Drive documents or Gmail threads when you explicitly reference or attach them to an active engineering task.</li>
             <li><b>Zero Model Training:</b> Google user data is never used to train, fine-tune, or improve generalized artificial intelligence or machine learning models.</li>
             <li><b>Zero Ad-Tech Transfer:</b> Google user data is never shared with advertising networks, analytics brokers, or third-party marketers.</li>
-            <li><b>Immediate Revocation:</b> Disconnecting Google Drive or Gmail in Orch—or via your Google Account Connections page—immediately terminates access and clears local credentials.</li>
+            <li><b>Immediate Revocation:</b> Disconnecting Google Drive or Gmail in Orch—or via your Google Account Connections page—immediately terminates access and revokes the connected account.</li>
           </ul>
 
           <h2>5. Human-in-the-Loop Approval Gates &amp; Prompt-Injection Protection</h2>
@@ -115,9 +102,9 @@ export default function SecurityPage() {
           <h2>Related Documentation</h2>
           <menu>
             <Link href="/privacy" data-btn="hot">Privacy &amp; Limited Use</Link>
-            <Link href="/terms" data-btn>Terms of Service</Link>
-            <Link href="/cookies" data-btn>Cookies &amp; AdSense</Link>
-            <Link href="/blog/zero-trust-oauth-agent-connectors" data-btn>Connector Research Paper</Link>
+            <Link href="/terms" data-btn="">Terms of Service</Link>
+            <Link href="/cookies" data-btn="">Cookies &amp; Disclaimer</Link>
+            <Link href="/blog/zero-trust-oauth-agent-connectors" data-btn="">Connector Research Paper</Link>
           </menu>
         </aside>
       </div>

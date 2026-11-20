@@ -1,13 +1,12 @@
 import type { Metadata } from 'next'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Subscribe } from '../../components/islands'
-import { ConnectorGrid, Heat, JsonLd, PaperList } from '../../components/ui'
+import { ConnectorGrid, DispatchBanner, DownloadButtons, Heat, JsonLd, PaperList } from '../../components/ui'
 import { DOWNLOAD_LINKS, THINKING_MODES } from '../../lib/content'
 import { buildBreadcrumbJsonLd, buildPageMetadata } from '../../lib/seo'
 
 export const metadata: Metadata = buildPageMetadata({
-  title: 'Orch — Agentic Workspace for macOS & Windows',
+  title: 'Desktop Workspace for macOS & Windows',
   description:
     'Download Orch for macOS (Apple Silicon ARM64 & Intel x64) and Windows. Agentic coding workspace with GitHub, Drive, Gmail, Jira & Slack connectors, Low/Medium/High thinking modes, and $20/month free compute.',
   path: '/orch-code',
@@ -32,16 +31,16 @@ const releaseChecks = [
 
 const breadcrumbJsonLd = buildBreadcrumbJsonLd([
   { name: 'Orch', path: '/' },
-  { name: 'Orch', path: '/orch-code' },
+  { name: 'Orch Desktop', path: '/orch-code' },
 ])
 
 export default function OrchCodePage() {
   return (
-    <main id="top">
+    <main>
       <JsonLd data={breadcrumbJsonLd} />
       <div data-split="orch">
         <section>
-          <h2 data-big>Orch</h2>
+          <h1 data-big="">Orch</h1>
           <p>
             An autonomous agentic engineering workspace for macOS and Windows with native connectors, calibrated Low/Medium/High thinking modes, protected credentials, and <b>$20 every month in free compute</b> for every user.
           </p>
@@ -52,11 +51,7 @@ export default function OrchCodePage() {
             <li><b>Native Connectors:</b> One-click OAuth connection to GitHub, Google Drive, Gmail, Jira, and Slack.</li>
             <li><b>Cloud Sessions (Coming Soon):</b> Offload long-running branches to isolated cloud sessions synced with Orch Mobile.</li>
           </ul>
-          <menu>
-            <a href={DOWNLOAD_LINKS.macArm64} data-btn="hot">Download macOS ARM64 (.dmg)</a>
-            <a href={DOWNLOAD_LINKS.macX64} data-btn>Download macOS Intel x64 (.dmg)</a>
-            <a href={DOWNLOAD_LINKS.windowsExe} data-btn>Download Windows Setup (.exe)</a>
-          </menu>
+          <DownloadButtons />
         </section>
         <section>
           <figure aria-label="Orch interface">
@@ -67,9 +62,8 @@ export default function OrchCodePage() {
               width={1280}
               height={720}
               priority
-              referrerPolicy="no-referrer"
             />
-            <p>Connect Jira &amp; Drive specs, refactor auth handoff, and verify all tests<span data-cursor /></p>
+            <p>Connect Jira &amp; Drive specs, refactor auth handoff, and verify all tests<span data-cursor="" /></p>
             <div>
               <b>Connector Context Linked</b>
               <small>GitHub, Drive, Gmail, Jira &amp; Slack</small>
@@ -89,26 +83,22 @@ export default function OrchCodePage() {
         <div><dt>$20 / mo</dt><dd>free compute for every user, no cost</dd></div>
         <div><dt>Desktop</dt><dd>release for macOS &amp; Windows</dd></div>
         <div><dt>3 Modes</dt><dd>Low, Medium &amp; High thinking depth</dd></div>
-        <div><dt>100%</dt><dd>protected local OS keychain storage</dd></div>
+        <div><dt>OS Vault</dt><dd>keychain-sealed sign-in refresh tokens</dd></div>
       </dl>
 
-      <div data-split="research" id="downloads">
+      <div data-split="research">
         <article>
           <h3>Download Orch for your architecture</h3>
           <p>
-            All desktop installers are built directly from our verified release pipeline and include the local AST indexer, the <code>orch://</code> OAuth PKCE protocol handler, and instant activation of your $20/month free compute allocation.
+            All desktop installers are built directly from our verified release pipeline and include the local AST indexer, the <code>orch://</code> OAuth callback handler, and instant activation of your $20/month free compute allocation.
           </p>
-          <dl>
+          <dl data-metrics="">
             <div><dt>ARM64</dt><dd>Apple M1, M2, M3, M4</dd></div>
             <div><dt>x86_64</dt><dd>Intel Mac &amp; Windows 10/11</dd></div>
             <div><dt>$0</dt><dd>free download + $20/mo credit</dd></div>
           </dl>
           <small>Published by Orch (sameer@orch.live)</small>
-          <menu>
-            <a href={DOWNLOAD_LINKS.macArm64} data-btn="hot">macOS Apple Silicon (.dmg)</a>
-            <a href={DOWNLOAD_LINKS.macX64} data-btn>macOS Intel (.dmg)</a>
-            <a href={DOWNLOAD_LINKS.windowsExe} data-btn>Windows Installer (.exe)</a>
-          </menu>
+          <DownloadButtons />
         </article>
         <section>
           <header>
@@ -134,22 +124,22 @@ export default function OrchCodePage() {
         </section>
       </div>
 
-      <section id="connectors">
+      <section>
         <header>
           <h2>Native Workspace Connectors: GitHub, Google Drive, Gmail, Jira &amp; Slack</h2>
-          <small>Powered by Composio &amp; Google OAuth 2.0 PKCE local handoffs</small>
+          <small>Powered by Composio &amp; Google OAuth system-browser handoffs</small>
         </header>
         <p>
-          Stop copying and pasting ticket descriptions, RFC paragraphs, and stack traces between browser tabs. Orch connects directly to your engineering tools using least-privilege OAuth scopes and local keychain storage.
+          Stop copying and pasting ticket descriptions, RFC paragraphs, and stack traces between browser tabs. Orch connects directly to your engineering tools using least-privilege OAuth scopes and explicit write-approval gates.
         </p>
         <ConnectorGrid />
         <menu>
-          <Link href="/security" data-btn>Inspect OAuth &amp; Security Architecture</Link>
-          <Link href="/blog/zero-trust-oauth-agent-connectors" data-btn>Read the Connector Paper (OR-015)</Link>
+          <Link href="/security" data-btn="">Inspect OAuth &amp; Security Architecture</Link>
+          <Link href="/blog/zero-trust-oauth-agent-connectors" data-btn="">Read the Connector Paper (OR-015)</Link>
         </menu>
       </section>
 
-      <div data-split="hero" id="thinking-modes">
+      <div data-split="hero">
         <section>
           <header>
             <h2>Calibrated Model with Low, Medium &amp; High Thinking Modes</h2>
@@ -168,7 +158,7 @@ export default function OrchCodePage() {
           </dl>
           <menu>
             <Link href="/blog/test-time-compute-thinking-modes" data-btn="hot">Read the Thinking Modes Benchmark</Link>
-            <Link href="/blog/token-deflation-illusion-compute-costs" data-btn>Why Token Pricing is a Trick</Link>
+            <Link href="/blog/token-deflation-illusion-compute-costs" data-btn="">Why Token Pricing is a Trick</Link>
           </menu>
         </section>
         <section>
@@ -186,13 +176,11 @@ export default function OrchCodePage() {
         </section>
       </div>
 
-      <div data-split="news">
-        <section>
-          <h2>Get Orch release notes and Cloud Session beta invites.</h2>
-          <p>Sent every other Friday from sameer@orch.live.</p>
-        </section>
-        <section><Subscribe /></section>
-      </div>
+      <DispatchBanner
+        heading="Get Orch release notes and Cloud Session beta invites."
+        description="Write to sameer@orch.live to join the Orch release and Cloud Sessions list."
+        subject="Orch Release Notes & Cloud Session Beta"
+      />
     </main>
   )
 }

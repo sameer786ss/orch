@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
 import type { BlogPost } from './blogs'
+import { DOWNLOAD_LINKS } from './content'
 
 export const SITE_NAME = 'Orch'
 export const SITE_URL = 'https://orch.live'
-export const SITE_DOMAIN = 'orch.live'
+const SITE_DOMAIN = 'orch.live'
 export const DEFAULT_TITLE = 'Orch — Agentic Engineering Workspace & AI Systems Research Lab'
 export const DEFAULT_DESCRIPTION =
   'Orch builds an agentic coding workspace for macOS & Windows with GitHub, Drive, Gmail, Jira & Slack connectors, Low/Medium/High thinking modes, $20/mo free compute, and empirical AI systems research.'
@@ -11,7 +12,7 @@ export const DEFAULT_OG_IMAGE = '/images/orch-code-workspace.jpg'
 export const DEFAULT_OG_ALT =
   'Orch agentic engineering workspace for macOS and Windows'
 
-export interface PageSeoConfig {
+interface PageSeoConfig {
   title: string
   description: string
   path: string
@@ -38,7 +39,7 @@ export function buildPageMetadata({
 }: PageSeoConfig): Metadata {
   const canonical = path === '/' ? SITE_URL : `${SITE_URL}${path}`
   const isHome = path === '/'
-  const socialTitle = isHome || title.includes('| Orch') ? title : `${title} | ${SITE_NAME}`
+  const socialTitle = isHome || title.includes(`| ${SITE_NAME}`) ? title : `${title} | ${SITE_NAME}`
 
   return {
     title: isHome ? { absolute: title } : title,
@@ -149,8 +150,7 @@ export const ROOT_JSON_LD = {
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'macOS (Apple Silicon ARM64, Intel x64), Windows 10/11 (x64)',
       url: `${SITE_URL}/orch-code`,
-      downloadUrl:
-        'https://github.com/sameer786ss/orch/releases/latest/download/Orch-macOS-arm64.dmg',
+      downloadUrl: DOWNLOAD_LINKS.macArm64,
       screenshot: `${SITE_URL}${DEFAULT_OG_IMAGE}`,
       publisher: {
         '@id': `${SITE_URL}/#organization`,
@@ -165,9 +165,8 @@ export const ROOT_JSON_LD = {
   ],
 }
 
-export function buildBreadcrumbJsonLd(items: { name: string; path: string }[]) {
+function buildBreadcrumbNode(items: { name: string; path: string }[]) {
   return {
-    '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: items.map((item, idx) => ({
       '@type': 'ListItem',
@@ -175,6 +174,13 @@ export function buildBreadcrumbJsonLd(items: { name: string; path: string }[]) {
       name: item.name,
       item: item.path === '/' ? SITE_URL : `${SITE_URL}${item.path}`,
     })),
+  }
+}
+
+export function buildBreadcrumbJsonLd(items: { name: string; path: string }[]) {
+  return {
+    '@context': 'https://schema.org',
+    ...buildBreadcrumbNode(items),
   }
 }
 
@@ -214,7 +220,7 @@ export function buildArticleJsonLd(post: BlogPost) {
           '@id': `${SITE_URL}/#website`,
         },
       },
-      buildBreadcrumbJsonLd([
+      buildBreadcrumbNode([
         { name: 'Orch', path: '/' },
         { name: 'Research & Engineering Blog', path: '/blog' },
         { name: post.title, path: `/blog/${post.slug}` },

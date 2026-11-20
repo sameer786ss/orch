@@ -1,4 +1,4 @@
-import { BLOG_POSTS } from './blogs'
+import { BLOG_KIND_LABELS, BLOG_POSTS, type BlogPost } from './blogs'
 
 export const DOWNLOAD_LINKS = {
   macArm64: 'https://github.com/sameer786ss/orch/releases/latest/download/Orch-macOS-arm64.dmg',
@@ -65,13 +65,6 @@ export const THINKING_MODES = [
   },
 ] as const
 
-export const kinds = {
-  e: 'Research',
-  f: 'Field note',
-  p: 'Postmortem',
-  r: 'Release',
-} as const
-
 export const JOURNAL_FILTERS = [
   ['all', `All (${BLOG_POSTS.length})`],
   ['e', 'Research'],
@@ -80,11 +73,14 @@ export const JOURNAL_FILTERS = [
   ['r', 'Releases'],
 ] as const
 
+const toNewestItem = (post: BlogPost) =>
+  [post.date.replace(/\s+\d{4}$/, ''), BLOG_KIND_LABELS[post.kind], post.title, post.heat, `/blog/${post.slug}`] as const
+
 export const newest = [
-  ['6 Nov', 'Preprint', BLOG_POSTS[0].title, 5, `/blog/${BLOG_POSTS[0].slug}`],
-  ['5 Nov', 'Release', 'Orch desktop release: macOS (ARM64/x64) & Windows + $20/mo free compute', 5, '/orch-code'],
-  ['3 Nov', 'Research', BLOG_POSTS[1].title, 5, `/blog/${BLOG_POSTS[1].slug}`],
-  ['28 Oct', 'Field note', BLOG_POSTS[2].title, 4, `/blog/${BLOG_POSTS[2].slug}`],
+  toNewestItem(BLOG_POSTS[0]),
+  ['5 Nov', 'Release', 'Orch desktop release: macOS (ARM64/x64) & Windows + $20/mo free compute', 5, '/orch-code'] as const,
+  toNewestItem(BLOG_POSTS[1]),
+  toNewestItem(BLOG_POSTS[2]),
 ] as const
 
 export const papers = BLOG_POSTS.map(

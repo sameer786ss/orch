@@ -1,17 +1,17 @@
 import type { MetadataRoute } from 'next'
+import { DEFAULT_DESCRIPTION, SITE_NAME } from '../lib/seo'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Orch — Agentic Engineering Workspace & Research Lab',
-    short_name: 'Orch',
-    description:
-      'Orch builds an agentic engineering workspace for macOS and Windows with GitHub, Drive, Gmail, Jira & Slack connectors, Low/Medium/High thinking modes, and $20/month free compute.',
+    name: `${SITE_NAME} — Agentic Engineering Workspace & Research Lab`,
+    short_name: SITE_NAME,
+    description: DEFAULT_DESCRIPTION,
     id: '/',
     start_url: '/',
     scope: '/',
     display: 'standalone',
-    background_color: '#11100F',
-    theme_color: '#11100F',
+    background_color: '#0a0a0a',
+    theme_color: '#0a0a0a',
     icons: [
       {
         src: '/favicon.ico',
@@ -19,14 +19,14 @@ export default function manifest(): MetadataRoute.Manifest {
         type: 'image/x-icon',
       },
       {
-        src: '/icon.svg',
-        sizes: '48x48 96x96 144x144 512x512',
-        type: 'image/svg+xml',
+        src: '/icon-192.png',
+        sizes: '192x192',
+        type: 'image/png',
         purpose: 'any',
       },
       {
-        src: '/icon-192.png',
-        sizes: '192x192',
+        src: '/icon-512.png',
+        sizes: '512x512',
         type: 'image/png',
         purpose: 'any',
       },

@@ -1,12 +1,10 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Subscribe } from '../../components/islands'
-import { JsonLd, PaperList } from '../../components/ui'
-import { DOWNLOAD_LINKS } from '../../lib/content'
+import { DispatchBanner, DownloadButtons, JsonLd, PaperList } from '../../components/ui'
 import { buildBreadcrumbJsonLd, buildPageMetadata } from '../../lib/seo'
 
 export const metadata: Metadata = buildPageMetadata({
-  title: 'About Orch — Independent Agentic Engineering Lab',
+  title: 'About — Independent Agentic Engineering Lab',
   description:
     'Learn about Orch, our independent AI systems research mission, editorial charter, $20/month universal developer compute commitment, compliance governance, and our products.',
   path: '/about',
@@ -26,15 +24,15 @@ const breadcrumbJsonLd = buildBreadcrumbJsonLd([
 
 export default function AboutPage() {
   return (
-    <main id="top">
+    <main>
       <JsonLd data={breadcrumbJsonLd} />
       <div data-split="hero">
         <article>
           <h1>We research how autonomous engineering actually works, and we build Orch.</h1>
           <p>
-            Orch is an independent software research and engineering organization founded by Sameer. We study the reliability of autonomous coding systems, audit the real-world economics of artificial intelligence compute, and build <b>Orch</b>—an agentic software engineering workspace for macOS, Windows, and soon iOS and Android.
+            Orch is an independent software research and engineering organization founded by Sameer. We study the reliability of autonomous coding systems, audit the real-world economics of artificial intelligence compute, and build <b>Orch</b>—an agentic software engineering workspace for macOS, Windows, and soon mobile.
           </p>
-          <dl>
+          <dl data-metrics="">
             <div><dt>$20 / mo</dt><dd>free compute for every user</dd></div>
             <div><dt>6 Studies</dt><dd>open-access empirical research</dd></div>
             <div><dt>Desktop</dt><dd>macOS &amp; Windows app</dd></div>
@@ -42,7 +40,7 @@ export default function AboutPage() {
           <small>Direct Contact &amp; Inquiries: <a href="mailto:sameer@orch.live">sameer@orch.live</a></small>
           <menu>
             <Link href="/orch-code" data-btn="hot">Download Orch</Link>
-            <a href="mailto:sameer@orch.live" data-btn>Contact Sameer</a>
+            <a href="mailto:sameer@orch.live" data-btn="">Contact Sameer</a>
           </menu>
         </article>
         <section>
@@ -54,7 +52,7 @@ export default function AboutPage() {
             <li><b>Empirical Rigor Over Marketing Claims:</b> We do not publish synthetic cherry-picked demos. Every study we release measures failure rates, latency trade-offs, and actual invoice costs across real multi-file software repositories.</li>
             <li><b>Universal Developer Access ($20/Month Free):</b> High-reasoning software tools should not be locked behind immediate paywalls. Every registered Orch user receives $20 of complimentary compute credit every month at zero cost.</li>
             <li><b>Uncompromising Data Privacy:</b> Your proprietary source code, documents, and communications belong exclusively to you. Orch never trains generalized AI models on your private workspace data.</li>
-            <li><b>Full Regulatory &amp; Platform Compliance:</b> Orch adheres strictly to the Google API Services User Data Policy (Limited Use), Google AdSense Programme Policies, GDPR, CCPA/CPRA, and international data protection standards.</li>
+            <li><b>Full Regulatory &amp; Platform Compliance:</b> Orch adheres strictly to the Google API Services User Data Policy (Limited Use), GDPR, CCPA/CPRA, and strict zero-ad-tracker delivery across both our website and applications.</li>
           </ul>
         </section>
       </div>
@@ -79,7 +77,7 @@ export default function AboutPage() {
 
           <h2>3. Editorial Independence &amp; Research Integrity</h2>
           <p>
-            Our research reports, benchmarks, and postmortems are written by the engineers who design and test our systems. Orch maintains a strict firewall between our editorial research and any commercial or advertising relationships:
+            Our research reports, benchmarks, and postmortems are written by the engineers who design and test our systems. Orch maintains a strict firewall between our editorial research and any commercial relationships:
           </p>
           <ul>
             <li><b>No Paid Placements or Sponsored Rankings:</b> No model provider, cloud vendor, or third-party service can pay to influence our benchmark methodologies, latency measurements, or economic analyses.</li>
@@ -93,11 +91,11 @@ export default function AboutPage() {
           </p>
           <ul>
             <li><b>Google OAuth &amp; Limited Use Compliance:</b> Whenever a user links Google Workspace services (such as Google Drive or Gmail) to Orch, access is governed by explicit user consent and adheres strictly to the Google API Services User Data Policy, including all Limited Use requirements. Workspace data is never used for advertising, never sold to third parties, and never used to train AI models.</li>
-            <li><b>Google AdSense &amp; Publisher Transparency:</b> Public editorial pages on our website comply fully with Google AdSense Programme Policies, the Google EU User Consent Policy, and international ePrivacy disclosures, while keeping the Orch desktop and mobile applications completely free of third-party advertising scripts.</li>
+            <li><b>Zero Ad Scripts &amp; Strict CSP:</b> Both our public website and our desktop and mobile applications run without third-party advertising scripts, behavioral tracking pixels, or data brokers.</li>
             <li><b>Global Privacy Rights:</b> We honor data access, portability, correction, and erasure requests from users worldwide under GDPR, UK GDPR, CCPA/CPRA, and applicable international privacy laws.</li>
           </ul>
 
-          <h2>5. Contacting Orch</h2>
+          <h2 id="contact">5. Contacting Orch</h2>
           <p>
             We welcome direct communication from developers, researchers, security auditors, press, and enterprise teams. Every message sent to our official contact address is reviewed directly by our core team:
           </p>
@@ -106,11 +104,7 @@ export default function AboutPage() {
             <li><b>Privacy, Data Protection (DPO) &amp; OAuth Compliance:</b> <a href="mailto:sameer@orch.live">sameer@orch.live</a></li>
             <li><b>Security Advisories &amp; Responsible Disclosure:</b> <a href="mailto:sameer@orch.live">sameer@orch.live</a></li>
           </ul>
-          <menu>
-            <a href={DOWNLOAD_LINKS.macArm64} data-btn="hot">Download for macOS (ARM64)</a>
-            <a href={DOWNLOAD_LINKS.macX64} data-btn>Download for macOS (Intel)</a>
-            <a href={DOWNLOAD_LINKS.windowsExe} data-btn>Download for Windows</a>
-          </menu>
+          <DownloadButtons />
         </article>
 
         <aside>
@@ -123,21 +117,18 @@ export default function AboutPage() {
           <PaperList />
           <h2>Legal &amp; Trust Center</h2>
           <menu>
-            <Link href="/privacy" data-btn>Privacy Policy</Link>
-            <Link href="/terms" data-btn>Terms of Service</Link>
-            <Link href="/cookies" data-btn>Cookies &amp; AdSense</Link>
-            <Link href="/security" data-btn>Security &amp; OAuth</Link>
+            <Link href="/privacy" data-btn="">Privacy Policy</Link>
+            <Link href="/terms" data-btn="">Terms of Service</Link>
+            <Link href="/cookies" data-btn="">Cookies &amp; Disclaimer</Link>
+            <Link href="/security" data-btn="">Security &amp; OAuth</Link>
           </menu>
         </aside>
       </div>
 
-      <div data-split="news">
-        <section>
-          <h2>Receive our fortnightly research and product dispatch.</h2>
-          <p>New Orch releases, mobile cloud session updates, and empirical research.</p>
-        </section>
-        <section><Subscribe /></section>
-      </div>
+      <DispatchBanner
+        heading="Receive our fortnightly research and product dispatch."
+        description="New Orch releases, mobile cloud session updates, and empirical research via sameer@orch.live."
+      />
     </main>
   )
 }
