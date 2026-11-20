@@ -338,7 +338,7 @@ h1, h2, h3 { font-weight: 600; }
 .composer:focus-within { border-color: var(--line-3); }
 .composer[data-recording] { border-color: var(--danger-line); }
 .composer-head { position: absolute; bottom: calc(100% + 6px); left: 2px; display: flex; align-items: center; gap: 2px; }
-.composer-files { display: flex; gap: 6px; padding: 10px 10px 0; overflow-x: auto; }
+.composer-files { display: flex; gap: var(--s2); padding: 10px var(--s3); overflow-x: auto; background: var(--bg); border-bottom: 1px solid var(--line); border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0; }
 .composer-notice { margin: 10px 10px 0; padding: 6px 10px; border-radius: var(--r-md); background: var(--warn-bg); color: var(--warn); font-size: var(--fs-sm); }
 .composer-input { display: block; min-height: 52px; max-height: 240px; overflow-y: auto; padding: 12px 14px 4px; color: var(--fg-hi); font-size: var(--fs-lg); line-height: 22px; word-break: break-word; caret-color: var(--fg-hi); }
 .composer-input p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; color: var(--fg-3); pointer-events: none; }
