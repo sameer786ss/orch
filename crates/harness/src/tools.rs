@@ -272,7 +272,7 @@ pub fn window_lines(content: &str, start: Option<usize>, end: Option<usize>) -> 
 #[derive(Deserialize, JsonSchema)]
 pub struct ViewFileArgs {
     #[serde(rename = "AbsolutePath")]
-    #[schemars(description = "Path to file to view. Must be an absolute path inside the active workspace.")]
+    #[schemars(description = "Path to file to view. Must be an absolute path to an accessible file.")]
     pub absolute_path: String,
     #[serde(rename = "StartLine", default)]
     #[schemars(description = "Optional. Startline to view, 1-indexed, inclusive. When specified, this value must be less than or equal to EndLine.")]
@@ -300,7 +300,7 @@ impl Tool for ViewFile {
             "Raster images return file metadata only."
         };
         format!(
-            "View the contents of a file from the workspace. Returns text for source, config, markdown, JSON, SVG, and text files. The lines of the file are 1-indexed. Omit StartLine and EndLine to view the file from the top, or specify them to view a precise inclusive range. Output is capped at {} lines and {} characters; a truncation notice states the range shown and the total line count. {image_note} Binary files cannot be viewed as text.",
+            "View the contents of an accessible file. Returns text for source, config, markdown, JSON, SVG, and text files. The lines of the file are 1-indexed. Omit StartLine and EndLine to view the file from the top, or specify them to view a precise inclusive range. Output is capped at {} lines and {} characters; a truncation notice states the range shown and the total line count. {image_note} Binary files cannot be viewed as text.",
             config::MAX_READ_FILE_LINES,
             config::MAX_READ_FILE_CHARS
         )
@@ -380,7 +380,7 @@ impl Tool for ViewFile {
 #[derive(Deserialize, JsonSchema)]
 pub struct WriteToFileArgs {
     #[serde(rename = "TargetFile")]
-    #[schemars(description = "The target file to create and write code to. Must be an absolute path inside the active workspace.")]
+    #[schemars(description = "The target file to create and write code to. Must be an absolute path to an accessible location.")]
     pub target_file: String,
     #[serde(rename = "CodeContent")]
     #[schemars(description = "The code contents to write to the file.")]
@@ -487,7 +487,7 @@ impl Tool for WriteToFile {
 #[derive(Deserialize, JsonSchema)]
 pub struct ReplaceFileContentArgs {
     #[serde(rename = "TargetFile")]
-    #[schemars(description = "The target file to modify. Must be an absolute path inside the active workspace. Always specify the target file as the very first argument.")]
+    #[schemars(description = "The target file to modify. Must be an absolute path to an accessible file. Always specify the target file as the very first argument.")]
     pub target_file: String,
     #[serde(rename = "Instruction", default)]
     #[schemars(description = "A description of the changes that you are making to the file.")]
@@ -709,7 +709,7 @@ pub struct SearchWorkspaceArgs {
     #[schemars(description = "Required Rust-compatible regular expression searched case-insensitively across workspace text files. Use literal terms for simple searches and escape regex punctuation when searching it literally. Invalid expressions return an error.")]
     pub query: String,
     #[serde(default)]
-    #[schemars(description = "Optional workspace-relative or absolute path inside the active workspace to narrow the search to a directory or file. Omit to search from the workspace root. Ignored directories such as node_modules, target, dist and .git are skipped.")]
+    #[schemars(description = "Optional workspace-relative or absolute path to an accessible directory or file to narrow the search. Omit to search from the active workspace root. Ignored directories such as node_modules, target, dist and .git are skipped.")]
     pub path: Option<String>,
     #[serde(default)]
     #[schemars(description = "Maximum matching lines to return. Defaults to 50 and is clamped to 1–200. If output says results were limited, narrow query or path and search again.")]
@@ -727,7 +727,7 @@ impl Tool for SearchWorkspace {
     type Output = String;
 
     fn description(&self) -> String {
-        "Search workspace text files with a case-insensitive regular expression. Results show file path, line number and matching text. Binary files are skipped, long lines are shortened, and output is capped. Use path to narrow scope and max_results to control result volume; a limit notice means more matches may exist. Search results are evidence for locating files, not a substitute for reading the relevant code before editing."
+        "Search accessible text files with a case-insensitive regular expression. Results show file path, line number and matching text. Binary files are skipped, long lines are shortened, and output is capped. Use path to narrow scope and max_results to control result volume; a limit notice means more matches may exist. Search results are evidence for locating files, not a substitute for reading the relevant code before editing."
             .to_string()
     }
 
@@ -745,10 +745,9 @@ impl Tool for SearchWorkspace {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let max_hits = args.max_results.unwrap_or(50).clamp(1, 200);
-        let root = self.ops.root().ok_or(AppError::NoWorkspace)?;
         let search_path = match args.path.as_deref() {
             Some(p) => self.ops.resolve_in_workspace(p)?,
-            None => root,
+            None => self.ops.root().ok_or(AppError::NoWorkspace)?,
         };
         Ok(self
             .ops
@@ -1095,7 +1094,7 @@ const MAX_SEARCH_QUERIES: usize = 5;
 #[derive(Deserialize, JsonSchema)]
 pub struct ListDirArgs {
     #[serde(rename = "DirectoryPath")]
-    #[schemars(description = "Path to list contents of, should be absolute path to a directory inside the active workspace.")]
+    #[schemars(description = "Path to list contents of. Must be an absolute path to an accessible directory.")]
     pub directory_path: String,
 }
 
@@ -1110,7 +1109,7 @@ impl Tool for ListDir {
     type Output = String;
 
     fn description(&self) -> String {
-        "List the contents of a directory, i.e. all files and subdirectories that are children of the directory. Directory path must be an absolute path to a directory that exists. Output is one child per line; directories end with a slash. Common dependency and build directories are omitted. Use this to orient in an unfamiliar project, then view the relevant file before editing."
+        "List the contents of an accessible directory, i.e. all files and subdirectories that are children of the directory. Directory path must be an absolute path to a directory that exists. Output is one child per line; directories end with a slash. Common dependency and build directories are omitted. Use this to orient in an unfamiliar project, then view the relevant file before editing."
             .to_string()
     }
 

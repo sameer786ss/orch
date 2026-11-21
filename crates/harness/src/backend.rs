@@ -378,16 +378,7 @@ pub fn normalize_workspace_subpath(root: &str, input: &str) -> AppResult<String>
     } else {
         Path::new(clean_root).join(raw)
     };
-    let cleaned = joined.clean();
-    let cleaned_str = cleaned.to_string_lossy().replace('\\', "/");
-    let root_prefix = format!("{clean_root}/");
-    if cleaned_str == clean_root || cleaned_str.starts_with(&root_prefix) {
-        Ok(cleaned_str)
-    } else {
-        Err(crate::error::AppError::PathEscapesWorkspace(
-            input.to_string(),
-        ))
-    }
+    Ok(joined.clean().to_string_lossy().replace('\\', "/"))
 }
 
 pub fn display_relative_str(root: &str, path: &str) -> String {
@@ -443,48 +434,24 @@ pub mod local_fs {
             builder
         }
 
-        pub fn resolve_in_workspace(root: &Path, input: &str) -> AppResult<PathBuf> {
-            let canonical_root = dunce::canonicalize(root)?;
-            let raw = Path::new(input);
+        pub fn resolve_path(root: Option<&Path>, input: &str) -> AppResult<PathBuf> {
+            let stripped = input
+                .trim()
+                .strip_prefix("file://")
+                .unwrap_or(input.trim());
+            let raw = Path::new(stripped);
             let joined = if raw.is_absolute() {
                 raw.to_path_buf()
+            } else if let Some(root) = root {
+                root.join(raw)
             } else {
-                canonical_root.join(raw)
+                raw.to_path_buf()
             };
-            let cleaned = joined.clean();
+            Ok(joined.clean())
+        }
 
-            let mut existing = cleaned;
-            let mut missing: Vec<std::ffi::OsString> = Vec::new();
-            let resolved = loop {
-                match dunce::canonicalize(&existing) {
-                    Ok(canonical) => {
-                        let mut out = canonical;
-                        for part in missing.iter().rev() {
-                            out.push(part);
-                        }
-                        break out;
-                    }
-                    Err(_) => {
-                        if let Ok(meta) = std::fs::symlink_metadata(&existing) {
-                            if meta.file_type().is_symlink() {
-                                return Err(AppError::PathEscapesWorkspace(input.to_string()));
-                            }
-                        }
-                        let Some(name) = existing.file_name().map(|n| n.to_os_string()) else {
-                            return Err(AppError::PathEscapesWorkspace(input.to_string()));
-                        };
-                        missing.push(name);
-                        if !existing.pop() {
-                            return Err(AppError::PathEscapesWorkspace(input.to_string()));
-                        }
-                    }
-                }
-            };
-
-            if !resolved.starts_with(&canonical_root) {
-                return Err(AppError::PathEscapesWorkspace(input.to_string()));
-            }
-            Ok(resolved)
+        pub fn resolve_in_workspace(root: &Path, input: &str) -> AppResult<PathBuf> {
+            resolve_path(Some(root), input)
         }
 
         pub fn resolve_existing_file(root: &Path, input: &str) -> AppResult<PathBuf> {
@@ -781,8 +748,7 @@ pub mod local_fs {
         }
 
         fn resolve_in_workspace(&self, input: &str) -> AppResult<String> {
-            let root = self.require_root()?;
-            let resolved = fs_util::resolve_in_workspace(&root, input)?;
+            let resolved = fs_util::resolve_path(self.workspace.as_deref(), input)?;
             Ok(resolved.to_string_lossy().replace('\\', "/"))
         }
 

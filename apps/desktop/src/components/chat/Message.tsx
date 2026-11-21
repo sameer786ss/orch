@@ -75,9 +75,8 @@ function liveStatus(items: StepItem[]): string {
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i];
     if (item.type === "toolCall" && item.status === "running") return runningText(item);
-    if (i === items.length - 1 && item.type === "reasoning" && item.active) return "Thinking";
   }
-  return "Thinking";
+  return "Working";
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -159,7 +158,7 @@ const ToolStep = memo(function ToolStep({ tool }: { tool: ToolCallItem }) {
         <span>{tool.displayInfo.label || tool.name}</span>
         <ToolTarget tool={tool} />
         {tool.status === "error" && <LuTriangleAlert aria-label="Tool call failed" />}
-        {toggle && <LuChevronRight className="step-chevron" />}
+        {toggle && <LuChevronRight className="step-chevron chevron" />}
       </div>
       {open && output && <pre className="step-output selectable">{output}</pre>}
     </div>
@@ -200,7 +199,7 @@ const ThinkingStep = memo(function ThinkingStep({ item }: { item: ReasoningItem 
         onClick={() => setOpen(!open)}
       >
         <span>{label}</span>
-        <LuChevronRight />
+        <LuChevronRight className="chevron" />
       </button>
       {open && (
         <div
@@ -241,7 +240,7 @@ const WorkRun = memo(function WorkRun({ run, items }: { run: WorkRunItem; items:
           onClick={() => setOpen(!open)}
         >
           <span className="truncate">{label}</span>
-          <LuChevronRight />
+          <LuChevronRight className="chevron" />
         </button>
       ) : (
         <div className="disclosure" data-live={live || undefined} role="status">

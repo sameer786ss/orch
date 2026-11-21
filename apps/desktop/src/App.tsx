@@ -9,6 +9,7 @@ import { useUpdaterStore } from "./lib/updater";
 import { useWorkspaceStore } from "./lib/workspace";
 import { Button } from "./components/ui/Button";
 import { TooltipProvider } from "./components/ui/Tooltip";
+import { FileFinder } from "./components/panel/FileFinder";
 import { RepoDialog } from "./components/projects/RepoDialog";
 import { Frame } from "./components/shell/Frame";
 import { TitleBar } from "./components/shell/TitleBar";
@@ -20,6 +21,7 @@ function Shell() {
   return (
     <div className="app">
       <Frame />
+      <FileFinder />
     </div>
   );
 }

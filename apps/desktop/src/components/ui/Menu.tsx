@@ -3,7 +3,9 @@ import * as Primitive from "@radix-ui/react-dropdown-menu";
 import { LuChevronRight } from "react-icons/lu";
 import { OverlayPresence } from "./overlay";
 
-export const Menu = Primitive.Root;
+export function Menu(props: ComponentProps<typeof Primitive.Root>) {
+  return <Primitive.Root modal={false} {...props} />;
+}
 export const MenuTrigger = Primitive.Trigger;
 export const MenuSub = Primitive.Sub;
 
@@ -64,7 +66,7 @@ export function MenuSubTrigger({
       {children}
       <span className="row-end">
         {meta}
-        <LuChevronRight />
+        <LuChevronRight className="chevron" />
       </span>
     </Primitive.SubTrigger>
   );
@@ -74,7 +76,7 @@ export function MenuSubContent({ className, children, ...props }: ComponentProps
   return (
     <Primitive.Portal>
       <Primitive.SubContent
-        className={cls("menu menu-sub", className)}
+        className={cls("menu", className)}
         sideOffset={4}
         alignOffset={-5}
         collisionPadding={8}
@@ -84,6 +86,14 @@ export function MenuSubContent({ className, children, ...props }: ComponentProps
         {children}
       </Primitive.SubContent>
     </Primitive.Portal>
+  );
+}
+
+export function MenuControl({ className, children, ...props }: ComponentProps<typeof Primitive.Item>) {
+  return (
+    <Primitive.Item className={cls("menu-control", className)} onSelect={(e) => e.preventDefault()} {...props}>
+      {children}
+    </Primitive.Item>
   );
 }
 

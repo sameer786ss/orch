@@ -17,6 +17,7 @@ import { ConnectorsMenu } from "./ConnectorsMenu";
 import { ContextRing } from "./ContextRing";
 import { FileMention, extractPromptFromDoc } from "./MentionNode";
 import { ModelMenu } from "./ModelMenu";
+import { ThinkingMenu } from "./ThinkingMenu";
 import { Suggestions } from "./Suggestions";
 import { useComposerAttachments } from "./hooks/useComposerAttachments";
 import { useDictation } from "./hooks/useDictation";
@@ -229,6 +230,7 @@ export function Composer({ home }: { home: boolean }) {
           </Menu>
 
           <ModelMenu />
+          <ThinkingMenu />
           <span className="grow" />
 
           {(home || usage.contextTokens > 0) && (

@@ -52,7 +52,7 @@ export function ProjectMenu() {
         <Button aria-label="Switch project" title={current?.path}>
           {current ? <ProjectIcon project={current} /> : <LuFolder />}
           <span>{current?.name ?? "Choose project"}</span>
-          <LuChevronDown />
+          <LuChevronDown className="chevron" />
         </Button>
       </MenuTrigger>
       <MenuContent align="start" side="top">

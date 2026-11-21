@@ -50,7 +50,13 @@ export const SourceView = memo(function SourceView({ path, content }: { path: st
     <div ref={scrollRef} className="source selectable" style={{ ["--gutter" as string]: String(lines.length).length }}>
       <pre aria-label={`Source of ${getBasename(path)}`} style={{ height: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((row) => (
-          <div key={row.key} className="source-line" style={{ transform: `translate3d(0, ${row.start}px, 0)` }}>
+          <div
+            key={row.key}
+            ref={virtualizer.measureElement}
+            data-index={row.index}
+            className="source-line"
+            style={{ transform: `translate3d(0, ${row.start}px, 0)` }}
+          >
             <span className="source-ln" aria-hidden="true">
               {row.index + 1}
             </span>

@@ -936,9 +936,6 @@ pub async fn collect_mentioned_paths(
     ops: &dyn WorkspaceOps,
     prompt: &str,
 ) -> Vec<(String, Option<String>)> {
-    if ops.root().is_none() {
-        return Vec::new();
-    }
     let mut out = Vec::new();
     for cap in mention_regex().captures_iter(prompt) {
         let (candidate, line_range) = if let Some(b) = cap.name("bracket") {

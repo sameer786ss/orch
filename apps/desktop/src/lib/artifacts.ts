@@ -36,7 +36,6 @@ interface ArtifactsState {
   activeId: string | null;
   panelOpen: boolean;
   maximized: boolean;
-  explorerOpen: boolean;
   treeVersion: number;
   fileVersions: Record<string, number>;
 }
@@ -51,8 +50,6 @@ interface ArtifactsActions {
   setActive: (id: string) => void;
   setPanelOpen: (open: boolean) => void;
   toggleMaximized: () => void;
-  toggleExplorer: () => void;
-  showExplorer: () => void;
   reset: () => void;
 }
 
@@ -63,7 +60,6 @@ const INITIAL_STATE: ArtifactsState = {
   activeId: null,
   panelOpen: false,
   maximized: false,
-  explorerOpen: false,
   treeVersion: 0,
   fileVersions: {},
 };
@@ -201,18 +197,6 @@ export const useArtifactsStore = create(
       });
     },
 
-    toggleExplorer: () => {
-      set((s) => {
-        s.explorerOpen = !s.explorerOpen;
-      });
-    },
-
-    showExplorer: () => {
-      set((s) => {
-        s.explorerOpen = true;
-        s.panelOpen = true;
-      });
-    },
 
     reset: () => {
       set((s) => {

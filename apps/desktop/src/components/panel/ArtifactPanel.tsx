@@ -1,15 +1,13 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
-import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
+import { lazy, Suspense, useRef } from "react";
 import { LuFolderTree, LuMaximize2, LuMinimize2, LuPlus, LuTerminal, LuX } from "react-icons/lu";
 import { activeTabId, useArtifactsStore, type ArtifactTab } from "../../lib/artifacts";
-import { useWorkspaceStore } from "../../lib/workspace";
 import { getBasename } from "../../lib/utils";
 import { ChromeIcon, FileIcon } from "../common/FileIcon";
 import { Button, IconButton } from "../ui/Button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/Menu";
 import { Tooltip } from "../ui/Tooltip";
 import { BrowserView } from "./BrowserView";
-import { Explorer } from "./Explorer";
+import { useFileFinder } from "./FileFinder";
 import { TerminalView } from "./TerminalView";
 
 const FileViewer = lazy(() => import("./FileViewer").then((m) => ({ default: m.FileViewer })));
@@ -36,53 +34,6 @@ function TabIcon({ tab }: { tab: ArtifactTab }) {
   return <FileIcon name={tab.path ? getBasename(tab.path) : `file.${tab.kind}`} />;
 }
 
-const EXPLORER_PX = 200;
-
-function ContentSplit({ children }: { children: ReactNode }) {
-  const open = useArtifactsStore((s) => s.explorerOpen);
-  const workspaceId = useWorkspaceStore((s) => s.current?.id);
-  const explorerRef = usePanelRef();
-  const width = useRef(EXPLORER_PX);
-  const initiallyOpen = useRef(open).current;
-  const [mounted, setMounted] = useState(open);
-  if (open && !mounted) setMounted(true);
-
-  useEffect(() => {
-    const panel = explorerRef.current;
-    if (!panel || open !== panel.isCollapsed()) return;
-    if (open) panel.resize(width.current);
-    else panel.collapse();
-  }, [open, explorerRef]);
-
-  return (
-    <Group orientation="horizontal">
-      <Panel id="view" className="pane" style={{ overflow: "hidden" }} minSize={220}>
-        {children}
-      </Panel>
-      <Separator className="gutter" disabled={!open} />
-      <Panel
-        id="explorer"
-        panelRef={explorerRef}
-        className="pane"
-        style={{ overflow: "hidden" }}
-        defaultSize={initiallyOpen ? EXPLORER_PX : 0}
-        minSize={160}
-        maxSize="50%"
-        collapsible
-        collapsedSize={0}
-        groupResizeBehavior="preserve-pixel-size"
-        onResize={({ inPixels }) => {
-          if (inPixels > 0) width.current = inPixels;
-          const store = useArtifactsStore.getState();
-          if (inPixels > 0 !== store.explorerOpen) store.toggleExplorer();
-        }}
-      >
-        {mounted && <Explorer key={workspaceId} />}
-      </Panel>
-    </Group>
-  );
-}
-
 function Tabs() {
   const tabs = useArtifactsStore((s) => s.tabs);
   const active = useArtifactsStore(activeTabId);
@@ -90,7 +41,7 @@ function Tabs() {
   const closeTab = useArtifactsStore((s) => s.closeTab);
   const openBrowser = useArtifactsStore((s) => s.openBrowser);
   const openTerminal = useArtifactsStore((s) => s.openTerminal);
-  const showExplorer = useArtifactsStore((s) => s.showExplorer);
+  const setFinderOpen = useFileFinder((s) => s.setOpen);
 
   return (
     <div className="tabs" role="tablist">
@@ -149,7 +100,7 @@ function Tabs() {
             <LuTerminal />
             <span className="row-label">Terminal</span>
           </MenuItem>
-          <MenuItem onSelect={showExplorer}>
+          <MenuItem onSelect={() => setFinderOpen(true)}>
             <LuFolderTree />
             <span className="row-label">Files</span>
           </MenuItem>
@@ -195,11 +146,11 @@ function TabBody({ tab, active }: { tab: ArtifactTab; active: boolean }) {
 function Launcher() {
   const openBrowser = useArtifactsStore((s) => s.openBrowser);
   const openTerminal = useArtifactsStore((s) => s.openTerminal);
-  const showExplorer = useArtifactsStore((s) => s.showExplorer);
+  const setFinderOpen = useFileFinder((s) => s.setOpen);
   return (
     <div className="launch">
       <div className="launch-grid">
-        <button type="button" className="card" data-center="" onClick={showExplorer}>
+        <button type="button" className="card" data-center="" onClick={() => setFinderOpen(true)}>
           <LuFolderTree />
           Files
         </button>
@@ -221,8 +172,7 @@ export function ArtifactPanel({ visible }: { visible: boolean }) {
   const tabs = useArtifactsStore((s) => s.tabs);
   const active = useArtifactsStore(activeTabId);
   const maximized = useArtifactsStore((s) => s.maximized);
-  const explorerOpen = useArtifactsStore((s) => s.explorerOpen);
-  const toggleExplorer = useArtifactsStore((s) => s.toggleExplorer);
+  const setFinderOpen = useFileFinder((s) => s.setOpen);
   const toggleMaximized = useArtifactsStore((s) => s.toggleMaximized);
   const setPanelOpen = useArtifactsStore((s) => s.setPanelOpen);
 
@@ -230,7 +180,7 @@ export function ArtifactPanel({ visible }: { visible: boolean }) {
     <>
       <div className="bar">
         <Tabs />
-        <IconButton label={explorerOpen ? "Hide files" : "Show files"} active={explorerOpen} onClick={toggleExplorer}>
+        <IconButton label="Search files" onClick={() => setFinderOpen(true)}>
           <LuFolderTree />
         </IconButton>
         <IconButton label={maximized ? "Restore" : "Maximize"} onClick={toggleMaximized}>
@@ -241,15 +191,13 @@ export function ArtifactPanel({ visible }: { visible: boolean }) {
         </IconButton>
       </div>
       <div className="stage">
-        <ContentSplit>
-          <div className="panel-body">
-            {tabs.length === 0 ? (
-              <Launcher />
-            ) : (
-              tabs.map((tab) => <TabBody key={tab.id} tab={tab} active={visible && tab.id === active} />)
-            )}
-          </div>
-        </ContentSplit>
+        <div className="panel-body">
+          {tabs.length === 0 ? (
+            <Launcher />
+          ) : (
+            tabs.map((tab) => <TabBody key={tab.id} tab={tab} active={visible && tab.id === active} />)
+          )}
+        </div>
       </div>
     </>
   );
