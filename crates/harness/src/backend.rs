@@ -443,7 +443,7 @@ pub mod local_fs {
     use process_wrap::tokio::ProcessGroup;
     #[cfg(windows)]
     use process_wrap::tokio::{CreationFlags, JobObject};
-    use process_wrap::tokio::{ChildWrapper, KillOnDrop};
+    use process_wrap::tokio::KillOnDrop;
     use ignore::{WalkBuilder, WalkState};
     use parking_lot::Mutex;
     use path_clean::PathClean;
