@@ -50,3 +50,6 @@ tokio-util = "0.7"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_System_Threading"] }

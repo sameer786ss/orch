@@ -443,6 +443,8 @@ pub mod local_fs {
     use process_wrap::tokio::ProcessGroup;
     #[cfg(windows)]
     use process_wrap::tokio::{CreationFlags, JobObject};
+    #[cfg(windows)]
+    use windows::Win32::System::Threading::PROCESS_CREATION_FLAGS;
     use process_wrap::tokio::KillOnDrop;
     use ignore::{WalkBuilder, WalkState};
     use parking_lot::Mutex;
@@ -671,7 +673,7 @@ pub mod local_fs {
                 cmd.wrap(ProcessGroup::leader());
                 #[cfg(windows)]
                 {
-                    cmd.wrap(CreationFlags(0x08000000.into()));
+                    cmd.wrap(CreationFlags(PROCESS_CREATION_FLAGS(0x08000000)));
                     cmd.wrap(JobObject);
                 }
 
