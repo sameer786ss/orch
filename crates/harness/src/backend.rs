@@ -438,7 +438,8 @@ pub mod local_fs {
     use tokio::sync::Notify;
 
     use super::{
-        CommandRegistry, CommandResult, CommandTaskHandle, CommandTaskStatus, PathStat,
+        CommandRegistry, CommandResult, CommandStatus, CommandTaskHandle, CommandTaskStatus,
+        PathStat,
         WorkspaceOps,
     };
     use crate::config;
