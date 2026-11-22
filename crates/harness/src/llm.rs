@@ -275,11 +275,11 @@ The skill content gives you a proven sequence of steps, tool calls, and checks â
         environment.push('\n');
         environment.push_str(note);
     }
-    if let Some(path) = workspace
-        && let Some(rules) = workspace_rules(path)
-    {
-        environment.push_str("\n\nProject instructions from AGENTS.md:\n");
-        environment.push_str(&rules);
+    if let Some(path) = workspace {
+        if let Some(rules) = workspace_rules(path) {
+            environment.push_str("\n\nProject instructions from AGENTS.md:\n");
+            environment.push_str(&rules);
+        }
     }
     sections.push(Section::new("environment", environment));
 
