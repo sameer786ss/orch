@@ -10,20 +10,23 @@ local-fs = [
     "dep:grep-regex",
     "dep:grep-searcher",
     "dep:ignore",
-    "dep:command-group",
+    "dep:globset",
+    "dep:process-wrap",
+    "dep:envvars",
     "dep:tempfile",
 ]
 
 [dependencies]
 async-trait = "0.1"
 base64 = "0.22"
-command-group = { version = "5.0", features = ["with-tokio"], optional = true }
+process-wrap = { version = "9", features = ["tokio1", "process-group", "process-session", "job-object", "creation-flags", "kill-on-drop"], optional = true }
 dunce = { version = "1", optional = true }
-envvars = "0.1.10"
+envvars = { version = "0.1.10", optional = true }
 futures = "0.3"
 gray_matter = "0.2"
 grep-regex = { version = "0.1", optional = true }
 grep-searcher = { version = "0.1", optional = true }
+globset = { version = "0.4", optional = true }
 http = "1"
 ignore = { version = "0.4", optional = true }
 include_dir = { version = "0.7", features = ["glob"] }
@@ -36,7 +39,7 @@ reqwest-middleware = { version = "0.5.2", features = ["json", "multipart"] }
 reqwest-retry = "0.9.1"
 rig = { version = "0.45.0", default-features = false, features = ["agent", "derive", "reqwest", "rustls", "reqwest-middleware-rustls"] }
 rig-memory = { version = "0.45.0", default-features = false }
-schemars = "0.8"
+schemars = "1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 similar = "3.2.1"

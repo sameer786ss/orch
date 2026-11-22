@@ -114,48 +114,6 @@ pub struct SessionSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Budget {
-    pub cost_usd: f64,
-    pub limit_usd: f64,
-    pub remaining: f64,
-    pub period: String,
-    pub allowed: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudWorkspaceInfo {
-    pub workspace: String,
-    pub repo_url: String,
-    pub repo_dir: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudAttachment {
-    pub name: String,
-    pub data_base64: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudChatStreamReq {
-    pub session_id: String,
-    pub prompt: String,
-    pub model: String,
-    pub workspace: String,
-    #[serde(default)]
-    pub repo_url: Option<String>,
-    #[serde(default)]
-    pub attachments: Vec<CloudAttachment>,
-    #[serde(default)]
-    pub active_connectors: Vec<String>,
-    #[serde(default)]
-    pub thinking_effort: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AttachmentRef {
     pub path: String,
     pub name: String,

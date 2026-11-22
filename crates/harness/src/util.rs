@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -195,22 +196,34 @@ pub fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option
     }
 }
 
+#[cfg(feature = "local-fs")]
 pub fn login_shell_path() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
     PATH.get_or_init(resolve_login_path).as_deref()
 }
 
+#[cfg(not(feature = "local-fs"))]
+pub fn login_shell_path() -> Option<&'static str> {
+    None
+}
+
+#[cfg(feature = "local-fs")]
 pub fn warm_login_shell_path() {
     std::thread::spawn(|| {
         let _ = login_shell_path();
     });
 }
 
+#[cfg(not(feature = "local-fs"))]
+pub fn warm_login_shell_path() {}
+
+#[cfg(feature = "local-fs")]
 fn resolve_login_path() -> Option<String> {
     resolve_login_path_from_profiles()
         .or_else(|| std::env::var("PATH").ok().filter(|path| !path.trim().is_empty()))
 }
 
+#[cfg(feature = "local-fs")]
 fn resolve_login_path_from_profiles() -> Option<String> {
     if let Ok(mut profiles) = envvars::get_profiles() {
         for profile in &mut profiles {

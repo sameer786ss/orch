@@ -52,11 +52,10 @@ class OrchStream(private val client: OrchClient, cacheDir: File) {
     }
 
     fun chat(request: ChatRequest, attachments: List<AttachmentSource>): Flow<SseFrame> = flow {
-        val head = OrchJson.encodeToString(request)
         if (attachments.isEmpty()) {
-            emitAll(events(chatRequest(head.toRequestBody(JSON))))
+            emitAll(events(chatRequest(OrchJson.encodeToString(request).toRequestBody(JSON))))
         } else {
-            val payload = withContext(Dispatchers.IO) { writePayload(head, attachments) }
+            val payload = withContext(Dispatchers.IO) { writePayload(request, attachments) }
             try {
                 emitAll(events(chatRequest(FileBody(payload))))
             } finally {
@@ -113,15 +112,29 @@ class OrchStream(private val client: OrchClient, cacheDir: File) {
         awaitClose { source.cancel() }
     }.buffer(Channel.BUFFERED)
 
-    private fun writePayload(head: String, attachments: List<AttachmentSource>): File {
+    private fun writePayload(request: ChatRequest, attachments: List<AttachmentSource>): File {
         val file = File(uploads, "${UUID.randomUUID()}.json")
         try {
             file.sink().buffer().use { sink ->
-                val objectEnd = head.lastIndexOf('}')
-                if (objectEnd < 0 || head.substring(objectEnd + 1).isNotEmpty()) {
-                    throw IOException("Unable to serialize chat request as a JSON object.")
+                var first = true
+                fun field(name: String, value: String) {
+                    if (!first) sink.writeUtf8(",") else first = false
+                    sink.writeUtf8(JsonPrimitive(name).toString())
+                    sink.writeUtf8(":")
+                    sink.writeUtf8(value)
                 }
-                sink.writeUtf8(head.substring(0, objectEnd))
+                field("sessionId", JsonPrimitive(request.sessionId).toString())
+                field("prompt", JsonPrimitive(request.prompt).toString())
+                field("model", JsonPrimitive(request.model).toString())
+                field("workspace", JsonPrimitive(request.workspace).toString())
+                request.repoUrl?.let { field("repoUrl", JsonPrimitive(it).toString()) }
+                sink.writeUtf8(",\"activeConnectors\":[")
+                request.activeConnectors.forEachIndexed { index, connector ->
+                    if (index > 0) sink.writeUtf8(",")
+                    sink.writeUtf8(JsonPrimitive(connector).toString())
+                }
+                sink.writeUtf8("],\"thinkingEffort\":")
+                sink.writeUtf8(JsonPrimitive(request.thinkingEffort).toString())
                 sink.writeUtf8(",\"attachments\":[")
                 attachments.forEachIndexed { index, attachment ->
                     if (index > 0) sink.writeUtf8(",")

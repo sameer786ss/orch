@@ -16,7 +16,7 @@ use orchharness::error::{AppError, AppResult};
 use reqwest::multipart::{Form, Part};
 use reqwest::{Method, StatusCode};
 use serde_json::{json, Value};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::cloud::store::{workspace_doc_id, CloudWorkspaceRecord};
@@ -88,6 +88,49 @@ pub struct ConnectFrameDecoder {
 pub enum ConnectFrame {
     Message(Value),
     EndStream(Option<String>),
+}
+
+pub enum EnvdProcessEvent {
+    Start { pid: u64 },
+    Data {
+        stdout: Option<Vec<u8>>,
+        stderr: Option<Vec<u8>>,
+        pty: Option<Vec<u8>>,
+    },
+    End { exit_code: i32 },
+}
+
+pub fn parse_process_event(value: &Value) -> Option<EnvdProcessEvent> {
+    let event = value.get("event")?;
+    if let Some(start) = event.get("start") {
+        let pid = start.get("pid").map(parse_u64).filter(|pid| *pid > 0)?;
+        return Some(EnvdProcessEvent::Start { pid });
+    }
+    if let Some(data) = event.get("data") {
+        let decode = |key: &str| {
+            data.get(key)
+                .and_then(Value::as_str)
+                .and_then(|encoded| STANDARD.decode(encoded).ok())
+        };
+        return Some(EnvdProcessEvent::Data {
+            stdout: decode("stdout"),
+            stderr: decode("stderr"),
+            pty: decode("pty"),
+        });
+    }
+    if let Some(end) = event.get("end") {
+        let exit_code = end
+            .get("exitCode")
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                end.get("exitCode")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse().ok())
+            })
+            .unwrap_or(0) as i32;
+        return Some(EnvdProcessEvent::End { exit_code });
+    }
+    None
 }
 
 impl ConnectFrameDecoder {
@@ -233,30 +276,22 @@ impl CloudCommandManager {
                                                 }
                                                 Ok(Some(ConnectFrame::EndStream(None))) => {}
                                                 Ok(Some(ConnectFrame::Message(val))) => {
-                                                    if let Some(event) = val.get("event") {
-                                                        if let Some(start) = event.get("start") {
-                                                            if let Some(p) = start.get("pid").map(parse_u64).filter(|&p| p > 0) {
-                                                                pid = Some(p);
+                                                    if let Some(process_event) = parse_process_event(&val) {
+                                                        match process_event {
+                                                            EnvdProcessEvent::Start { pid: process_pid } => {
+                                                                pid = Some(process_pid);
                                                             }
-                                                        }
-                                                        if let Some(data) = event.get("data") {
-                                                            if let Some(out) = data.get("stdout").and_then(Value::as_str) {
-                                                                if let Ok(bytes) = STANDARD.decode(out) {
-                                                                    handle.push_stdout(&bytes);
+                                                            EnvdProcessEvent::Data { stdout, stderr, .. } => {
+                                                                if let Some(out) = stdout {
+                                                                    handle.push_stdout(&out);
+                                                                }
+                                                                if let Some(err) = stderr {
+                                                                    handle.push_stderr(&err);
                                                                 }
                                                             }
-                                                            if let Some(err) = data.get("stderr").and_then(Value::as_str) {
-                                                                if let Ok(bytes) = STANDARD.decode(err) {
-                                                                    handle.push_stderr(&bytes);
-                                                                }
+                                                            EnvdProcessEvent::End { exit_code } => {
+                                                                handle.set_completed(exit_code);
                                                             }
-                                                        }
-                                                        if let Some(end) = event.get("end") {
-                                                            let code = end
-                                                                .get("exitCode")
-                                                                .and_then(Value::as_i64)
-                                                                .unwrap_or(0) as i32;
-                                                            handle.set_completed(code);
                                                         }
                                                     }
                                                 }
@@ -299,6 +334,8 @@ struct ManagedSandbox {
 struct LeaseInner {
     manager: SandboxManager,
     doc_id: String,
+    _permit: OwnedSemaphorePermit,
+    _global_permit: OwnedSemaphorePermit,
 }
 
 impl Drop for LeaseInner {
@@ -327,6 +364,8 @@ pub struct SandboxManager {
     streaming_http: reqwest::Client,
     firestore: FirestoreClient,
     slots: Arc<DashMap<String, Arc<Mutex<ManagedSandbox>>>>,
+    user_leases: Arc<DashMap<String, Arc<Semaphore>>>,
+    global_leases: Arc<Semaphore>,
     pub cmd_mgr: Arc<CloudCommandManager>,
 }
 
@@ -343,6 +382,8 @@ impl SandboxManager {
             streaming_http,
             firestore,
             slots: Arc::new(DashMap::new()),
+            user_leases: Arc::new(DashMap::new()),
+            global_leases: Arc::new(Semaphore::new(config::MAX_SANDBOX_LEASES_TOTAL)),
             cmd_mgr: Arc::new(CloudCommandManager::new()),
         }
     }
@@ -354,11 +395,29 @@ impl SandboxManager {
             .clone()
     }
 
+    fn user_semaphore(&self, user_id: &str) -> Arc<Semaphore> {
+        self.user_leases
+            .entry(user_id.to_string())
+            .or_insert_with(|| Arc::new(Semaphore::new(config::MAX_SANDBOX_LEASES_PER_USER)))
+            .clone()
+    }
+
     pub async fn acquire(
         &self,
         user_id: &str,
         workspace: &CloudWorkspace,
     ) -> ApiResult<SandboxLease> {
+        let global_permit = self
+            .global_leases
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| ApiError::unavailable("Sandbox capacity is unavailable"))?;
+        let permit = self
+            .user_semaphore(user_id)
+            .acquire_owned()
+            .await
+            .map_err(|_| ApiError::unavailable("Sandbox capacity is unavailable"))?;
         let doc_id = workspace_doc_id(user_id, &workspace.uri);
         let slot = self.slot_for(&doc_id);
         let mut guard = slot.lock().await;
@@ -428,6 +487,8 @@ impl SandboxManager {
             _inner: Arc::new(LeaseInner {
                 manager: self.clone(),
                 doc_id,
+                _permit: permit,
+                _global_permit: global_permit,
             }),
         })
     }
@@ -454,14 +515,23 @@ impl SandboxManager {
             let Some(slot) = manager.slots.get(&doc).map(|e| e.value().clone()) else {
                 return;
             };
-            let mut guard = slot.lock().await;
-            if guard.active_leases == 0 {
-                if let Err(err) = manager.pause_sandbox(&sandbox_id).await {
-                    tracing::warn!(sandbox_id = %sandbox_id, error = %err.message(), "failed to pause idle E2B sandbox");
+            let mut remove_slot = false;
+            {
+                let mut guard = slot.lock().await;
+                if guard.active_leases == 0 {
+                    if let Err(err) = manager.pause_sandbox(&sandbox_id).await {
+                        tracing::warn!(sandbox_id = %sandbox_id, error = %err.message(), "failed to pause idle E2B sandbox");
+                    }
+                    guard.conn = None;
+                    guard.repo_ready = false;
+                    guard.idle_pause_task = None;
+                    remove_slot = Arc::strong_count(&slot) == 2;
                 }
-                guard.conn = None;
-                guard.repo_ready = false;
-                guard.idle_pause_task = None;
+            }
+            if remove_slot {
+                manager
+                    .slots
+                    .remove_if(&doc, |_, existing| Arc::ptr_eq(existing, &slot));
             }
         }));
     }
@@ -516,7 +586,7 @@ impl SandboxManager {
         let mut envs = HashMap::new();
         envs.insert("REPO_DIR".to_string(), repo_dir.to_string());
         let script = r#"cd "$REPO_DIR" 2>/dev/null || exit 0; echo "Branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"; ls -1A --group-directories-first | head -n 40"#;
-        match self
+        let mut environment = match self
             .run_oneshot(conn, "/bin/bash", &["-c", script], Some(repo_dir), Some(envs), 10)
             .await
         {
@@ -529,7 +599,17 @@ impl SandboxManager {
                 "Sandbox Environment (Linux / E2B)\nUploads directory: {}",
                 config::UPLOAD_DIR
             ),
+        };
+        let rules_path = format!("{repo_dir}/AGENTS.md");
+        if let Ok((bytes, truncated)) = self.read_bytes_prefix(conn, &rules_path, 24_000).await
+            && !truncated
+            && let Ok(rules) = String::from_utf8(bytes)
+            && !rules.trim().is_empty()
+        {
+            environment.push_str("\n\nProject instructions from AGENTS.md:\n");
+            environment.push_str(orchharness::util::truncate_chars(rules.trim(), 24_000));
         }
+        environment
     }
 
     async fn create_sandbox(&self, user_id: &str, workspace_uri: &str) -> ApiResult<SandboxConn> {
@@ -1034,30 +1114,22 @@ impl SandboxManager {
                                     }
                                     Ok(Some(ConnectFrame::EndStream(None))) => {}
                                     Ok(Some(ConnectFrame::Message(val))) => {
-                                        if let Some(event) = val.get("event") {
-                                            if let Some(start) = event.get("start") {
-                                                if let Some(p) = start.get("pid").map(parse_u64).filter(|&p| p > 0) {
-                                                    pid = Some(p);
+                                        if let Some(process_event) = parse_process_event(&val) {
+                                            match process_event {
+                                                EnvdProcessEvent::Start { pid: process_pid } => {
+                                                    pid = Some(process_pid);
                                                 }
-                                            }
-                                            if let Some(data) = event.get("data") {
-                                                if let Some(out) = data.get("stdout").and_then(Value::as_str) {
-                                                    if let Ok(b) = STANDARD.decode(out) {
-                                                        stdout.extend_from_slice(&b);
+                                                EnvdProcessEvent::Data { stdout: out, stderr: err, .. } => {
+                                                    if let Some(out) = out {
+                                                        stdout.extend_from_slice(&out);
+                                                    }
+                                                    if let Some(err) = err {
+                                                        stderr.extend_from_slice(&err);
                                                     }
                                                 }
-                                                if let Some(err) = data.get("stderr").and_then(Value::as_str) {
-                                                    if let Ok(b) = STANDARD.decode(err) {
-                                                        stderr.extend_from_slice(&b);
-                                                    }
+                                                EnvdProcessEvent::End { exit_code: code } => {
+                                                    exit_code = Some(code);
                                                 }
-                                            }
-                                            if let Some(end) = event.get("end") {
-                                                exit_code = Some(
-                                                    end.get("exitCode")
-                                                        .and_then(Value::as_i64)
-                                                        .unwrap_or(0) as i32,
-                                                );
                                             }
                                         }
                                     }
@@ -1125,13 +1197,19 @@ impl WorkspaceOps for CloudWorkspaceOps {
 
     async fn read_bytes(&self, abs_path: &str, max_bytes: Option<u64>) -> AppResult<Vec<u8>> {
         if let Some(limit) = max_bytes {
-            let st = self.stat(abs_path).await?;
-            if st.exists && st.size > limit {
+            let (bytes, truncated) = self
+                .lease
+                .manager
+                .read_bytes_prefix(&self.lease.conn, abs_path, limit as usize)
+                .await
+                .map_err(map_api_err)?;
+            if truncated {
                 return Err(AppError::other(format!(
-                    "file too large ({} bytes, limit {} bytes): {abs_path}",
-                    st.size, limit
+                    "file too large (over {} bytes): {abs_path}",
+                    limit
                 )));
             }
+            return Ok(bytes);
         }
         self.lease
             .manager
@@ -1192,115 +1270,131 @@ impl WorkspaceOps for CloudWorkspaceOps {
         query: &str,
         max_hits: usize,
     ) -> AppResult<String> {
-        let mut envs = HashMap::new();
-        envs.insert("WS_ROOT".to_string(), self.repo_dir.clone());
-        envs.insert("SEARCH_PATH".to_string(), abs_path.to_string());
-        envs.insert("SEARCH_QUERY".to_string(), query.to_string());
-        envs.insert("MAX_HITS".to_string(), max_hits.to_string());
-        envs.insert(
-            "MAX_FILE_BYTES".to_string(),
-            hconfig::MAX_SEARCHABLE_FILE_BYTES.to_string(),
-        );
-        envs.insert(
-            "MAX_LINE_CHARS".to_string(),
-            hconfig::MAX_SEARCH_LINE_CHARS.to_string(),
-        );
-        envs.insert(
-            "MAX_OUT_CHARS".to_string(),
-            hconfig::MAX_SEARCH_OUTPUT_CHARS.to_string(),
-        );
-        envs.insert("SKIP_DIRS".to_string(), hconfig::SKIP_DIRS.join(","));
-
-        let script = r#"
-import os, re, sys
-root = os.environ["WS_ROOT"].rstrip("/")
-target = os.environ["SEARCH_PATH"]
-query = os.environ["SEARCH_QUERY"]
-max_hits = int(os.environ["MAX_HITS"])
-max_file = int(os.environ["MAX_FILE_BYTES"])
-max_line = int(os.environ["MAX_LINE_CHARS"])
-max_out = int(os.environ["MAX_OUT_CHARS"])
-skip = set(os.environ["SKIP_DIRS"].split(","))
-try:
-    rx = re.compile(query, re.IGNORECASE)
-except re.error as e:
-    sys.stderr.write(f"invalid search pattern: {e}")
-    sys.exit(2)
-
-def rel(p):
-    prefix = root + "/"
-    return p[len(prefix):] if p.startswith(prefix) else p
-
-results = []
-total_chars = 0
-truncated = False
-
-def scan_file(fpath):
-    global total_chars, truncated
-    try:
-        if os.path.getsize(fpath) > max_file:
-            return
-        with open(fpath, "rb") as f:
-            raw = f.read()
-        if b"\x00" in raw[:8192]:
-            return
-        text = raw.decode("utf-8", errors="replace")
-    except OSError:
-        return
-    rp = rel(fpath)
-    for idx, line in enumerate(text.splitlines(), 1):
-        if rx.search(line):
-            s = line.strip()
-            shown = s[:max_line] + (" …" if len(s) > max_line else "")
-            out = f"{rp}:{idx}: {shown}"
-            results.append((rp, idx, out))
-            total_chars += len(out) + 1
-            if len(results) >= max_hits or total_chars >= max_out:
-                truncated = True
-                return
-
-if os.path.isfile(target):
-    scan_file(target)
-elif os.path.isdir(target):
-    for dp, dns, fns in os.walk(target):
-        dns[:] = sorted(d for d in dns if d not in skip)
-        for fn in sorted(fns):
-            scan_file(os.path.join(dp, fn))
-            if truncated:
-                break
-        if truncated:
-            break
-else:
-    sys.stderr.write(f"path does not exist: {target}")
-    sys.exit(2)
-
-if not results:
-    print(f"No matches found for pattern: '{query}'")
-else:
-    results.sort(key=lambda x: (x[0], x[1]))
-    out = "\n".join(x[2] for x in results)
-    if truncated or len(results) >= max_hits:
-        out += "\n\n[results limited; narrow the pattern or pass path to search a subdirectory]"
-    print(out)
-"#;
-
+        let mut args = vec![
+            "--color=never".to_string(),
+            "--no-heading".to_string(),
+            "--line-number".to_string(),
+            "--with-filename".to_string(),
+            "--ignore-case".to_string(),
+            format!("--max-filesize={}b", hconfig::MAX_SEARCHABLE_FILE_BYTES),
+        ];
+        for skipped in hconfig::SKIP_DIRS {
+            args.push("--glob".to_string());
+            args.push(format!("!{skipped}/**"));
+        }
+        args.push("--".to_string());
+        args.push(query.to_string());
+        args.push(abs_path.to_string());
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self
             .lease
             .manager
             .run_oneshot(
                 &self.lease.conn,
-                "python3",
-                &["-c", script],
+                "rg",
+                &arg_refs,
                 Some(&self.repo_dir),
-                Some(envs),
+                None,
                 60,
             )
             .await
             .map_err(map_api_err)?;
-        if code != 0 {
+        if code != 0 && code != 1 {
             return Err(AppError::other(stderr.trim().to_string()));
         }
-        Ok(stdout.trim_end().to_string())
+
+        let mut lines = Vec::new();
+        let mut total_chars = 0usize;
+        let mut truncated = false;
+        for raw in stdout.lines() {
+            let Some((path, rest)) = raw.split_once(':') else {
+                continue;
+            };
+            let Some((line_number, text)) = rest.split_once(':') else {
+                continue;
+            };
+            let relative = path
+                .strip_prefix(&format!("{}/", self.repo_dir))
+                .unwrap_or(path);
+            let trimmed = text.trim();
+            let shown = orchharness::util::truncate_chars(trimmed, hconfig::MAX_SEARCH_LINE_CHARS);
+            let suffix = if shown.len() < trimmed.len() { " …" } else { "" };
+            let rendered = format!("{relative}:{line_number}: {shown}{suffix}");
+            if lines.len() >= max_hits
+                || total_chars + rendered.chars().count() + 1 > hconfig::MAX_SEARCH_OUTPUT_CHARS
+            {
+                truncated = true;
+                break;
+            }
+            total_chars += rendered.chars().count() + 1;
+            lines.push(rendered);
+        }
+        if lines.is_empty() {
+            return Ok(format!("No matches found for pattern: '{query}'"));
+        }
+        let mut output = lines.join("\n");
+        if truncated || lines.len() >= max_hits {
+            output.push_str("\n\n[results limited; narrow the pattern or pass path to search a subdirectory]");
+        }
+        Ok(output)
+    }
+
+    async fn glob_files(
+        &self,
+        abs_path: &str,
+        pattern: &str,
+        max_results: usize,
+    ) -> AppResult<String> {
+        let mut args = vec![
+            "--files".to_string(),
+            "--hidden".to_string(),
+            "--color=never".to_string(),
+            "--glob".to_string(),
+            pattern.to_string(),
+        ];
+        for skipped in hconfig::SKIP_DIRS {
+            args.push("--glob".to_string());
+            args.push(format!("!{skipped}/**"));
+        }
+        args.push("--".to_string());
+        args.push(abs_path.to_string());
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = self
+            .lease
+            .manager
+            .run_oneshot(
+                &self.lease.conn,
+                "rg",
+                &arg_refs,
+                Some(&self.repo_dir),
+                None,
+                60,
+            )
+            .await
+            .map_err(map_api_err)?;
+        if code != 0 && code != 1 {
+            return Err(AppError::other(stderr.trim().to_string()));
+        }
+        let mut matches: Vec<String> = stdout
+            .lines()
+            .map(|line| {
+                line.strip_prefix(&format!("{}/", self.repo_dir))
+                    .unwrap_or(line)
+                    .trim_start_matches("./")
+                    .to_string()
+            })
+            .collect();
+        matches.sort();
+        matches.truncate(max_results);
+        if matches.is_empty() {
+            Ok(format!("No files matched glob: '{pattern}'"))
+        } else {
+            let mut output = matches.join("\n");
+            if matches.len() >= max_results {
+                output.push_str("\n\n[results limited; narrow the pattern or pass a smaller path]");
+            }
+            Ok(output)
+        }
     }
 
     async fn execute_bash(

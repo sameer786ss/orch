@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use axum::extract::State;
+use bytes::Bytes;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use futures::StreamExt;
@@ -42,21 +43,33 @@ const STREAM_CHANNEL_CAPACITY: usize = 128;
 #[derive(Debug, Clone, Copy)]
 struct ModelRates {
     input_per_mtok: f64,
+    cached_input_per_mtok: f64,
     output_per_mtok: f64,
 }
 
 impl ModelRates {
-    fn cost_usd(self, input_tokens: u64, output_tokens: u64) -> f64 {
-        (input_tokens as f64 * self.input_per_mtok
+    fn cost_usd(self, input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> f64 {
+        let cached = cached_input_tokens.min(input_tokens);
+        let uncached = input_tokens.saturating_sub(cached);
+        (uncached as f64 * self.input_per_mtok
+            + cached as f64 * self.cached_input_per_mtok
             + output_tokens as f64 * self.output_per_mtok)
             / 1_000_000.0
     }
 }
 
-fn model_rates(_model_id: &str) -> ModelRates {
-    ModelRates {
-        input_per_mtok: 5.0,
-        output_per_mtok: 15.0,
+fn model_rates(model_id: &str) -> ModelRates {
+    match model_id {
+        "gemini-3.5-flash-lite" => ModelRates {
+            input_per_mtok: 0.1,
+            cached_input_per_mtok: 0.025,
+            output_per_mtok: 0.4,
+        },
+        _ => ModelRates {
+            input_per_mtok: 5.0,
+            cached_input_per_mtok: 0.5,
+            output_per_mtok: 15.0,
+        },
     }
 }
 
@@ -64,6 +77,7 @@ fn model_rates(_model_id: &str) -> ModelRates {
 #[serde(rename_all = "camelCase", default)]
 struct GeminiUsage {
     prompt_token_count: u64,
+    cached_content_token_count: u64,
     tool_use_prompt_token_count: u64,
     candidates_token_count: u64,
     thoughts_token_count: u64,
@@ -80,6 +94,7 @@ impl GeminiUsage {
     fn cost_usd(&self, rates: ModelRates) -> f64 {
         rates.cost_usd(
             self.prompt_token_count + self.tool_use_prompt_token_count,
+            self.cached_content_token_count,
             self.candidates_token_count + self.thoughts_token_count,
         )
     }

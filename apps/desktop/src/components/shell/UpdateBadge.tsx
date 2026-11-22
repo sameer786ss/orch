@@ -1,4 +1,4 @@
-import { LuDownload, LuRotateCw, LuTriangleAlert } from "react-icons/lu";
+import { LuRotateCw, LuTriangleAlert } from "react-icons/lu";
 import { useUpdaterStore } from "../../lib/updater";
 import { Button } from "../ui/Button";
 import { Tooltip } from "../ui/Tooltip";
@@ -24,13 +24,12 @@ export function UpdateBadge() {
     );
   }
 
-  if (status === "manualAvailable" || status === "readyToRestart") {
-    const ready = status === "readyToRestart";
+  if (status === "readyToRestart") {
     return (
-      <Tooltip content={ready ? `v${version} is ready. Restart to apply.` : `v${version} is available`} side="bottom">
+      <Tooltip content={`v${version} is ready. Restart to apply.`} side="bottom">
         <Button size="sm" variant="subtle" onClick={() => void apply()}>
-          {ready ? <LuRotateCw /> : <LuDownload />}
-          <span>{ready ? "Restart to update" : "Update available"}</span>
+          <LuRotateCw />
+          <span>Restart to update</span>
         </Button>
       </Tooltip>
     );

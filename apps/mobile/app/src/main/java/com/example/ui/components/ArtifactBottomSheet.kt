@@ -72,9 +72,12 @@ import com.orch.app.data.ArtifactState
 import com.orch.app.ui.chat.ChatMarkdown
 import com.orch.app.ui.theme.OrchDimens
 import com.orch.app.ui.theme.OrchMonoBody
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -243,34 +246,35 @@ private class PdfDoc(
         }
     }
 
-    fun close() {
-        runBlocking(Dispatchers.IO) {
-            lock.withLock {
-                if (!closed) {
-                    closed = true
-                    runCatching { renderer.close() }
-                    runCatching { descriptor.close() }
-                }
+    fun close(scope: CoroutineScope): Job = scope.launch(Dispatchers.IO) {
+        lock.withLock {
+            if (!closed) {
+                closed = true
+                runCatching { renderer.close() }
+                runCatching { descriptor.close() }
             }
         }
     }
 }
 
 private class PdfOwner {
+    private val closeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var doc: PdfDoc? = null
     private var released = false
 
     fun open(file: File): PdfLoad {
         val result = openPdf(file)
-        return if (result is PdfLoad.Ready && !adopt(result.doc)) PdfLoad.Loading else result
+        return if (result is PdfLoad.Ready && !adopt(result.doc)) {
+            result.doc.close(closeScope)
+            PdfLoad.Loading
+        } else {
+            result
+        }
     }
 
     @Synchronized
     private fun adopt(opened: PdfDoc): Boolean {
-        if (released) {
-            opened.close()
-            return false
-        }
+        if (released) return false
         doc = opened
         return true
     }
@@ -278,8 +282,10 @@ private class PdfOwner {
     @Synchronized
     fun release() {
         released = true
-        doc?.close()
+        val closing = doc?.close(closeScope)
         doc = null
+        closing?.invokeOnCompletion { closeScope.cancel() }
+        if (closing == null) closeScope.cancel()
     }
 }
 
@@ -466,7 +472,7 @@ private fun TextViewer(content: ArtifactContent.Text) {
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = OrchDimens.ScreenPadding, vertical = 12.dp)
             ) {
-                ChatMarkdown(content.text, streaming = true)
+                ChatMarkdown(content.text, streaming = false)
             }
         } else {
             CodeView(content.text)

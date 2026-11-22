@@ -151,24 +151,44 @@ impl FirestoreClient {
         query: &[(&str, &str)],
         body: Option<&Value>,
     ) -> Result<Reply, String> {
-        let token = self
-            .auth
-            .token(&[config::FIRESTORE_SCOPE])
-            .await
-            .map_err(|error| format!("Firestore authentication failed: {error}"))?;
-        let mut request = self
-            .http
-            .request(method.clone(), url)
-            .bearer_auth(token.as_str())
-            .query(query)
-            .timeout(Duration::from_secs(config::FIRESTORE_TIMEOUT_SECS));
-        if let Some(body) = body {
-            request = request.json(body);
-        }
-        let response = request
-            .send()
-            .await
-            .map_err(|error| format!("Firestore {method} request failed: {}", error.without_url()))?;
+        let mut attempt = 0u32;
+        let response = loop {
+            let token = self
+                .auth
+                .token(&[config::FIRESTORE_SCOPE])
+                .await
+                .map_err(|error| format!("Firestore authentication failed: {error}"))?;
+            let mut request = self
+                .http
+                .request(method.clone(), url)
+                .bearer_auth(token.as_str())
+                .query(query)
+                .timeout(Duration::from_secs(config::FIRESTORE_TIMEOUT_SECS));
+            if let Some(body) = body {
+                request = request.json(body);
+            }
+            match request.send().await {
+                Ok(response)
+                    if (response.status() == StatusCode::TOO_MANY_REQUESTS
+                        || response.status().is_server_error())
+                        && attempt < config::FIRESTORE_RETRY_ATTEMPTS =>
+                {
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_millis(100 * u64::from(attempt))).await;
+                }
+                Ok(response) => break response,
+                Err(_) if attempt < config::FIRESTORE_RETRY_ATTEMPTS => {
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_millis(100 * u64::from(attempt))).await;
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "Firestore {method} request failed: {}",
+                        error.without_url()
+                    ));
+                }
+            }
+        };
         let status = response.status();
         let text = response
             .text()

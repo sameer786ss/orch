@@ -11,6 +11,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.orch.app.chat.ChatReducer
 import com.orch.app.chat.ChatRow
 import com.orch.app.chat.EarlierRow
+import com.orch.app.chat.LIVE_STEP_EVENTS
 import com.orch.app.chat.Repo
 import com.orch.app.chat.UserAttachment
 import com.orch.app.chat.buildRows
@@ -205,8 +206,6 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadPreferences() {
         viewModelScope.launch {
             _thinkingEffort.value = preferences.thinkingEffort.first()
-            val savedActive = preferences.activeConnectors.first()
-            rebuildConnectors(lastLoadedAccounts, savedActive, loading = _connectors.value.loading, error = _connectors.value.error)
         }
     }
 
@@ -785,7 +784,6 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             if (query.isNotBlank()) {
-                delay(250)
                 runCatchingSuspend { api.files(workspace, query.trim(), FILE_LIST_LIMIT) }
                     .onSuccess { entries ->
                         _files.update {
@@ -917,6 +915,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         terminal.disconnect()
+        terminal.shutdown()
         artifactLoader.clear()
         client.http.dispatcher.cancelAll()
         client.http.connectionPool.evictAll()
@@ -931,13 +930,6 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         private const val TITLE_RETRY_MS = 2000L
         private const val MAX_ATTACHMENT_BYTES = 18L * 1024 * 1024
         private const val FILE_LIST_LIMIT = 500
-        private val LIVE_STEP_EVENTS = setOf(
-            "workStart",
-            "reasoningStart",
-            "reasoningDelta",
-            "toolStart",
-            "textDelta"
-        )
 
         fun factory(application: Application) = viewModelFactory {
             initializer { OrchViewModel(application) }

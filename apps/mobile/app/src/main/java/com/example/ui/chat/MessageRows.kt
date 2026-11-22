@@ -97,6 +97,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 import kotlin.io.encoding.Base64
 
 @Composable
@@ -161,9 +162,15 @@ private fun UserBubble(row: UserRow, onOpenFile: (String) -> Unit) {
 private const val THUMBNAIL_PX = 144
 private val thumbnailCache = LruCache<String, ImageBitmap>(24)
 
+private fun thumbnailKey(dataUrl: String): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(dataUrl.toByteArray())
+        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+
 private fun decodeThumbnail(dataUrl: String): ImageBitmap? {
+    val cacheKey = thumbnailKey(dataUrl)
     synchronized(thumbnailCache) {
-        thumbnailCache.get(dataUrl)?.let { return it }
+        thumbnailCache.get(cacheKey)?.let { return it }
     }
     if (!dataUrl.contains("base64,")) return null
     val bytes = Base64.Mime.decode(dataUrl.substringAfter("base64,"))
@@ -174,7 +181,7 @@ private fun decodeThumbnail(dataUrl: String): ImageBitmap? {
     val options = BitmapFactory.Options().apply { inSampleSize = sample }
     val image = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
     if (image != null) {
-        synchronized(thumbnailCache) { thumbnailCache.put(dataUrl, image) }
+        synchronized(thumbnailCache) { thumbnailCache.put(cacheKey, image) }
     }
     return image
 }

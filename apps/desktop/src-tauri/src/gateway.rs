@@ -5,12 +5,9 @@ use std::time::Duration;
 use futures::StreamExt;
 use orchharness::backend::{TavilyRequest, TavilyResponse};
 use orchharness::error::{AppError, AppResult};
-use orchharness::events::{ChatEvent, EventSink};
+use orchharness::events::{parse_sse_block, ChatEvent, EventSink, SseBlockSplitter};
 pub use orchharness::models::ModelInfo;
-pub use orchharness::persistence::{
-    Budget, CloudAttachment, CloudChatStreamReq, CloudWorkspaceInfo, SessionRecordPage,
-    SessionSummary,
-};
+pub use orchharness::persistence::{SessionRecordPage, SessionSummary};
 use secrecy::{ExposeSecret, SecretString};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -20,6 +17,45 @@ use tokio_util::sync::CancellationToken;
 use crate::config;
 
 pub type TokenHandle = Arc<arc_swap::ArcSwapOption<SecretString>>;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Budget {
+    pub cost_usd: f64,
+    pub limit_usd: f64,
+    pub remaining: f64,
+    pub period: String,
+    pub resets_on: String,
+    pub allowed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudWorkspaceInfo {
+    pub workspace: String,
+    pub repo_url: String,
+    pub repo_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudAttachment {
+    pub name: String,
+    pub data_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudChatStreamReq {
+    pub session_id: String,
+    pub prompt: String,
+    pub model: String,
+    pub workspace: String,
+    pub repo_url: Option<String>,
+    pub attachments: Vec<CloudAttachment>,
+    pub active_connectors: Vec<String>,
+    pub thinking_effort: String,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct ModelCatalog {
@@ -92,6 +128,11 @@ impl Gateway {
         Ok(check_status(resp).await?.json().await?)
     }
 
+    async fn get_public<T: DeserializeOwned>(&self, url: &str, timeout: Duration) -> AppResult<T> {
+        let resp = self.http.get(url).timeout(timeout).send().await?;
+        Ok(check_status(resp).await?.json().await?)
+    }
+
     async fn post<B: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         url: &str,
@@ -112,7 +153,7 @@ impl Gateway {
 
     pub async fn models(&self) -> AppResult<ModelCatalog> {
         let models: Vec<ModelInfo> =
-            self.get(config::models_url(), Duration::from_secs(20)).await?;
+            self.get_public(config::models_url(), Duration::from_secs(20)).await?;
         Ok(ModelCatalog::from_list(models))
     }
 
@@ -415,8 +456,7 @@ impl Follower {
         cancel: &CancellationToken,
     ) -> Pumped {
         let mut stream = response.bytes_stream();
-        let mut buffer: Vec<u8> = Vec::new();
-        let mut scan_from = 0usize;
+        let mut splitter = SseBlockSplitter::default();
         let idle = Duration::from_secs(config::CLOUD_STREAM_IDLE_TIMEOUT_SECS);
         loop {
             tokio::select! {
@@ -425,19 +465,12 @@ impl Follower {
                     let Ok(Some(Ok(bytes))) = chunk else {
                         return Pumped::Dropped;
                     };
-                    buffer.extend(bytes.iter().copied().filter(|byte| *byte != b'\r'));
-                    while let Some(relative) = buffer[scan_from..]
-                        .windows(2)
-                        .position(|pair| pair == b"\n\n") {
-                        let position = scan_from + relative;
-                        let raw: Vec<u8> = buffer.drain(..position + 2).collect();
-                        let block = String::from_utf8_lossy(&raw[..position]).into_owned();
-                        scan_from = 0;
+                    splitter.push(&bytes);
+                    while let Some(block) = splitter.next_block() {
                         if forward_block(&block, event_sink, &mut self.last_id) {
                             return Pumped::Done;
                         }
                     }
-                    scan_from = buffer.len().saturating_sub(1);
                 }
             }
         }
@@ -449,28 +482,17 @@ fn forward_block(
     event_sink: &Arc<dyn EventSink>,
     last_id: &mut u64,
 ) -> bool {
-    let mut event: Option<&str> = None;
-    let mut id: Option<u64> = None;
-    let mut data: Vec<&str> = Vec::new();
-    for line in block.lines() {
-        if let Some(rest) = line.strip_prefix("event:") {
-            event = Some(rest.trim());
-        } else if let Some(rest) = line.strip_prefix("id:") {
-            id = rest.trim().parse::<u64>().ok();
-        } else if let Some(rest) = line.strip_prefix("data:") {
-            data.push(rest.strip_prefix(' ').unwrap_or(rest));
-        }
-    }
-    if event.is_none() && data.is_empty() {
+    let frame = parse_sse_block(block);
+    if frame.event.is_none() && frame.data.is_empty() {
         return false;
     }
-    let Some(chat_event) = ChatEvent::from_sse(event, &data.join("\n")) else {
+    let Some(chat_event) = ChatEvent::from_sse(frame.event.as_deref(), &frame.data) else {
         return false;
     };
     let finished = chat_event.is_done();
     if matches!(chat_event, ChatEvent::Resync) {
         *last_id = 0;
-    } else if let Some(id) = id {
+    } else if let Some(id) = frame.id {
         *last_id = id;
     }
     event_sink.send(chat_event);

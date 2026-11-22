@@ -1,27 +1,13 @@
 import { create } from "zustand";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { getVersion } from "@tauri-apps/api/app";
 import * as api from "./api";
-import { IS_MAC } from "./utils";
-
-function isNewer(remote: string, current: string): boolean {
-  const remoteParts = remote.replace(/^v/, "").split(".").map((part) => parseInt(part, 10) || 0);
-  const currentParts = current.replace(/^v/, "").split(".").map((part) => parseInt(part, 10) || 0);
-  for (let index = 0; index < Math.max(remoteParts.length, currentParts.length); index += 1) {
-    const difference = (remoteParts[index] ?? 0) - (currentParts[index] ?? 0);
-    if (difference !== 0) return difference > 0;
-  }
-  return false;
-}
 
 type UpdateStatus =
   | "idle"
   | "checking"
   | "none"
   | "downloading"
-  | "manualAvailable"
   | "readyToRestart"
   | "installing"
   | "failed";
@@ -29,7 +15,6 @@ type UpdateStatus =
 interface UpdaterState {
   status: UpdateStatus;
   version: string;
-  releaseUrl: string;
   percent: number;
   error: string | null;
   pendingUpdate: Update | null;
@@ -45,7 +30,6 @@ type UpdaterStore = UpdaterState & UpdaterActions;
 export const useUpdaterStore = create<UpdaterStore>((set, get) => ({
   status: "idle",
   version: "",
-  releaseUrl: "",
   percent: 0,
   error: null,
   pendingUpdate: null,
@@ -56,27 +40,6 @@ export const useUpdaterStore = create<UpdaterStore>((set, get) => ({
       return;
     }
     set({ status: "checking", error: null, percent: 0, pendingUpdate: null });
-
-    if (IS_MAC) {
-      try {
-        const latest = await api.fetchLatestRelease();
-        const currentVersion = await getVersion();
-        if (isNewer(latest.version, currentVersion)) {
-          set({
-            status: "manualAvailable",
-            version: latest.version.replace(/^v/, ""),
-            releaseUrl: latest.releaseUrl,
-            percent: 0,
-            pendingUpdate: null,
-          });
-        } else {
-          set({ status: "none", version: currentVersion, percent: 0, pendingUpdate: null });
-        }
-      } catch (e) {
-        set({ status: "failed", error: api.errorMessage(e), pendingUpdate: null });
-      }
-      return;
-    }
 
     let update: Update | null = null;
     try {
@@ -121,17 +84,6 @@ export const useUpdaterStore = create<UpdaterStore>((set, get) => ({
 
   apply: async () => {
     const { status, pendingUpdate } = get();
-    if (status === "manualAvailable") {
-      try {
-        await openUrl(get().releaseUrl);
-      } catch (e) {
-        set({ status: "manualAvailable", error: api.errorMessage(e) });
-        return;
-      }
-      await api.quitApp();
-      return;
-    }
-
     if (status !== "readyToRestart" || !pendingUpdate) return;
     set({ status: "installing", error: null });
     try {

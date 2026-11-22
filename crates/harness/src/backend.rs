@@ -98,10 +98,10 @@ impl RingBuffer {
         let mut bytes = Vec::with_capacity(first.len() + second.len());
         bytes.extend_from_slice(first);
         bytes.extend_from_slice(second);
-        let start = match std::str::from_utf8(&bytes) {
-            Ok(_) => 0,
-            Err(error) => error.valid_up_to(),
-        };
+        let mut start = 0;
+        while start < bytes.len() && (bytes[start] & 0b1100_0000) == 0b1000_0000 {
+            start += 1;
+        }
         String::from_utf8_lossy(&bytes[start..]).into_owned()
     }
 }
@@ -292,18 +292,21 @@ impl CommandRegistry {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchTopic {
+    #[default]
     General,
     News,
     Finance,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchDepth {
+    #[default]
     Basic,
+    Advanced,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -349,6 +352,12 @@ pub trait WorkspaceOps: Send + Sync {
         abs_path: &str,
         query: &str,
         max_hits: usize,
+    ) -> AppResult<String>;
+    async fn glob_files(
+        &self,
+        abs_path: &str,
+        pattern: &str,
+        max_results: usize,
     ) -> AppResult<String>;
     async fn execute_bash(
         &self,
@@ -429,12 +438,16 @@ pub mod local_fs {
     use std::time::Duration;
 
     use async_trait::async_trait;
-    use command_group::AsyncCommandGroup;
+    use process_wrap::tokio::CommandWrap;
+    #[cfg(unix)]
+    use process_wrap::tokio::ProcessGroup;
+    #[cfg(windows)]
+    use process_wrap::tokio::{CreationFlags, JobObject};
+    use process_wrap::tokio::{ChildWrapper, KillOnDrop};
     use ignore::{WalkBuilder, WalkState};
     use parking_lot::Mutex;
     use path_clean::PathClean;
     use tokio::io::AsyncReadExt;
-    use tokio::process::Command;
     use tokio::sync::Notify;
 
     use super::{
@@ -618,44 +631,51 @@ pub mod local_fs {
             let clamped_timeout = timeout_secs.clamp(1, config::TOOL_EXECUTION_TIMEOUT_SECS);
 
             tokio::spawn(async move {
-                #[cfg(target_os = "windows")]
                 let mut cmd = {
-                    let mut cmd = Command::new("powershell.exe");
-                    cmd.args([
-                        "-NoLogo",
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-WindowStyle",
-                        "Hidden",
-                        "-Command",
-                        &cmd_str,
-                    ]);
-                    cmd
-                };
-
-                #[cfg(not(target_os = "windows"))]
-                let mut cmd = {
-                    let mut cmd = Command::new("/bin/sh");
-                    cmd.args(["-c", &cmd_str]);
-                    if let Some(path) = crate::util::login_shell_path() {
-                        cmd.env("PATH", path);
+                    #[cfg(target_os = "windows")]
+                    {
+                        CommandWrap::with_new("powershell.exe", |command| {
+                            command.args([
+                                "-NoLogo",
+                                "-NoProfile",
+                                "-NonInteractive",
+                                "-WindowStyle",
+                                "Hidden",
+                                "-Command",
+                                &cmd_str,
+                            ]);
+                        })
                     }
-                    cmd
+
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        CommandWrap::with_new("/bin/sh", |command| {
+                            command.args(["-c", &cmd_str]);
+                            if let Some(path) = crate::util::login_shell_path() {
+                                command.env("PATH", path);
+                            }
+                        })
+                    }
                 };
 
-                cmd.current_dir(&cwd_buf)
+                cmd.command_mut()
+                    .current_dir(&cwd_buf)
                     .env("CI", "1")
                     .env("TERM", "dumb")
                     .env("NO_COLOR", "1")
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .kill_on_drop(true);
+                    .stderr(std::process::Stdio::piped());
+                cmd.wrap(KillOnDrop);
+                #[cfg(unix)]
+                cmd.wrap(ProcessGroup::leader());
+                #[cfg(windows)]
+                {
+                    cmd.wrap(CreationFlags(0x08000000));
+                    cmd.wrap(JobObject);
+                }
 
-                #[cfg(target_os = "windows")]
-                let spawn_result = cmd.group().creation_flags(0x08000000).spawn();
-                #[cfg(not(target_os = "windows"))]
-                let spawn_result = cmd.group_spawn();
+                let spawn_result = cmd.spawn();
 
                 match spawn_result {
                     Ok(mut child) => {
@@ -663,11 +683,11 @@ pub mod local_fs {
                             let _ = child.start_kill();
                         }
 
-                        let stdout_task = child.inner().stdout.take().map(|out| {
+                        let stdout_task = child.stdout().take().map(|out| {
                             let h = handle.clone();
                             tokio::spawn(async move { pump(out, h, StreamKind::Stdout).await })
                         });
-                        let stderr_task = child.inner().stderr.take().map(|err| {
+                        let stderr_task = child.stderr().take().map(|err| {
                             let h = handle.clone();
                             tokio::spawn(async move { pump(err, h, StreamKind::Stderr).await })
                         });
@@ -819,7 +839,7 @@ pub mod local_fs {
 
         async fn stat(&self, abs_path: &str) -> AppResult<PathStat> {
             let path = fs_util::resolve_in_workspace(&self.require_root()?, abs_path)?;
-            let meta = match tokio::fs::symlink_metadata(&path).await {
+            let meta = match tokio::fs::metadata(&path).await {
                 Ok(m) => m,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(PathStat::default())
@@ -911,6 +931,49 @@ pub mod local_fs {
             tokio::task::spawn_blocking(move || search_text(&root, &search_path, &query, max_hits))
                 .await
                 .map_err(|e| AppError::other(format!("search task failed: {e}")))?
+        }
+
+        async fn glob_files(
+            &self,
+            abs_path: &str,
+            pattern: &str,
+            max_results: usize,
+        ) -> AppResult<String> {
+            let root = self.require_root()?;
+            let search_path = fs_util::resolve_in_workspace(&root, abs_path)?;
+            let pattern = pattern.to_string();
+            tokio::task::spawn_blocking(move || {
+                let matcher = globset::GlobBuilder::new(&pattern)
+                    .literal_separator(false)
+                    .build()
+                    .map_err(|e| AppError::other(format!("invalid glob pattern: {e}")))?
+                    .compile_matcher();
+                let mut matches = Vec::new();
+                for entry in fs_util::workspace_walker(&search_path).build().flatten() {
+                    if !entry.file_type().map(|file_type| file_type.is_file()).unwrap_or(false) {
+                        continue;
+                    }
+                    let relative = fs_util::display_relative(&root, entry.path());
+                    if matcher.is_match(&relative) {
+                        matches.push(relative);
+                        if matches.len() >= max_results {
+                            break;
+                        }
+                    }
+                }
+                matches.sort();
+                if matches.is_empty() {
+                    Ok(format!("No files matched glob: '{pattern}'"))
+                } else {
+                    let mut output = matches.join("\n");
+                    if matches.len() >= max_results {
+                        output.push_str("\n\n[results limited; narrow the pattern or pass a smaller path]");
+                    }
+                    Ok(output)
+                }
+            })
+            .await
+            .map_err(|e| AppError::other(format!("glob task failed: {e}")))?
         }
 
         async fn execute_bash(

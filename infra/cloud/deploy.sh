@@ -11,17 +11,13 @@ SYNC_ENV=false
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CLOUD="$ROOT/services/cloud"
-HARNESS="$ROOT/crates/harness"
 INFRA="$ROOT/infra/cloud"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-mkdir -p "$WORK/src/harness"
-tar --exclude=target --exclude=.git --exclude=.env.yaml -C "$CLOUD" -cf - . | tar -xf - -C "$WORK/src"
-tar --exclude=target --exclude=.git -C "$HARNESS" -cf - . | tar -xf - -C "$WORK/src/harness"
+mkdir -p "$WORK/src"
+tar --exclude=target --exclude=.git --exclude=.env.yaml -C "$ROOT" -cf - Cargo.toml crates/harness services/cloud | tar -xf - -C "$WORK/src"
 cp "$INFRA/.gcloudignore" "$WORK/src/.gcloudignore"
-sed -i.bak 's|path = "\.\./\.\./crates/harness"|path = "harness"|g' "$WORK/src/Cargo.toml" && rm -f "$WORK/src/Cargo.toml.bak"
-grep -q 'path = "harness"' "$WORK/src/Cargo.toml" || { echo "harness path rewrite failed"; exit 1; }
 
 echo "==> Building on Cloud Build"
 BUILD_ID="$(gcloud builds submit "$WORK/src" \

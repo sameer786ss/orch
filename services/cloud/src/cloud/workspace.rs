@@ -1,5 +1,3 @@
-use orchharness::session::is_safe_session_id;
-
 use crate::shared::config;
 use crate::shared::error::{ApiError, ApiResult};
 use crate::shared::util;
@@ -10,6 +8,27 @@ pub struct CloudWorkspace {
     pub uri: String,
     pub repo_url: String,
     pub repo_dir: String,
+}
+
+fn supported_host(host: &str) -> bool {
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "github.com"
+            | "www.github.com"
+            | "gitlab.com"
+            | "www.gitlab.com"
+            | "bitbucket.org"
+            | "www.bitbucket.org"
+    )
+}
+
+fn valid_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment != "."
+        && segment != ".."
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
 }
 
 pub fn normalize(input: &str) -> ApiResult<CloudWorkspace> {
@@ -33,11 +52,17 @@ pub fn normalize(input: &str) -> ApiResult<CloudWorkspace> {
         .trim_end_matches(".git");
     let parts: Vec<&str> = clean.split('/').filter(|segment| !segment.is_empty()).collect();
     let (host, owner, repo) = match parts.as_slice() {
-        [owner, repo] if !owner.contains('.') => ("github.com", *owner, *repo),
-        [host, owner, repo, ..] if host.contains('.') => (*host, *owner, *repo),
+        [owner, repo] if valid_segment(owner) && valid_segment(repo) => {
+            ("github.com", *owner, *repo)
+        }
+        [host, owner, repo]
+            if supported_host(host) && valid_segment(owner) && valid_segment(repo) =>
+        {
+            (host, *owner, *repo)
+        }
         _ => {
             return Err(ApiError::bad_request(
-                "Invalid repository URL. Expected https://github.com/<owner>/<repo> (or <owner>/<repo>).",
+                "Invalid repository URL. Only github.com, gitlab.com, and bitbucket.org repositories are supported.",
             ));
         }
     };

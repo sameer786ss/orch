@@ -8,13 +8,14 @@ pub const MAX_TEXT_ATTACHMENT_CHARS: usize = 200_000;
 
 pub const MAX_TOOL_OUTPUT_CHARS: usize = 48_000;
 pub const MAX_READ_FILE_LINES: usize = 2_000;
-pub const MAX_READ_FILE_CHARS: usize = 120_000;
+pub const MAX_READ_FILE_CHARS: usize = 40_000;
 pub const MAX_SEARCH_LINE_CHARS: usize = 300;
 pub const MAX_SEARCH_OUTPUT_CHARS: usize = 40_000;
 pub const MAX_VIEW_TOOL_OUTPUT_CHARS: usize = 16_000;
 
 pub const PREAMBLE_TOKEN_RESERVE: u64 = 9_000;
-pub const COMPACTION_TRIGGER_PERCENT: u64 = 80;
+pub const COMPACTION_TRIGGER_PERCENT: u64 = 60;
+pub const MAX_COMPACTION_TRIGGER_TOKENS: u64 = 200_000;
 pub const COMPACTION_KEEP_RECENT_TOKENS: usize = 24_000;
 pub const COMPACTION_SUMMARY_TOKENS: u64 = 10_000;
 pub const COMPACTION_SNIPPET_CHARS: usize = 3_000;
@@ -46,5 +47,9 @@ pub const SKIP_DIRS: &[&str] = &[
 ];
 
 pub fn compaction_trigger_tokens(context_window: u64) -> u64 {
-    context_window.saturating_mul(COMPACTION_TRIGGER_PERCENT) / 100
+    context_window
+        .saturating_mul(COMPACTION_TRIGGER_PERCENT)
+        .checked_div(100)
+        .unwrap_or(0)
+        .min(MAX_COMPACTION_TRIGGER_TOKENS)
 }

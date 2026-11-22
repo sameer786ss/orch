@@ -4,6 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
+use futures::stream::{self, StreamExt, TryStreamExt};
 use gcp_auth::TokenProvider;
 use orchharness::backend::SessionStore;
 use orchharness::error::{AppError, AppResult};
@@ -448,36 +449,28 @@ impl FirestoreClient {
             json!({ "compositeFilter": { "op": "AND", "filters": filters } })
         };
 
-        let mut summaries = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let mut query = json!({
-                "from": [{ "collectionId": SESSIONS }],
-                "where": filter,
-                "orderBy": [{ "field": { "fieldPath": "__name__" }, "direction": "ASCENDING" }],
-                "limit": config::SESSION_PAGE_SIZE,
-            });
-            if let Some(name) = &cursor {
-                query["startAt"] =
-                    json!({ "values": [{ "referenceValue": name }], "before": false });
-            }
-            let documents = self.run_query("", query).await?;
-            for document in &documents {
-                let record = CloudSessionRecord::from_document(document)
-                    .ok_or_else(|| "session document is malformed".to_string())?;
-                summaries.push(record.to_summary());
-            }
-            if documents.len() < config::SESSION_PAGE_SIZE {
-                break;
-            }
-            cursor = documents
-                .last()
-                .and_then(|document| document.get("name"))
-                .and_then(Value::as_str)
-                .map(str::to_string);
-        }
-        summaries.sort_by_key(|summary| std::cmp::Reverse(summary.updated_at));
-        Ok(summaries)
+        let documents = self
+            .run_query(
+                "",
+                json!({
+                    "from": [{ "collectionId": SESSIONS }],
+                    "where": filter,
+                    "orderBy": [
+                        { "field": { "fieldPath": "updated_at" }, "direction": "DESCENDING" },
+                        { "field": { "fieldPath": "__name__" }, "direction": "DESCENDING" }
+                    ],
+                    "limit": config::SESSION_PAGE_SIZE,
+                }),
+            )
+            .await?;
+        documents
+            .iter()
+            .map(|document| {
+                CloudSessionRecord::from_document(document)
+                    .map(|record| record.to_summary())
+                    .ok_or_else(|| "session document is malformed".to_string())
+            })
+            .collect()
     }
 
     pub async fn delete_session_and_entries(&self, id: &str) -> Result<(), String> {
@@ -674,25 +667,41 @@ impl StorageClient {
                     .auth
                     .token(&[config::GCS_SCOPE])
                     .await
-                    .map_err(|e| format!("GCS auth failed: {e}"))?;
-                for item in items {
-                    if let Some(name) = item.get("name").and_then(Value::as_str) {
-                        let del_resp = self
-                            .http
-                            .delete(self.object_url(name))
-                            .bearer_auth(delete_token.as_str())
-                            .send()
-                            .await
-                            .map_err(|e| format!("GCS delete failed: {e}"))?;
-                        if !del_resp.status().is_success()
-                            && del_resp.status() != StatusCode::NOT_FOUND
-                        {
-                            let status = del_resp.status();
-                            let detail = del_resp.text().await.unwrap_or_default();
-                            return Err(format!("GCS delete {name} failed ({status}): {detail}"));
+                    .map_err(|e| format!("GCS auth failed: {e}"))?
+                    .as_str()
+                    .to_string();
+                let objects: Vec<(String, String)> = items
+                    .iter()
+                    .filter_map(|item| {
+                        let name = item.get("name").and_then(Value::as_str)?.to_string();
+                        Some((name.clone(), self.object_url(&name)))
+                    })
+                    .collect();
+                let http = self.http.clone();
+                stream::iter(objects)
+                    .map(|(name, url)| {
+                        let http = http.clone();
+                        let token = delete_token.clone();
+                        async move {
+                            let del_resp = http
+                                .delete(url)
+                                .bearer_auth(token)
+                                .send()
+                                .await
+                                .map_err(|e| format!("GCS delete failed: {e}"))?;
+                            if !del_resp.status().is_success()
+                                && del_resp.status() != StatusCode::NOT_FOUND
+                            {
+                                let status = del_resp.status();
+                                let detail = del_resp.text().await.unwrap_or_default();
+                                return Err(format!("GCS delete {name} failed ({status}): {detail}"));
+                            }
+                            Ok::<_, String>(())
                         }
-                    }
-                }
+                    })
+                    .buffer_unordered(8)
+                    .try_collect::<Vec<_>>()
+                    .await?;
             }
             page_token = body
                 .get("nextPageToken")
@@ -730,63 +739,87 @@ impl CloudSessionStore {
     }
 
     async fn externalize_media(&self, records: &[HistoryRecord]) -> AppResult<Vec<HistoryRecord>> {
-        let mut out = Vec::with_capacity(records.len());
-        for record in records {
-            match record {
-                HistoryRecord::User { content } => {
-                    let mut next_content = Vec::with_capacity(content.len());
-                    for part in content {
-                        match part {
-                            HistoryUserPart::Image {
-                                mime_type,
-                                data: Some(b64),
-                                uri: None,
-                            } => {
-                                if let Ok(bytes) = STANDARD.decode(b64) {
-                                    let ext = image_ext_for_mime(mime_type);
-                                    let hash = fast_hash_hex(b64);
-                                    let key = format!("blobs/{hash}.{ext}");
-                                    self.storage.write_bytes(&key, &bytes).await?;
-                                    next_content.push(HistoryUserPart::Image {
-                                        mime_type: mime_type.clone(),
-                                        data: None,
-                                        uri: Some(format!("gcs://{key}")),
-                                    });
-                                } else {
-                                    next_content.push(part.clone());
-                                }
-                            }
-                            other => next_content.push(other.clone()),
+        let storage = self.storage.clone();
+        stream::iter(records.iter().cloned())
+            .map(|record| {
+                let storage = storage.clone();
+                async move {
+                    match record {
+                        HistoryRecord::User { content } => {
+                            let next_content = stream::iter(content)
+                                .map(|part| {
+                                    let storage = storage.clone();
+                                    async move {
+                                        match part {
+                                            HistoryUserPart::Image {
+                                                mime_type,
+                                                data: Some(b64),
+                                                uri: None,
+                                            } => match STANDARD.decode(&b64) {
+                                                Ok(bytes) => {
+                                                    let ext = image_ext_for_mime(&mime_type);
+                                                    let hash = fast_hash_hex(&b64);
+                                                    let key = format!("blobs/{hash}.{ext}");
+                                                    storage.write_bytes(&key, &bytes).await?;
+                                                    Ok(HistoryUserPart::Image {
+                                                        mime_type,
+                                                        data: None,
+                                                        uri: Some(format!("gcs://{key}")),
+                                                    })
+                                                }
+                                                Err(_) => Ok(HistoryUserPart::Image {
+                                                    mime_type,
+                                                    data: Some(b64),
+                                                    uri: None,
+                                                }),
+                                            },
+                                            other => Ok(other),
+                                        }
+                                    }
+                                })
+                                .buffered(8)
+                                .try_collect::<Vec<_>>()
+                                .await?;
+                            Ok(HistoryRecord::User { content: next_content })
                         }
+                        other => Ok(other),
                     }
-                    out.push(HistoryRecord::User {
-                        content: next_content,
-                    });
                 }
-                other => out.push(other.clone()),
-            }
-        }
-        Ok(out)
+            })
+            .buffered(8)
+            .try_collect()
+            .await
     }
 
     async fn hydrate_media(&self, record: &mut HistoryRecord) -> AppResult<()> {
-        if let HistoryRecord::User { content } = record {
-            for part in content.iter_mut() {
-                let key = match part {
-                    HistoryUserPart::Image {
-                        data: None,
-                        uri: Some(uri),
-                        ..
-                    } => uri.strip_prefix("gcs://").map(str::to_string),
-                    _ => None,
-                };
-                if let Some(key) = key {
-                    if let Some(bytes) = self.storage.read_bytes(&key).await? {
-                        if let HistoryUserPart::Image { data, uri, .. } = part {
-                            *data = Some(STANDARD.encode(&bytes));
-                            *uri = None;
-                        }
-                    }
+        let HistoryRecord::User { content } = record else {
+            return Ok(());
+        };
+        let keys: Vec<(usize, String)> = content
+            .iter()
+            .enumerate()
+            .filter_map(|(index, part)| match part {
+                HistoryUserPart::Image {
+                    data: None,
+                    uri: Some(uri),
+                    ..
+                } => uri.strip_prefix("gcs://").map(|key| (index, key.to_string())),
+                _ => None,
+            })
+            .collect();
+        let results = stream::iter(keys)
+            .map(|(index, key)| {
+                let storage = self.storage.clone();
+                async move { Ok::<_, AppError>((index, storage.read_bytes(&key).await?)) }
+            })
+            .buffered(8)
+            .try_collect::<Vec<_>>()
+            .await?;
+        for (index, bytes) in results {
+            if let Some(bytes) = bytes {
+                if let HistoryUserPart::Image { data, uri, .. } = &mut content[index] {
+                    *data = Some(STANDARD.encode(&bytes));
+                    *uri = None;
                 }
             }
         }
@@ -879,17 +912,27 @@ impl SessionStore for CloudSessionStore {
         docs.truncate(limit);
         docs.reverse();
 
-        let mut records = Vec::with_capacity(docs.len());
-        for doc in docs {
-            let stored = doc.get("fields").unwrap_or(&Value::Null);
-            let seq = fields::read_i64(stored, "seq");
-            let raw = fields::read_string(stored, "record");
-            let mut record: HistoryRecord = serde_json::from_str(&raw).map_err(|e| {
-                AppError::other(format!("corrupt session entry {session_id}/{seq}: {e}"))
-            })?;
-            self.hydrate_media(&mut record).await?;
-            records.push(SessionRecord { seq, record });
-        }
+        let parsed = docs
+            .into_iter()
+            .map(|doc| {
+                let stored = doc.get("fields").unwrap_or(&Value::Null);
+                let seq = fields::read_i64(stored, "seq");
+                let raw = fields::read_string(stored, "record");
+                serde_json::from_str::<HistoryRecord>(&raw)
+                    .map(|record| (seq, record))
+                    .map_err(|e| {
+                        AppError::other(format!("corrupt session entry {session_id}/{seq}: {e}"))
+                    })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        let records = stream::iter(parsed)
+            .map(|(seq, mut record)| async move {
+                self.hydrate_media(&mut record).await?;
+                Ok::<_, AppError>(SessionRecord { seq, record })
+            })
+            .buffered(8)
+            .try_collect::<Vec<_>>()
+            .await?;
         let earliest_seq = records.first().map(|r| r.seq);
         Ok(SessionRecordPage {
             records,

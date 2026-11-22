@@ -1,6 +1,6 @@
 use orchharness::backend::normalize_workspace_subpath;
 
-pub use orchharness::persistence::CloudWorkspaceInfo;
+pub use crate::gateway::CloudWorkspaceInfo;
 
 pub const CLOUD_WORKSPACE_PREFIX: &str = "cloud://";
 

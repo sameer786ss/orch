@@ -81,7 +81,11 @@ async fn main() {
         .layer(
             CorsLayer::new()
                 .allow_methods([Method::GET, Method::POST, Method::DELETE])
-                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+                .allow_origin([
+                    header::HeaderValue::from_static("https://orch.live"),
+                    header::HeaderValue::from_static("http://localhost:1420"),
+                ]),
         )
         .with_state(state.clone());
 

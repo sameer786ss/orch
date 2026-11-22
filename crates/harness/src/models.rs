@@ -32,10 +32,6 @@ pub struct StaticModelInfo {
 }
 
 impl StaticModelInfo {
-    pub fn supports_images(&self) -> bool {
-        self.capabilities.contains(&"images")
-    }
-
     pub fn to_model_info(&self) -> ModelInfo {
         ModelInfo {
             id: self.id.to_string(),

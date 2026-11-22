@@ -11,7 +11,7 @@ use orchharness::events::{ChatEvent, EventSink};
 use crate::ipc_types::{DictationEvent, TerminalEvent};
 use orchharness::skills::load_all_skills;
 use orchharness::tools::ToolContext;
-use orchharness::util::{http_client, truncate_chars};
+use orchharness::util::truncate_chars;
 use secrecy::ExposeSecret;
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -94,60 +94,6 @@ async fn cached_display(state: &AppState) -> Option<UserDisplay> {
     let profile = auth::load_cached_user_async(state.data_dir.clone()).await?;
     state.set_authenticated_user(&profile.id);
     Some(UserDisplay::from_profile(&profile))
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LatestRelease {
-    version: String,
-    release_url: String,
-}
-
-#[tauri::command]
-pub async fn fetch_latest_release(app: tauri::AppHandle) -> Result<LatestRelease, String> {
-    let manifest_url = app
-        .config()
-        .plugins
-        .0
-        .get("updater")
-        .and_then(|cfg| cfg.get("endpoints"))
-        .and_then(|endpoints| endpoints.get(0))
-        .and_then(|endpoint| endpoint.as_str())
-        .map(str::to_string)
-        .ok_or_else(|| "No updater endpoint configured".to_string())?;
-    let release_url = manifest_url
-        .split("/download/")
-        .next()
-        .unwrap_or(&manifest_url)
-        .to_string();
-
-    let response = http_client()
-        .get(&manifest_url)
-        .header("Cache-Control", "no-cache")
-        .timeout(Duration::from_secs(20))
-        .send()
-        .await
-        .map_err(|e| format!("Update manifest request failed: {e}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("Update manifest request failed ({})", status.as_u16()));
-    }
-    let manifest: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Update manifest is not valid JSON: {e}"))?;
-    let version = manifest
-        .get("version")
-        .and_then(|v| v.as_str())
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| "Update manifest did not include a version".to_string())?;
-    Ok(LatestRelease { version, release_url })
-}
-
-#[tauri::command]
-pub fn quit_app(app: tauri::AppHandle) {
-    app.exit(0);
 }
 
 #[tauri::command]
@@ -325,12 +271,21 @@ pub async fn forget_workspace(
     workspace_path: String,
 ) -> Result<(), String> {
     let canonical = canonical_string(&workspace_path);
-    let workspace = PathBuf::from(&canonical);
+    let target_workspace = if cloud::is_cloud_workspace(&canonical) {
+        state
+            .current_workspace()
+            .filter(|workspace| workspace.key() == canonical)
+            .map(|workspace| workspace.as_ref().clone())
+    } else {
+        Some(Workspace::Local(PathBuf::from(&canonical)))
+    };
 
     let was_active_workspace = state.workspace_key().as_deref() == Some(canonical.as_str());
 
-    let sessions = state.cancel_runs_in_workspace(&workspace);
-    state.wait_for_runs(&sessions, Duration::from_secs(10)).await;
+    if let Some(target_workspace) = target_workspace.as_ref() {
+        let sessions = state.cancel_runs_in_workspace(target_workspace);
+        state.wait_for_runs(&sessions, Duration::from_secs(10)).await;
+    }
 
     if was_active_workspace {
         state.set_workspace(None);
@@ -426,7 +381,7 @@ pub async fn start_chat(
     let workspace_string = current.key();
 
     let (run_id, cancel) = state
-        .start_run(&session_id, Some(PathBuf::from(&workspace_string)), run_owner.clone())
+        .start_run(&session_id, Some(current.as_ref().clone()), run_owner.clone())
         .map_err(|error| error.to_string())?;
 
     let workspace = match current.as_ref() {
@@ -685,7 +640,7 @@ pub async fn resume_chat(
         .current_user_id()
         .ok_or_else(|| "authentication required".to_string())?;
     let (run_id, cancel) = state
-        .start_run(&session_id, Some(PathBuf::from(current.key())), run_owner)
+        .start_run(&session_id, Some(current.as_ref().clone()), run_owner)
         .map_err(|error| error.to_string())?;
 
     if let Err(error) = state.ensure_fresh_token().await {
@@ -777,7 +732,7 @@ pub async fn clear_session(app: tauri::AppHandle, state: State<'_, AppState>, se
                 e.to_string()
             })?;
     }
-    if state.active_cloud_workspace().is_some() || !local_exists {
+    if state.active_cloud_workspace().is_some() {
         state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
         state
             .gateway
@@ -803,7 +758,6 @@ pub async fn get_session_records(
         .current_user_id()
         .ok_or_else(|| "authentication required".to_string())?;
     let local_meta = state.memory.session_meta(&session_id).await.map_err(|e| e.to_string())?;
-    let local_exists = local_meta.is_some();
     let local_owner = local_meta.flatten();
     let is_cloud_active = state.active_cloud_workspace().is_some();
     let capped_limit = limit.unwrap_or(50).clamp(1, 200);
@@ -815,17 +769,6 @@ pub async fn get_session_records(
             .cloud_session_history(&session_id, capped_limit, before_seq)
             .await
             .map_err(|e| e.to_string());
-    }
-
-    if !local_exists {
-        state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-        if let Ok(page) = state
-            .gateway
-            .cloud_session_history(&session_id, capped_limit, before_seq)
-            .await
-        {
-            return Ok(page);
-        }
     }
 
     ensure_owner(local_owner.as_deref(), &user_id)?;
