@@ -8,6 +8,7 @@ use orchharness::connectors::ConnectorSpecCache;
 use jsonwebtoken::DecodingKey;
 
 use crate::cloud::e2b::SandboxManager;
+use crate::cloud::runs::LiveRun;
 use crate::local::v1internal::VertexTokenPool;
 use crate::shared::auth::CachedUser;
 use crate::shared::budget::BudgetStatus;

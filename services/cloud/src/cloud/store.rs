@@ -761,7 +761,7 @@ impl CloudSessionStore {
                                                     let hash = fast_hash_hex(&b64);
                                                     let key = format!("blobs/{hash}.{ext}");
                                                     storage.write_bytes(&key, &bytes).await?;
-                                                    Ok(HistoryUserPart::Image {
+                                                    Ok::<HistoryUserPart, AppError>(HistoryUserPart::Image {
                                                         mime_type,
                                                         data: None,
                                                         uri: Some(format!("gcs://{key}")),

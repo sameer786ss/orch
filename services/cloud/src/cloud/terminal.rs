@@ -7,7 +7,7 @@ use axum::response::Response;
 use axum::Extension;
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::cloud::e2b::{
     parse_process_event, ConnectFrame, ConnectFrameDecoder, EnvdProcessEvent, SandboxLease,
@@ -107,7 +107,7 @@ pub async fn ws_handler(
 }
 
 async fn send_ws(sender: &mut futures::stream::SplitSink<WebSocket, Message>, val: Value) -> bool {
-    sender.send(Message::Text(val.to_string())).await.is_ok()
+    sender.send(Message::Text(val.to_string().into())).await.is_ok()
 }
 
 async fn bridge(socket: WebSocket, lease: Arc<SandboxLease>, resp: reqwest::Response) {
