@@ -671,7 +671,7 @@ pub mod local_fs {
                 cmd.wrap(ProcessGroup::leader());
                 #[cfg(windows)]
                 {
-                    cmd.wrap(CreationFlags(0x08000000));
+                    cmd.wrap(CreationFlags(0x08000000.into()));
                     cmd.wrap(JobObject);
                 }
 
