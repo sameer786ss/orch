@@ -10,7 +10,8 @@ fn main() {
 
     if target.contains("windows") {
         let windows = tauri_build::WindowsAttributes::new()
-            .app_manifest(include_str!("orch.exe.manifest"));
+            .app_manifest(include_str!("orch.exe.manifest"))
+            .static_vc_runtime(true);
         attrs = attrs.windows_attributes(windows);
         println!("cargo:rerun-if-changed=orch.exe.manifest");
     }
