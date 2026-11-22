@@ -91,7 +91,7 @@ jobs:
 
       - name: Prepare macOS Asset
         if: startsWith(github.ref, 'refs/tags/code-v')
-        run: cp target/${{ matrix.target }}/release/bundle/dmg/*.dmg ${{ matrix.artifact }}
+        run: cp ../../target/${{ matrix.target }}/release/bundle/dmg/*.dmg ${{ matrix.artifact }}
 
       - name: Publish macOS Asset
         if: startsWith(github.ref, 'refs/tags/code-v')
@@ -151,10 +151,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/code-v')
         shell: powershell
         run: |
-          $setup = (Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe).FullName
+          $setup = (Get-Item ../../target/release/bundle/nsis/*-setup.exe).FullName
           Copy-Item $setup -Destination Orch-Windows-Setup.exe
 
-          $sigPath = (Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe.sig).FullName
+          $sigPath = (Get-Item ../../target/release/bundle/nsis/*-setup.exe.sig).FullName
           $signature = (Get-Content $sigPath -Raw).Trim()
 
           $tag = "${{ github.ref_name }}"
