@@ -17,9 +17,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/src"
 tar --exclude=target --exclude=.git --exclude=.env.yaml -C "$ROOT" -cf - Cargo.toml Cargo.lock crates/harness services/cloud | tar -xf - -C "$WORK/src"
-# The cloud build only ships the backend workspace members. Keep the desktop
-# crate out of this temporary workspace so Cargo does not require its manifest.
-sed -i '/"apps\/desktop\/src-tauri"/d' "$WORK/src/Cargo.toml"
+awk '!/^[[:space:]]*"apps\/desktop\/src-tauri",[[:space:]]*$/' "$WORK/src/Cargo.toml" > "$WORK/src/Cargo.toml.tmp"
+mv "$WORK/src/Cargo.toml.tmp" "$WORK/src/Cargo.toml"
 cp "$INFRA/.gcloudignore" "$WORK/src/.gcloudignore"
 
 echo "==> Building on Cloud Build"
