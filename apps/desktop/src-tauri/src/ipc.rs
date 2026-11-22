@@ -7,6 +7,7 @@ use orchharness::backend::local_fs::LocalWorkspaceOps;
 use orchharness::backend::{SessionStore, SummarizerBackend, WebSearchBackend, WorkspaceOps};
 use orchharness::connectors::CONNECTOR_DEFS;
 use orchharness::error::AppError;
+use orchharness::events::{ChatEvent, EventSink};
 use crate::ipc_types::{DictationEvent, TerminalEvent};
 use orchharness::skills::load_all_skills;
 use orchharness::tools::ToolContext;
