@@ -4,9 +4,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use axum::extract::State;
 use axum::{Extension, Json};
-use orchharness::connectors::connector_catalog;
+use orchharness::connector_tools::client::{
     AccountWire, ComposioError, ComposioTransport, ExecuteWire, ToolWire,
 };
+use orchharness::connectors::connector_catalog;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
