@@ -18,7 +18,7 @@ use crate::config;
 
 pub type TokenHandle = Arc<arc_swap::ArcSwapOption<SecretString>>;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Budget {
     pub cost_usd: f64,
@@ -29,7 +29,7 @@ pub struct Budget {
     pub allowed: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudWorkspaceInfo {
     pub workspace: String,
