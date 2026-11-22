@@ -58,7 +58,7 @@ pub fn normalize(input: &str) -> ApiResult<CloudWorkspace> {
         [host, owner, repo]
             if supported_host(host) && valid_segment(owner) && valid_segment(repo) =>
         {
-            (host, *owner, *repo)
+            (*host, *owner, *repo)
         }
         _ => {
             return Err(ApiError::bad_request(
