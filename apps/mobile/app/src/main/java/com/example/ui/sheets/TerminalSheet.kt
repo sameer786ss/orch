@@ -55,6 +55,7 @@ import com.orch.app.ui.components.OrchBottomSheet
 import com.orch.app.ui.components.OrchSheetHeader
 import com.orch.app.ui.theme.OrchDimens
 import com.orch.app.ui.theme.OrchMonoBody
+import com.orch.app.ui.theme.OrchSuccess
 import kotlinx.coroutines.flow.collect
 
 private data class QuickKey(val label: String, val sequence: String)
