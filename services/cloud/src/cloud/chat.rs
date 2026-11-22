@@ -7,6 +7,7 @@ use axum::{Extension, Json};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use dashmap::mapref::entry::Entry;
+use futures::future::join_all;
 use orchharness::backend::{SessionStore, SummarizerBackend, WebSearchBackend, WorkspaceOps};
 use orchharness::connectors::ConnectorManager;
 use orchharness::events::{ChatEvent, EventSink};
@@ -16,7 +17,7 @@ use orchharness::llm::{
 };
 use orchharness::media::{is_pdf_extension, is_raster_extension};
 use orchharness::models::{resolve_static_model, ModelInfo};
-use orchharness::persistence::{AttachmentRef, CloudAttachment, CloudChatStreamReq};
+use orchharness::persistence::AttachmentRef;
 use orchharness::skills::load_embedded_skills;
 use orchharness::tools::ToolContext;
 use serde::Deserialize;
@@ -40,6 +41,29 @@ use crate::state::ServerState;
 
 const MEGABYTE: usize = 1024 * 1024;
 const FINISHED_RUN_TTL_SECS: u64 = 120;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudAttachment {
+    name: String,
+    data_base64: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudChatStreamReq {
+    session_id: String,
+    prompt: String,
+    model: String,
+    workspace: String,
+    repo_url: Option<String>,
+    #[serde(default)]
+    attachments: Vec<CloudAttachment>,
+    #[serde(default)]
+    active_connectors: Vec<String>,
+    #[serde(default)]
+    thinking_effort: String,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,32 +179,51 @@ async fn stage_attachments(
         )));
     }
 
-    let mut refs = Vec::new();
+    let mut pending = Vec::new();
     let mut notes = Vec::new();
-
-    for attachment in attachments {
+    for (index, attachment) in attachments.iter().enumerate() {
         let Ok(bytes) = STANDARD.decode(&attachment.data_base64) else {
             notes.push(format!("{} could not be decoded", attachment.name));
             continue;
         };
         let safe = safe_file_name(&attachment.name);
-        let remote_path = format!("{}/{}", config::UPLOAD_DIR, safe);
-        lease
-            .manager
-            .write_bytes(&lease.conn, &remote_path, &bytes)
-            .await?;
-
+        let remote_path = format!("{}/{}-{}", config::UPLOAD_DIR, index, safe);
         let ext = orchharness::util::lowercase_extension_str(&safe);
         let is_image = is_raster_extension(&ext);
         let is_pdf = is_pdf_extension(&ext);
         let is_text = !is_image && !is_pdf && !orchharness::util::looks_binary(&bytes);
+        let data_base64 = STANDARD.encode(&bytes);
+        pending.push((
+            attachment.name.clone(),
+            remote_path,
+            bytes,
+            data_base64,
+            is_image,
+            is_pdf || is_text,
+        ));
+    }
 
-        if is_image || is_pdf || is_text {
+    let manager = lease.manager.clone();
+    let conn = lease.conn.clone();
+    let uploaded = join_all(pending.into_iter().map(|(name, path, bytes, data_base64, is_image, attachable)| {
+        let manager = manager.clone();
+        let conn = conn.clone();
+        async move {
+            let result = manager.write_bytes(&conn, &path, &bytes).await;
+            (name, path, data_base64, is_image, attachable, result)
+        }
+    }))
+    .await;
+
+    let mut refs = Vec::new();
+    for (name, remote_path, data_base64, is_image, attachable, result) in uploaded {
+        result?;
+        if attachable {
             refs.push(AttachmentRef {
                 path: remote_path,
-                name: attachment.name.clone(),
+                name,
                 is_image,
-                data_base64: None,
+                data_base64: Some(data_base64),
             });
         } else {
             notes.push(format!("Attached binary file uploaded to {remote_path}"));
@@ -368,7 +411,10 @@ async fn launch(
             state: state.clone(),
             user_id: user.id.clone(),
         });
-        let manager = ConnectorManager::new(transport);
+        let manager = ConnectorManager::new_with_specs_cache(
+            transport,
+            state.connector_specs_cache.clone(),
+        );
         Some(
             manager
                 .prepare(&request.active_connectors)

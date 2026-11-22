@@ -11,6 +11,19 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 
+val LIVE_STEP_EVENTS = setOf(
+    "workStart",
+    "workStop",
+    "reasoningStart",
+    "reasoningDelta",
+    "reasoningStop",
+    "textDelta",
+    "textStop",
+    "toolStart",
+    "toolResult",
+    "compacted"
+)
+
 class ChatReducer(private val idPrefix: String = "c") {
     private val list = ArrayList<ChatMessage>()
     private var counter = 0
@@ -487,20 +500,6 @@ class ChatReducer(private val idPrefix: String = "c") {
     private fun List<ChatItem>.replaced(position: Int, item: ChatItem): List<ChatItem> =
         toMutableList().also { it[position] = item }
 
-    private companion object {
-        val LIVE_STEP_EVENTS = setOf(
-            "workStart",
-            "workStop",
-            "reasoningStart",
-            "reasoningDelta",
-            "reasoningStop",
-            "textDelta",
-            "textStop",
-            "toolStart",
-            "toolResult",
-            "compacted"
-        )
-    }
 }
 
 private fun JsonObject.str(key: String): String? =

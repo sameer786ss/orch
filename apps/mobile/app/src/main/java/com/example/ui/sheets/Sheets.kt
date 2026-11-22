@@ -58,6 +58,7 @@ import com.orch.app.ui.components.OrchSheetHeader
 import com.orch.app.ui.components.OrchTextField
 import com.orch.app.ui.theme.OrchDimens
 import com.orch.app.ui.theme.OrchMonoLabel
+import kotlinx.coroutines.delay
 
 @Composable
 fun FilesSheet(
@@ -69,7 +70,10 @@ fun FilesSheet(
     onDismiss: () -> Unit
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(query) { onBrowse(files.currentPath, query) }
+    LaunchedEffect(query) {
+        delay(250)
+        onBrowse(files.currentPath, query)
+    }
 
     val currentLocation = if (files.currentPath.isEmpty()) repoName else "$repoName/${files.currentPath}"
 

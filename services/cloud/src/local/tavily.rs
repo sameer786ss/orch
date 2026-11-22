@@ -3,7 +3,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use axum::extract::State;
 use axum::Json;
-use orchharness::backend::{SearchTopic, TavilyRequest, TavilyResponse, WebSearchBackend};
+use orchharness::backend::{SearchDepth, SearchTopic, TavilyRequest, TavilyResponse, WebSearchBackend};
 use orchharness::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,23 +18,6 @@ const DEFAULT_MAX_RESULTS: u64 = 5;
 const MAX_RESULTS_LIMIT: u64 = 20;
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum SearchDepth {
-    #[default]
-    Basic,
-    Advanced,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Topic {
-    #[default]
-    General,
-    News,
-    Finance,
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchRequest {
@@ -42,7 +25,7 @@ pub struct SearchRequest {
     #[serde(default)]
     search_depth: SearchDepth,
     #[serde(default)]
-    topic: Topic,
+    topic: SearchTopic,
     max_results: Option<u64>,
     #[serde(default)]
     include_images: bool,
@@ -53,7 +36,7 @@ pub struct SearchRequest {
 struct SearchPayload<'a> {
     query: &'a str,
     search_depth: SearchDepth,
-    topic: Topic,
+    topic: SearchTopic,
     max_results: u64,
     include_images: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -120,12 +103,8 @@ impl WebSearchBackend for InProcessWebSearchBackend {
     async fn tavily(&self, req: &TavilyRequest) -> AppResult<TavilyResponse> {
         let parsed = SearchRequest {
             query: req.query.clone(),
-            search_depth: SearchDepth::Basic,
-            topic: match req.topic.unwrap_or(SearchTopic::General) {
-                orchharness::backend::SearchTopic::General => Topic::General,
-                orchharness::backend::SearchTopic::News => Topic::News,
-                orchharness::backend::SearchTopic::Finance => Topic::Finance,
-            },
+            search_depth: req.search_depth.unwrap_or_default(),
+            topic: req.topic.unwrap_or_default(),
             max_results: req.max_results.map(u64::from),
             include_images: false,
             domain: req.domain.clone(),

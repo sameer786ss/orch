@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use futures::future::join_all;
 use rig::message::{ImageDetail, ToolResultContent};
@@ -15,11 +15,22 @@ use crate::error::AppError;
 use crate::events::{ChatEvent, EventSink, ToolDisplayInfo, ToolIcon};
 use crate::skills::read_embedded_skill;
 
+macro_rules! cached_schema {
+    ($type:ty) => {{
+        static SCHEMA: OnceLock<Value> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| serde_json::to_value(schemars::schema_for!($type)).unwrap_or_default())
+            .clone()
+    }};
+}
+
 pub const VIEW_FILE: &str = "view_file";
 pub const WRITE_TO_FILE: &str = "write_to_file";
 pub const REPLACE_FILE_CONTENT: &str = "replace_file_content";
+pub const APPLY_PATCH: &str = "apply_patch";
 pub const LIST_DIR: &str = "list_dir";
 pub const SEARCH_WORKSPACE: &str = "search_workspace";
+pub const GLOB_FILES: &str = "glob_files";
 pub const EXECUTE_BASH: &str = "execute_bash";
 pub const GET_COMMAND_STATUS: &str = "get_command_status";
 pub const STOP_COMMAND: &str = "stop_command";
@@ -103,6 +114,20 @@ pub fn tool_display_info(name: &str, args: &Value) -> ToolDisplayInfo {
             line_count(args.get("ReplacementContent").and_then(Value::as_str)),
             line_count(args.get("TargetContent").and_then(Value::as_str)),
         ),
+        APPLY_PATCH => ToolDisplayInfo {
+            label: "Patched".to_string(),
+            active_label: "Patching".to_string(),
+            target_text: Some("multiple files or hunks".to_string()),
+            icon: ToolIcon::File,
+            ..Default::default()
+        },
+        GLOB_FILES => ToolDisplayInfo {
+            label: "Found Files".to_string(),
+            active_label: "Finding Files".to_string(),
+            target_text: arg_str(args, "pattern"),
+            icon: ToolIcon::Search,
+            ..Default::default()
+        },
         EXECUTE_BASH => ToolDisplayInfo {
             label: "Ran".to_string(),
             active_label: "Running".to_string(),
@@ -234,24 +259,25 @@ pub fn window_lines(content: &str, start: Option<usize>, end: Option<usize>) -> 
         (None, None) => total,
     };
     let line_cap = from + config::MAX_READ_FILE_LINES - 1;
-    let mut to = requested_to.min(line_cap);
+    let requested_to = requested_to.min(line_cap);
 
     let mut out = String::new();
     let mut last = from - 1;
-    for (idx, line) in lines.iter().enumerate().take(to).skip(from - 1) {
-        if out.len() + line.len() + 1 > config::MAX_READ_FILE_CHARS && idx + 1 > from {
+    for (idx, line) in lines.iter().enumerate().take(requested_to).skip(from - 1) {
+        let numbered = format!("{}: {}", idx + 1, line);
+        let separator = if out.is_empty() { 0 } else { 1 };
+        if out.chars().count() + separator + numbered.chars().count() > config::MAX_READ_FILE_CHARS {
             break;
         }
         if !out.is_empty() {
             out.push('\n');
         }
-        out.push_str(line);
+        out.push_str(&numbered);
         last = idx + 1;
     }
-    to = last;
-    if to < requested_to || (start.is_none() && end.is_none() && to < total) {
+    if last < requested_to || (start.is_none() && end.is_none() && last < total) {
         out.push_str(&format!(
-            "\n\n[truncated: showing lines {from}-{to} of {total}. Call view_file with StartLine/EndLine to view other sections.]"
+            "\n\n[truncated: showing lines {from}-{last} of {total}. Call view_file with StartLine/EndLine to view other sections.]"
         ));
     }
     out
@@ -295,7 +321,7 @@ impl Tool for ViewFile {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(ViewFileArgs)).unwrap_or_default()
+        cached_schema!(ViewFileArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -398,7 +424,7 @@ impl Tool for WriteToFile {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(WriteToFileArgs)).unwrap_or_default()
+        cached_schema!(WriteToFileArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -556,7 +582,7 @@ impl Tool for ReplaceFileContent {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(ReplaceFileContentArgs)).unwrap_or_default()
+        cached_schema!(ReplaceFileContentArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -707,7 +733,7 @@ impl Tool for SearchWorkspace {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(SearchWorkspaceArgs)).unwrap_or_default()
+        cached_schema!(SearchWorkspaceArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -727,6 +753,197 @@ impl Tool for SearchWorkspace {
         Ok(self
             .ops
             .search_workspace(&search_path, &args.query, max_hits)
+            .await?)
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ApplyPatchArgs {
+    #[serde(rename = "Patch")]
+    #[schemars(description = "A patch beginning with *** Begin Patch and containing one or more *** Update File sections. Each update may contain multiple @@ hunks. Use exact context lines and +/- replacements.")]
+    pub patch: String,
+}
+
+pub struct ApplyPatch {
+    ops: Arc<dyn WorkspaceOps>,
+    event_sink: Arc<dyn EventSink>,
+}
+
+fn parse_patch(patch: &str) -> Result<Vec<(String, Vec<(String, String)>)>, String> {
+    let lines: Vec<&str> = patch.lines().collect();
+    if lines.first().copied() != Some("*** Begin Patch") {
+        return Err("patch must start with *** Begin Patch".to_string());
+    }
+    let mut files: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    let mut index = 1;
+    while index < lines.len() {
+        let line = lines[index];
+        if line == "*** End Patch" {
+            return Ok(files);
+        }
+        let Some(path) = line.strip_prefix("*** Update File: ") else {
+            return Err(format!("unexpected patch line: {line}"));
+        };
+        index += 1;
+        let mut hunks = Vec::new();
+        while index < lines.len() && !lines[index].starts_with("*** ") {
+            if !lines[index].starts_with("@@") {
+                return Err(format!("expected hunk header, got: {}", lines[index]));
+            }
+            index += 1;
+            let mut old = String::new();
+            let mut new = String::new();
+            while index < lines.len()
+                && !lines[index].starts_with("@@")
+                && !lines[index].starts_with("*** ")
+            {
+                let hunk_line = lines[index];
+                match hunk_line.as_bytes().first().copied() {
+                    Some(b' ') => {
+                        old.push_str(&hunk_line[1..]);
+                        old.push('\n');
+                        new.push_str(&hunk_line[1..]);
+                        new.push('\n');
+                    }
+                    Some(b'-') => {
+                        old.push_str(&hunk_line[1..]);
+                        old.push('\n');
+                    }
+                    Some(b'+') => {
+                        new.push_str(&hunk_line[1..]);
+                        new.push('\n');
+                    }
+                    Some(b'\\') => {}
+                    _ => return Err(format!("invalid hunk line: {hunk_line}")),
+                }
+                index += 1;
+            }
+            if old.ends_with('\n') {
+                old.pop();
+            }
+            if new.ends_with('\n') {
+                new.pop();
+            }
+            if old.is_empty() {
+                return Err("empty patch hunks are not supported".to_string());
+            }
+            hunks.push((old, new));
+        }
+        files.push((path.trim().to_string(), hunks));
+    }
+    Err("patch is missing *** End Patch".to_string())
+}
+
+impl Tool for ApplyPatch {
+    const NAME: &'static str = APPLY_PATCH;
+    type Error = ToolError;
+    type Args = ApplyPatchArgs;
+    type Output = String;
+
+    fn description(&self) -> String {
+        "Apply multiple exact-context edits across one or more existing files. Use the *** Begin Patch format with *** Update File and @@ hunk sections. Every hunk must match exactly once; no file is written when a hunk is ambiguous or missing.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        cached_schema!(ApplyPatchArgs)
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        tool_failure(error)
+    }
+
+    async fn call(
+        &self,
+        _ctx: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        let updates = parse_patch(&args.patch).map_err(ToolError::msg)?;
+        if updates.is_empty() {
+            return Err(ToolError::msg("patch contains no file updates"));
+        }
+        let mut changed = Vec::new();
+        for (target, hunks) in updates {
+            let path = self.ops.resolve_in_workspace(&target)?;
+            let raw = self
+                .ops
+                .read_bytes(&path, Some(config::FILE_SIZE_LIMIT))
+                .await?;
+            let content = String::from_utf8(raw)
+                .map_err(|e| ToolError::msg(format!("cannot read {target} as UTF-8: {e}")))?;
+            let crlf = content.contains("\r\n");
+            let mut updated = content.replace("\r\n", "\n");
+            for (old, new) in hunks {
+                let matches = updated.matches(&old).count();
+                if matches != 1 {
+                    return Err(ToolError::msg(format!(
+                        "patch hunk for {target} matched {matches} times"
+                    )));
+                }
+                updated = updated.replacen(&old, &new, 1);
+            }
+            let output = if crlf {
+                updated.replace('\n', "\r\n")
+            } else {
+                updated
+            };
+            self.ops.write_bytes(&path, output.as_bytes()).await?;
+            let relative = self.ops.display_relative(&path);
+            self.event_sink.send(ChatEvent::FileWritten { path: relative.clone() });
+            changed.push(relative);
+        }
+        Ok(format!("Applied patch to {} file(s): {}", changed.len(), changed.join(", ")))
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct GlobFilesArgs {
+    #[schemars(description = "Required glob pattern such as **/*.rs or src/**/*.tsx. The pattern is matched against workspace-relative paths and respects repository ignore rules.")]
+    pub pattern: String,
+    #[serde(default)]
+    #[schemars(description = "Optional workspace-relative or absolute directory to search. Omit to search the active workspace root.")]
+    pub path: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Maximum matching paths to return. Defaults to 100 and is clamped to 1–500.")]
+    pub max_results: Option<usize>,
+}
+
+pub struct GlobFiles {
+    ops: Arc<dyn WorkspaceOps>,
+}
+
+impl Tool for GlobFiles {
+    const NAME: &'static str = GLOB_FILES;
+    type Error = ToolError;
+    type Args = GlobFilesArgs;
+    type Output = String;
+
+    fn description(&self) -> String {
+        "Find files by workspace-relative glob pattern. Repository ignore rules and common generated directories are respected. Use this to locate files by extension or path shape before reading them; results are capped and a limit notice means the pattern should be narrowed.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        cached_schema!(GlobFilesArgs)
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        tool_failure(error)
+    }
+
+    async fn call(
+        &self,
+        _ctx: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        if args.pattern.trim().is_empty() {
+            return Err(ToolError::msg("pattern must not be empty"));
+        }
+        let path = match args.path.as_deref().filter(|path| !path.trim().is_empty()) {
+            Some(path) => self.ops.resolve_in_workspace(path)?,
+            None => self.ops.root().ok_or(AppError::NoWorkspace)?,
+        };
+        Ok(self
+            .ops
+            .glob_files(&path, args.pattern.trim(), args.max_results.unwrap_or(100).clamp(1, 500))
             .await?)
     }
 }
@@ -772,7 +989,7 @@ impl Tool for ExecuteBash {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(ExecuteBashArgs)).unwrap_or_default()
+        cached_schema!(ExecuteBashArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -860,7 +1077,7 @@ impl Tool for GetCommandStatus {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(GetCommandStatusArgs)).unwrap_or_default()
+        cached_schema!(GetCommandStatusArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -912,7 +1129,7 @@ impl Tool for StopCommand {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(StopCommandArgs)).unwrap_or_default()
+        cached_schema!(StopCommandArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -957,7 +1174,7 @@ impl Tool for ReadSkill {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(ReadSkillArgs)).unwrap_or_default()
+        cached_schema!(ReadSkillArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -1007,7 +1224,7 @@ impl Tool for Search {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(SearchArgs)).unwrap_or_default()
+        cached_schema!(SearchArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -1097,7 +1314,7 @@ impl Tool for ListDir {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(ListDirArgs)).unwrap_or_default()
+        cached_schema!(ListDirArgs)
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
@@ -1152,8 +1369,19 @@ impl ToolContext {
             event_sink: self.event_sink.clone(),
         }
     }
+    pub fn apply_patch(&self) -> ApplyPatch {
+        ApplyPatch {
+            ops: self.ops.clone(),
+            event_sink: self.event_sink.clone(),
+        }
+    }
     pub fn search_workspace(&self) -> SearchWorkspace {
         SearchWorkspace {
+            ops: self.ops.clone(),
+        }
+    }
+    pub fn glob_files(&self) -> GlobFiles {
+        GlobFiles {
             ops: self.ops.clone(),
         }
     }

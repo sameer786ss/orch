@@ -29,7 +29,7 @@ use crate::workspace::Workspace;
 pub struct RunHandle {
     pub run_id: String,
     pub cancel: CancellationToken,
-    pub workspace: Option<PathBuf>,
+    pub workspace: Option<Workspace>,
     pub owner_id: String,
 }
 
@@ -147,6 +147,7 @@ impl AppState {
         self.set_token(None);
         self.current_user_id.store(None);
         self.catalog.store(None);
+        self.connector_manager.clear_cache();
         *self.client.lock() = None;
     }
 
@@ -190,6 +191,7 @@ impl AppState {
         self.current_user_id.store(Some(Arc::new(user_id.to_string())));
         if changed {
             self.catalog.store(None);
+            self.connector_manager.clear_cache();
         }
     }
 
@@ -429,7 +431,7 @@ impl AppState {
     pub fn start_run(
         &self,
         session_id: &str,
-        workspace: Option<PathBuf>,
+        workspace: Option<Workspace>,
         owner_id: String,
     ) -> AppResult<(String, CancellationToken)> {
         use dashmap::mapref::entry::Entry;
@@ -494,8 +496,13 @@ impl AppState {
         targets
     }
 
-    pub fn cancel_runs_in_workspace(&self, workspace: &Path) -> Vec<String> {
-        self.cancel_runs_matching(|run| run.workspace.as_deref().is_some_and(|ws| ws.starts_with(workspace)))
+    pub fn cancel_runs_in_workspace(&self, workspace: &Workspace) -> Vec<String> {
+        let key = workspace.key();
+        self.cancel_runs_matching(|run| {
+            run.workspace
+                .as_ref()
+                .is_some_and(|run_workspace| run_workspace.key() == key)
+        })
     }
 
     pub fn cancel_all_runs(&self) {

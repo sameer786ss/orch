@@ -8,6 +8,8 @@ pub enum AppError {
     NoWorkspace,
     #[error("path escapes the workspace root: {0}")]
     PathEscapesWorkspace(String),
+    #[error("authentication session expired")]
+    AuthExpired,
     #[error("gateway request failed ({status}): {body}")]
     Gateway { status: u16, body: String },
     #[error("network error: {0}")]
@@ -35,19 +37,8 @@ impl AppError {
 
     pub fn is_fatal_auth(&self) -> bool {
         match self {
-            AppError::NoToken => true,
-            AppError::Gateway { status, body } => {
-                matches!(status, 401 | 403)
-                    || (*status == 400
-                        && [
-                            "INVALID_REFRESH_TOKEN",
-                            "TOKEN_EXPIRED",
-                            "USER_DISABLED",
-                            "USER_NOT_FOUND",
-                        ]
-                        .iter()
-                        .any(|code| body.contains(*code)))
-            }
+            AppError::NoToken | AppError::AuthExpired => true,
+            AppError::Gateway { status, .. } => matches!(status, 401 | 403),
             _ => false,
         }
     }

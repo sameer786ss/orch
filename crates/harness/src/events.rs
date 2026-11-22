@@ -130,31 +130,16 @@ impl ChatEvent {
     }
 
     pub fn to_sse_block(&self) -> String {
-        let kind = self.event_type();
-        let data = serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string());
+        let value = serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({
+            "type": "error",
+            "message": "failed to serialize event"
+        }));
+        let kind = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("error");
+        let data = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
         format!("event: {kind}\ndata: {data}\n\n")
-    }
-
-    pub fn event_type(&self) -> &'static str {
-        match self {
-            Self::WorkStart => "workStart",
-            Self::WorkStop { .. } => "workStop",
-            Self::ReasoningStart => "reasoningStart",
-            Self::ReasoningDelta { .. } => "reasoningDelta",
-            Self::ReasoningStop { .. } => "reasoningStop",
-            Self::TextDelta { .. } => "textDelta",
-            Self::TextStop => "textStop",
-            Self::ToolStart { .. } => "toolStart",
-            Self::ToolResult { .. } => "toolResult",
-            Self::FileWritten { .. } => "fileWritten",
-            Self::Usage(_) => "usage",
-            Self::Notice { .. } => "notice",
-            Self::Compacted { .. } => "compacted",
-            Self::Resync => "resync",
-            Self::Cancelled => "cancelled",
-            Self::Error { .. } => "error",
-            Self::Done => "done",
-        }
     }
 
     pub fn is_done(&self) -> bool {
@@ -178,6 +163,69 @@ impl ChatEvent {
         Self::Error {
             message: message.into(),
             code: Some(code.into()),
+        }
+    }
+}
+
+pub struct SseFrame {
+    pub event: Option<String>,
+    pub id: Option<u64>,
+    pub data: String,
+}
+
+pub fn parse_sse_block(block: &str) -> SseFrame {
+    let mut event = None;
+    let mut id = None;
+    let mut data = Vec::new();
+    for line in block.lines() {
+        if let Some(rest) = line.strip_prefix("event:") {
+            event = Some(rest.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("id:") {
+            id = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            data.push(rest.strip_prefix(' ').unwrap_or(rest));
+        }
+    }
+    SseFrame {
+        event,
+        id,
+        data: data.join("\n"),
+    }
+}
+
+#[derive(Default)]
+pub struct SseBlockSplitter {
+    buffer: Vec<u8>,
+    scanned: usize,
+}
+
+impl SseBlockSplitter {
+    pub fn push(&mut self, chunk: &[u8]) {
+        self.buffer
+            .extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
+    }
+
+    pub fn buffered(&self) -> usize {
+        self.buffer.len()
+    }
+
+    pub fn next_block(&mut self) -> Option<String> {
+        let start = self.scanned.saturating_sub(1);
+        match self.buffer[start..]
+            .windows(2)
+            .position(|pair| pair == b"\n\n")
+        {
+            Some(offset) => {
+                let end = start + offset;
+                let block = String::from_utf8_lossy(&self.buffer[..end]).into_owned();
+                self.buffer.drain(..end + 2);
+                self.scanned = 0;
+                Some(block)
+            }
+            None => {
+                self.scanned = self.buffer.len();
+                None
+            }
         }
     }
 }

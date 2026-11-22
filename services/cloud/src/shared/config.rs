@@ -4,7 +4,6 @@ use serde::de::DeserializeOwned;
 
 pub struct Config {
     pub port: u16,
-    pub firebase_api_key: String,
     pub project_id: String,
     pub tavily_api_key: String,
     pub groq_api_key: String,
@@ -72,7 +71,6 @@ impl Config {
         assert!(!gcs_bucket.is_empty(), "GCS_BUCKET must not be empty");
         Self {
             port: var("PORT").parse().expect("PORT must be a valid port number"),
-            firebase_api_key: var("FIREBASE_API_KEY"),
             project_id: var("VERTEX_PROJECT_ID"),
             tavily_api_key: var("TAVILY_API_KEY"),
             groq_api_key: var("GROQ_API_KEY"),
@@ -96,7 +94,7 @@ impl Config {
     }
 }
 
-pub const FIREBASE_LOOKUP_URL: &str = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
+pub const GOOGLE_CERTS_URL: &str = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
 pub const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 pub const TAVILY_SEARCH_URL: &str = "https://api.tavily.com/search";
 pub const GROQ_TRANSCRIBE_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
@@ -120,12 +118,12 @@ pub const BUDGET_WRITE_ATTEMPTS: u32 = 3;
 
 pub const AUTH_CACHE_TTL_SECS: u64 = 300;
 pub const AUTH_CACHE_CAPACITY: u64 = 2000;
-pub const AUTH_LOOKUP_TIMEOUT_SECS: u64 = 10;
 
 pub const HTTP_CONNECT_TIMEOUT_SECS: u64 = 15;
 pub const HTTP_REQUEST_TIMEOUT_SECS: u64 = 120;
 pub const UPSTREAM_OPEN_TIMEOUT_SECS: u64 = 60;
 pub const FIRESTORE_TIMEOUT_SECS: u64 = 15;
+pub const FIRESTORE_RETRY_ATTEMPTS: u32 = 2;
 pub const FIRESTORE_BATCH_LIMIT: usize = 450;
 pub const SHUTDOWN_GRACE_SECS: u64 = 8;
 
@@ -150,6 +148,9 @@ pub const TAIL_MAX_FAILURES: u32 = 5;
 pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 64;
 
 pub const SESSION_PAGE_SIZE: usize = 300;
+
+pub const MAX_SANDBOX_LEASES_PER_USER: usize = 4;
+pub const MAX_SANDBOX_LEASES_TOTAL: usize = 16;
 
 pub const WORKSPACE_ROOT: &str = "/home/user/workspace";
 pub const UPLOAD_DIR: &str = "/home/user/uploads";

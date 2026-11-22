@@ -36,6 +36,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,7 +55,7 @@ import com.orch.app.ui.components.OrchBottomSheet
 import com.orch.app.ui.components.OrchSheetHeader
 import com.orch.app.ui.theme.OrchDimens
 import com.orch.app.ui.theme.OrchMonoBody
-import com.orch.app.ui.theme.OrchSuccess
+import kotlinx.coroutines.flow.collect
 
 private data class QuickKey(val label: String, val sequence: String)
 
@@ -86,6 +87,7 @@ fun TerminalSheet(
     var measuredRows by remember { mutableIntStateOf(24) }
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
+    var followOutput by rememberSaveable { mutableStateOf(true) }
 
     val onSurfaceColor = MaterialTheme.colorScheme.onSurface
     val termStyle = remember(onSurfaceColor) {
@@ -96,8 +98,13 @@ fun TerminalSheet(
         onDispose { onDisconnect() }
     }
 
-    LaunchedEffect(terminal.output) {
-        verticalScroll.scrollTo(verticalScroll.maxValue)
+    LaunchedEffect(verticalScroll) {
+        snapshotFlow { verticalScroll.value >= verticalScroll.maxValue - 24 }
+            .collect { followOutput = it }
+    }
+
+    LaunchedEffect(terminal.output, followOutput) {
+        if (followOutput) verticalScroll.scrollTo(verticalScroll.maxValue)
     }
 
     OrchBottomSheet(

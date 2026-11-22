@@ -4,6 +4,8 @@ use axum::body::Body;
 use axum::http::{header, HeaderValue};
 use axum::response::Response;
 use futures::StreamExt;
+use orchharness::events::parse_sse_block;
+pub use orchharness::events::SseBlockSplitter as BlockSplitter;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -35,50 +37,9 @@ pub struct Block {
 }
 
 pub fn parse_block(block: &str) -> Block {
-    let mut data: Vec<&str> = Vec::new();
-    for line in block.lines() {
-        if let Some(rest) = line.strip_prefix("data:") {
-            data.push(rest.strip_prefix(' ').unwrap_or(rest));
-        }
-    }
+    let frame = parse_sse_block(block);
     Block {
-        data: (!data.is_empty()).then(|| data.join("\n")),
+        data: (!frame.data.is_empty()).then_some(frame.data),
     }
 }
 
-#[derive(Default)]
-pub struct BlockSplitter {
-    buffer: Vec<u8>,
-    scanned: usize,
-}
-
-impl BlockSplitter {
-    pub fn push(&mut self, chunk: &[u8]) {
-        self.buffer
-            .extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
-    }
-
-    pub fn buffered(&self) -> usize {
-        self.buffer.len()
-    }
-
-    pub fn next_block(&mut self) -> Option<String> {
-        let start = self.scanned.saturating_sub(1);
-        match self.buffer[start..]
-            .windows(2)
-            .position(|pair| pair == b"\n\n")
-        {
-            Some(offset) => {
-                let end = start + offset;
-                let block = String::from_utf8_lossy(&self.buffer[..end]).into_owned();
-                self.buffer.drain(..end + 2);
-                self.scanned = 0;
-                Some(block)
-            }
-            None => {
-                self.scanned = self.buffer.len();
-                None
-            }
-        }
-    }
-}

@@ -1,9 +1,10 @@
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
-use futures::StreamExt;
+use futures::{future::join_all, StreamExt};
 use rig::agent::{
     Agent, AgentBuilder, AgentHook, CompletionCallAction, CompletionCallEvent, HookContext,
     ModelTurnAction, ModelTurnFinished, MultiTurnStreamItem, OutcomeAction, OutcomeEvent,
@@ -138,7 +139,9 @@ pub fn build_agent(inputs: AgentInputs<'_>) -> ChatAgent {
         .tool(ctx.read_skill())
         .tool(ctx.write_to_file())
         .tool(ctx.replace_file_content())
+        .tool(ctx.apply_patch())
         .tool(ctx.search_workspace())
+        .tool(ctx.glob_files())
         .tool(ctx.search())
         .tool(ctx.execute_bash())
         .tool(ctx.get_command_status())
@@ -215,6 +218,17 @@ const ROLE: &str = r#"You are the user's autonomous software engineer inside an 
 - For a user question, give the direct answer first, then enough evidence to make the reasoning checkable. For implementation, summarize the result rather than dumping internal reasoning.
 - Be clear and economical. Use familiar words, short paragraphs, and lists only when they make the result easier to scan. Avoid generic praise, canned transitions, and claims of certainty unsupported by evidence."#;
 
+fn workspace_rules(workspace: &str) -> Option<String> {
+    let root = Path::new(workspace);
+    [root.join("AGENTS.md"), root.join(".orch/AGENTS.md")]
+        .into_iter()
+        .find_map(|path| {
+            let raw = std::fs::read_to_string(path).ok()?;
+            let rules = raw.trim();
+            (!rules.is_empty()).then(|| truncate_chars(rules, 24_000).to_string())
+        })
+}
+
 pub fn build_preamble(
     skills: &[crate::skills::Skill],
     workspace: Option<&str>,
@@ -260,6 +274,12 @@ The skill content gives you a proven sequence of steps, tool calls, and checks â
     if let Some(note) = environment_note.map(str::trim).filter(|s| !s.is_empty()) {
         environment.push('\n');
         environment.push_str(note);
+    }
+    if let Some(path) = workspace
+        && let Some(rules) = workspace_rules(path)
+    {
+        environment.push_str("\n\nProject instructions from AGENTS.md:\n");
+        environment.push_str(&rules);
     }
     sections.push(Section::new("environment", environment));
 
@@ -716,13 +736,6 @@ impl AgentHook for SessionHook {
         if estimate >= self.deps.compaction_trigger && session.may_compact() {
             self.compact(&mut session).await;
         }
-        if let Err(error) = session
-            .save(self.deps.store.as_ref(), &self.deps.session_id)
-            .await
-        {
-            tracing::error!(error = %error, "conversation hook failed");
-        }
-
         if session.compactions == 0 {
             return CompletionCallAction::continue_run();
         }
@@ -936,31 +949,33 @@ pub async fn collect_mentioned_paths(
     ops: &dyn WorkspaceOps,
     prompt: &str,
 ) -> Vec<(String, Option<String>)> {
-    let mut out = Vec::new();
-    for cap in mention_regex().captures_iter(prompt) {
-        let (candidate, line_range) = if let Some(b) = cap.name("bracket") {
-            (
-                b.as_str().trim(),
-                cap.name("brange").map(|r| r.as_str().to_string()),
-            )
-        } else if let Some(p) = cap.name("plain") {
-            let raw = p.as_str().trim_end_matches(['.', ',', ';', ':', '!', '?']);
-            (raw, cap.name("prange").map(|r| r.as_str().to_string()))
-        } else {
-            continue;
-        };
-        if candidate.is_empty() {
-            continue;
-        }
-        if let Ok(resolved) = ops.resolve_in_workspace(candidate) {
-            if let Ok(stat) = ops.stat(&resolved).await {
-                if stat.is_file {
-                    out.push((resolved, line_range));
-                }
-            }
-        }
-    }
-    out
+    let candidates: Vec<(String, Option<String>)> = mention_regex()
+        .captures_iter(prompt)
+        .filter_map(|cap| {
+            let (candidate, line_range) = if let Some(b) = cap.name("bracket") {
+                (
+                    b.as_str().trim(),
+                    cap.name("brange").map(|r| r.as_str().to_string()),
+                )
+            } else if let Some(p) = cap.name("plain") {
+                let raw = p.as_str().trim_end_matches(['.', ',', ';', ':', '!', '?']);
+                (raw, cap.name("prange").map(|r| r.as_str().to_string()))
+            } else {
+                return None;
+            };
+            (!candidate.is_empty()).then(|| (candidate.to_string(), line_range))
+        })
+        .collect();
+
+    join_all(candidates.into_iter().map(|(candidate, line_range)| async move {
+        let resolved = ops.resolve_in_workspace(&candidate).ok()?;
+        let stat = ops.stat(&resolved).await.ok()?;
+        stat.is_file.then_some((resolved, line_range))
+    }))
+    .await
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 enum AttachmentPart {
@@ -1084,7 +1099,8 @@ pub async fn build_user_message(
             match base64::engine::general_purpose::STANDARD.decode(b64) {
                 Ok(bytes) => {
                     let ext = crate::util::lowercase_extension_str(&attachment.name);
-                    let opt_path = (!attachment.path.trim().is_empty()).then(|| attachment.path.clone());
+                    let opt_path = (!attachment.path.trim().is_empty())
+                        .then(|| attachment.path.clone());
                     targets.push(AttachmentTarget {
                         dedup_key: format!("inline:{idx}:{}", attachment.name),
                         source: TargetSource::InlineBytes(bytes),
@@ -1098,31 +1114,44 @@ pub async fn build_user_message(
                 }
                 Err(e) => notes.push(format!("{} has invalid base64: {e}", attachment.name)),
             }
-            continue;
         }
+    }
 
-        match ops.resolve_in_workspace(&attachment.path) {
-            Ok(resolved) => match ops.stat(&resolved).await {
-                Ok(stat) if stat.is_file => {
-                    let label = ops.display_relative(&resolved);
-                    let ext = crate::util::lowercase_extension_str(&resolved);
-                    targets.push(AttachmentTarget {
-                        dedup_key: resolved.clone(),
-                        source: TargetSource::WorkspacePath(resolved),
-                        label: label.clone(),
-                        name: attachment.name.clone(),
-                        path: Some(label),
-                        ext,
-                        line_range: None,
-                        is_mention: false,
-                    });
+    let workspace_targets = join_all(
+        attachments
+            .iter()
+            .filter(|attachment| attachment.data_base64.is_none())
+            .map(|attachment| async move {
+                let name = attachment.name.clone();
+                let resolved = match ops.resolve_in_workspace(&attachment.path) {
+                    Ok(path) => path,
+                    Err(error) => return Err(format!("{name} could not be attached: {error}")),
+                };
+                match ops.stat(&resolved).await {
+                    Ok(stat) if stat.is_file => {
+                        let label = ops.display_relative(&resolved);
+                        let ext = crate::util::lowercase_extension_str(&resolved);
+                        Ok(AttachmentTarget {
+                            dedup_key: resolved.clone(),
+                            source: TargetSource::WorkspacePath(resolved),
+                            label: label.clone(),
+                            name,
+                            path: Some(label),
+                            ext,
+                            line_range: None,
+                            is_mention: false,
+                        })
+                    }
+                    Ok(_) => Err(format!("{name} could not be attached: not a file")),
+                    Err(error) => Err(format!("{name} could not be attached: {error}")),
                 }
-                Ok(_) => notes.push(format!("{} could not be attached: not a file", attachment.name)),
-                Err(error) => {
-                    notes.push(format!("{} could not be attached: {error}", attachment.name))
-                }
-            },
-            Err(error) => notes.push(format!("{} could not be attached: {error}", attachment.name)),
+            }),
+    )
+    .await;
+    for result in workspace_targets {
+        match result {
+            Ok(target) => targets.push(target),
+            Err(note) => notes.push(note),
         }
     }
 
@@ -1144,25 +1173,17 @@ pub async fn build_user_message(
     let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
     targets.retain(|target| seen.insert((target.dedup_key.clone(), target.line_range.clone())));
 
-    let mut prepared: Vec<(
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        bool,
-        Result<Vec<u8>, String>,
-    )> = Vec::with_capacity(targets.len());
-    for target in targets {
+    let prepared = join_all(targets.into_iter().map(|target| async move {
         let label = target.label;
+        let error_label = label.clone();
         let bytes_res = match target.source {
             TargetSource::InlineBytes(bytes) => Ok(bytes),
             TargetSource::WorkspacePath(path) => ops
                 .read_bytes(&path, Some(config::MAX_ATTACHMENT_SOURCE_BYTES))
                 .await
-                .map_err(|e| format!("cannot read attachment {label}: {e}")),
+                .map_err(|e| format!("cannot read attachment {error_label}: {e}")),
         };
-        prepared.push((
+        (
             label,
             target.name,
             target.path,
@@ -1170,8 +1191,9 @@ pub async fn build_user_message(
             target.line_range,
             target.is_mention,
             bytes_res,
-        ));
-    }
+        )
+    }))
+    .await;
 
     let loaded = tokio::task::spawn_blocking(move || {
         prepared

@@ -117,15 +117,24 @@ pub struct PreparedConnectors {
     pub defs: Vec<&'static ConnectorDef>,
 }
 
+pub type ConnectorSpecCache = Cache<&'static str, Arc<Vec<ToolSpec>>>;
+
 pub struct ConnectorManager {
     client: Arc<dyn ComposioTransport>,
-    specs_cache: Cache<&'static str, Arc<Vec<ToolSpec>>>,
+    specs_cache: ConnectorSpecCache,
     accounts_cache: Cache<(), Arc<Vec<AccountWire>>>,
 }
 
 impl ConnectorManager {
     pub fn new(client: Arc<dyn ComposioTransport>) -> Self {
         let specs_cache = Cache::builder().time_to_live(DEFINITIONS_TTL).build();
+        Self::new_with_specs_cache(client, specs_cache)
+    }
+
+    pub fn new_with_specs_cache(
+        client: Arc<dyn ComposioTransport>,
+        specs_cache: ConnectorSpecCache,
+    ) -> Self {
         let accounts_cache = Cache::builder()
             .time_to_live(Duration::from_secs(30))
             .build();
@@ -134,6 +143,11 @@ impl ConnectorManager {
             specs_cache,
             accounts_cache,
         }
+    }
+
+    pub fn clear_cache(&self) {
+        self.specs_cache.invalidate_all();
+        self.accounts_cache.invalidate_all();
     }
 
     async fn get_accounts(&self) -> AppResult<Arc<Vec<AccountWire>>> {
@@ -160,7 +174,7 @@ impl ConnectorManager {
         let (slug, args) = if query.is_empty() {
             (
                 "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
-                json!({ "type": "public", "sort": "updated", "per_page": 50, "raw_response": true }),
+                json!({ "type": "all", "sort": "updated", "per_page": 50, "raw_response": true }),
             )
         } else {
             (

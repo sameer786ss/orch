@@ -300,6 +300,13 @@ async fn check_status_text(resp: reqwest::Response, context: &str) -> AppResult<
         .text()
         .await
         .map_err(|e| network_error(&format!("{context} response"), e))?;
+    if status == reqwest::StatusCode::BAD_REQUEST
+        && ["INVALID_REFRESH_TOKEN", "TOKEN_EXPIRED", "USER_DISABLED", "USER_NOT_FOUND"]
+            .iter()
+            .any(|code| body.contains(code))
+    {
+        return Err(AppError::AuthExpired);
+    }
     if status.is_success() {
         Ok(body)
     } else {

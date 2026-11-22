@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::extract::State;
 use axum::http::{header, HeaderValue};
 use axum::response::{IntoResponse, Response};
@@ -68,72 +66,48 @@ async fn list_files(
     query: Option<&str>,
     limit: usize,
 ) -> ApiResult<Vec<FileEntry>> {
-    let mut envs = HashMap::new();
-    envs.insert("WS_ROOT".to_string(), cloud_ws.repo_dir.clone());
-    envs.insert("SKIP_DIRS".to_string(), hconfig::SKIP_DIRS.join(","));
-    envs.insert("MAX_FILES".to_string(), hconfig::MAX_INDEXED_FILES.to_string());
-    envs.insert(
-        "NEEDLE".to_string(),
-        query.unwrap_or_default().trim().to_ascii_lowercase(),
-    );
-    envs.insert(
-        "MAX_LIMIT".to_string(),
-        limit.clamp(1, config::FILE_LIST_MAX_LIMIT).to_string(),
-    );
-
-    let script = r#"
-import os
-root = os.environ["WS_ROOT"].rstrip("/")
-skip = set(os.environ["SKIP_DIRS"].split(","))
-max_files = int(os.environ["MAX_FILES"])
-needle = os.environ["NEEDLE"]
-limit = int(os.environ["MAX_LIMIT"])
-matches = []
-seen = 0
-for dp, dns, fns in os.walk(root):
-    dns[:] = [d for d in dns if d not in skip]
-    for fn in fns:
-        seen += 1
-        if seen > max_files:
-            break
-        full = os.path.join(dp, fn)
-        rel = full[len(root) + 1:] if full.startswith(root + "/") else full
-        if not needle or needle in rel.lower():
-            matches.append((rel.count("/"), rel.lower(), full, fn))
-    if seen > max_files:
-        break
-matches.sort(key=lambda x: (x[0], x[1]))
-for _, _, full, fn in matches[:limit]:
-    print(f"{full}\t{fn}")
-"#;
-
+    let mut args = vec![
+        "--files".to_string(),
+        "--hidden".to_string(),
+        "--color=never".to_string(),
+    ];
+    for skipped in hconfig::SKIP_DIRS {
+        args.push("--glob".to_string());
+        args.push(format!("!{skipped}/**"));
+    }
+    args.push("--".to_string());
+    args.push(cloud_ws.repo_dir.clone());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let (code, stdout, stderr) = lease
         .manager
-        .run_oneshot(
-            &lease.conn,
-            "python3",
-            &["-c", script],
-            Some(&cloud_ws.repo_dir),
-            Some(envs),
-            30,
-        )
+        .run_oneshot(&lease.conn, "rg", &arg_refs, Some(&cloud_ws.repo_dir), None, 30)
         .await?;
-    if code != 0 {
+    if code != 0 && code != 1 {
         return Err(ApiError::bad_gateway(format!(
             "workspace file index failed: {}",
             stderr.trim()
         )));
     }
-    let entries = stdout
+
+    let needle = query.unwrap_or_default().trim().to_ascii_lowercase();
+    let mut entries: Vec<FileEntry> = stdout
         .lines()
-        .filter_map(|line| {
-            let (path, name) = line.split_once('\t')?;
-            Some(FileEntry {
-                path: path.to_string(),
-                name: name.to_string(),
-            })
+        .map(|line| line.trim_start_matches("./").to_string())
+        .filter(|path| needle.is_empty() || path.to_ascii_lowercase().contains(&needle))
+        .take(hconfig::MAX_INDEXED_FILES)
+        .map(|path| FileEntry {
+            name: path.rsplit('/').next().unwrap_or(&path).to_string(),
+            path,
         })
         .collect();
+    entries.sort_by(|left, right| {
+        left.path
+            .matches('/')
+            .count()
+            .cmp(&right.path.matches('/').count())
+            .then_with(|| left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()))
+    });
+    entries.truncate(limit.clamp(1, config::FILE_LIST_MAX_LIMIT));
     Ok(entries)
 }
 

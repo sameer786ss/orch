@@ -3,7 +3,7 @@ use rig::message::ImageMediaType;
 
 use crate::error::{AppError, AppResult};
 
-pub const RASTER_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "heic", "heif", "gif", "bmp"];
+pub const RASTER_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "heic", "heif"];
 
 pub fn is_raster_extension(ext: &str) -> bool {
     RASTER_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())

@@ -5,6 +5,13 @@ import com.orch.app.data.OrchClient
 import com.orch.app.data.OrchJson
 import com.orch.app.data.parseErrorBody
 import com.orch.app.data.toApiError
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,8 +43,13 @@ class SandboxTerminal(private val client: OrchClient) {
     val state: StateFlow<TerminalUi> = _state.asStateFlow()
 
     private val lock = Any()
+    private val renderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var renderJob: Job? = null
+    private var renderPending = false
     private val lines = ArrayList<StringBuilder>().apply { add(StringBuilder()) }
     private var cursorCol = 0
+    private var cursorRow = 0
+    private val csiParams = StringBuilder()
     private var escState = EscState.Normal
     private var socket: WebSocket? = null
     private var activeWorkspace = ""
@@ -172,9 +184,14 @@ class SandboxTerminal(private val client: OrchClient) {
 
     fun clearOutput() {
         synchronized(lock) {
+            renderJob?.cancel()
+            renderJob = null
+            renderPending = false
             lines.clear()
             lines.add(StringBuilder())
             cursorCol = 0
+            cursorRow = 0
+            csiParams.clear()
         }
         _state.update { it.copy(output = "") }
     }
@@ -191,7 +208,7 @@ class SandboxTerminal(private val client: OrchClient) {
     }
 
     private fun appendChunk(chunk: String) {
-        val rendered = synchronized(lock) {
+        synchronized(lock) {
             for (ch in chunk) {
                 when (escState) {
                     EscState.Normal -> when (ch) {
@@ -199,8 +216,13 @@ class SandboxTerminal(private val client: OrchClient) {
                         '\u0007' -> Unit
                         '\r' -> cursorCol = 0
                         '\n' -> {
-                            lines.add(StringBuilder())
-                            if (lines.size > MAX_SCROLLBACK_LINES) lines.removeAt(0)
+                            if (cursorRow == lines.lastIndex) {
+                                lines.add(StringBuilder())
+                                if (lines.size > MAX_SCROLLBACK_LINES) lines.removeAt(0)
+                                cursorRow = lines.lastIndex
+                            } else {
+                                cursorRow++
+                            }
                             cursorCol = 0
                         }
                         '\b' -> if (cursorCol > 0) cursorCol--
@@ -208,7 +230,10 @@ class SandboxTerminal(private val client: OrchClient) {
                         else -> if (ch >= ' ') writeChar(ch)
                     }
                     EscState.Esc -> when (ch) {
-                        '[' -> escState = EscState.Csi
+                        '[' -> {
+                            csiParams.clear()
+                            escState = EscState.Csi
+                        }
                         ']' -> escState = EscState.Osc
                         '(', ')', '*', '+' -> escState = EscState.Charset
                         else -> escState = EscState.Normal
@@ -216,13 +241,11 @@ class SandboxTerminal(private val client: OrchClient) {
                     EscState.Charset -> escState = EscState.Normal
                     EscState.Csi -> {
                         if (ch in '@'..'~') {
-                            if (ch == 'K') {
-                                val line = lines.last()
-                                if (cursorCol < line.length) line.setLength(cursorCol)
-                            } else if (ch == 'J' && lines.size == 1 && cursorCol == 0) {
-                                lines.last().clear()
-                            }
+                            applyCsi(ch, csiParams.toString())
+                            csiParams.clear()
                             escState = EscState.Normal
+                        } else if (csiParams.length < MAX_CSI_PARAMS) {
+                            csiParams.append(ch)
                         }
                     }
                     EscState.Osc -> when (ch) {
@@ -234,9 +257,84 @@ class SandboxTerminal(private val client: OrchClient) {
                     }
                 }
             }
+            renderPending = true
+        }
+        scheduleRender()
+    }
+
+    private fun scheduleRender() {
+        synchronized(lock) {
+            if (renderJob?.isActive == true) return
+            renderJob = renderScope.launch {
+                delay(RENDER_INTERVAL_MS)
+                publishOutput()
+                synchronized(lock) {
+                    renderJob = null
+                    if (renderPending) scheduleRender()
+                }
+            }
+        }
+    }
+
+    private fun publishOutput() {
+        val rendered = synchronized(lock) {
+            renderPending = false
             lines.joinToString("\n") { it.toString() }
         }
         _state.update { it.copy(output = rendered) }
+    }
+
+    private fun applyCsi(command: Char, rawParams: String) {
+        val params = rawParams.trimStart('?', '>').split(';').map { it.toIntOrNull() ?: 0 }
+        fun amount(index: Int = 0): Int = (params.getOrNull(index) ?: 0).let { if (it == 0) 1 else it }
+        fun position(index: Int, fallback: Int): Int = (params.getOrNull(index) ?: 0).let { if (it == 0) fallback else it }
+
+        when (command) {
+            'A' -> cursorRow = (cursorRow - amount()).coerceAtLeast(0)
+            'B', 'e' -> cursorRow = (cursorRow + amount()).coerceAtMost(lines.lastIndex)
+            'C', 'a' -> cursorCol += amount()
+            'D' -> cursorCol = (cursorCol - amount()).coerceAtLeast(0)
+            'E' -> {
+                cursorRow = (cursorRow + amount()).coerceAtMost(lines.lastIndex)
+                cursorCol = 0
+            }
+            'F' -> {
+                cursorRow = (cursorRow - amount()).coerceAtLeast(0)
+                cursorCol = 0
+            }
+            'G', '`' -> cursorCol = (position(0, 1) - 1).coerceAtLeast(0)
+            'd' -> cursorRow = (position(0, 1) - 1).coerceIn(0, lines.lastIndex)
+            'H', 'f' -> {
+                cursorRow = (position(0, 1) - 1).coerceIn(0, lines.lastIndex)
+                cursorCol = (position(1, 1) - 1).coerceAtLeast(0)
+            }
+            'J' -> when (params.firstOrNull() ?: 0) {
+                2, 3 -> {
+                    lines.clear()
+                    lines.add(StringBuilder())
+                    cursorRow = 0
+                    cursorCol = 0
+                }
+                1 -> {
+                    for (index in 0..cursorRow) lines[index].clear()
+                }
+                else -> {
+                    lines[cursorRow].setLength(cursorCol.coerceAtMost(lines[cursorRow].length))
+                    while (lines.size > cursorRow + 1) lines.removeAt(lines.lastIndex)
+                }
+            }
+            'K' -> when (params.firstOrNull() ?: 0) {
+                1 -> {
+                    val line = lines[cursorRow]
+                    if (cursorCol.coerceAtMost(line.length) > 0) {
+                        line.delete(0, cursorCol.coerceAtMost(line.length))
+                    }
+                }
+                2 -> lines[cursorRow].clear()
+                else -> lines[cursorRow].setLength(cursorCol.coerceAtMost(lines[cursorRow].length))
+            }
+            else -> Unit
+        }
     }
 
     private fun writeChars(text: String) {
@@ -244,7 +342,8 @@ class SandboxTerminal(private val client: OrchClient) {
     }
 
     private fun writeChar(ch: Char) {
-        val line = lines.last()
+        cursorRow = cursorRow.coerceIn(0, lines.lastIndex)
+        val line = lines[cursorRow]
         while (line.length < cursorCol) line.append(' ')
         if (cursorCol == line.length) {
             line.append(ch)
@@ -256,6 +355,10 @@ class SandboxTerminal(private val client: OrchClient) {
 
     private enum class EscState { Normal, Esc, Csi, Osc, OscEsc, Charset }
 
+    fun shutdown() {
+        renderScope.cancel()
+    }
+
     private companion object {
         const val DEFAULT_COLS = 80
         const val DEFAULT_ROWS = 24
@@ -264,6 +367,8 @@ class SandboxTerminal(private val client: OrchClient) {
         const val MIN_ROWS = 4
         const val MAX_ROWS = 200
         const val MAX_SCROLLBACK_LINES = 1500
+        const val MAX_CSI_PARAMS = 64
+        const val RENDER_INTERVAL_MS = 50L
     }
 }
 

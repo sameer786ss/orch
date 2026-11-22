@@ -1,8 +1,8 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, SyncSender};
 use std::sync::Arc;
+use tokio::sync::mpsc::{self, Sender, UnboundedSender};
 
 use futures::{SinkExt, StreamExt};
 use orchharness::error::{AppError, AppResult};
@@ -11,7 +11,6 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, Pt
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::json;
 use tauri::ipc::Channel;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -20,7 +19,7 @@ use crate::config;
 enum TerminalBackend {
     Local {
         master: Box<dyn MasterPty + Send>,
-        input: SyncSender<Vec<u8>>,
+        input: Sender<Vec<u8>>,
         killer: Box<dyn ChildKiller + Send + Sync>,
     },
     Cloud {
@@ -41,7 +40,7 @@ impl TerminalSession {
 
     pub fn write(&self, data: &str) -> bool {
         match &self.backend {
-            TerminalBackend::Local { input, .. } => input.send(data.as_bytes().to_vec()).is_ok(),
+            TerminalBackend::Local { input, .. } => input.try_send(data.as_bytes().to_vec()).is_ok(),
             TerminalBackend::Cloud { input, killed } => {
                 if killed.load(Ordering::Relaxed) {
                     return false;
@@ -141,9 +140,9 @@ pub fn open(
         .take_writer()
         .map_err(|e| AppError::other(format!("failed to take pty writer: {e}")))?;
 
-    let (input, input_rx) = mpsc::sync_channel::<Vec<u8>>(256);
+    let (input, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
     std::thread::spawn(move || {
-        for chunk in input_rx {
+        while let Some(chunk) = input_rx.blocking_recv() {
             if writer.write_all(&chunk).is_err() {
                 break;
             }

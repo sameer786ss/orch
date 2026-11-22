@@ -5,13 +5,13 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
 use axum::Extension;
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine as _;
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 
-use crate::cloud::e2b::{ConnectFrame, ConnectFrameDecoder, SandboxLease};
+use crate::cloud::e2b::{
+    parse_process_event, ConnectFrame, ConnectFrameDecoder, EnvdProcessEvent, SandboxLease,
+};
 use crate::cloud::workspace;
 use crate::shared::auth::VerifiedUser;
 use crate::shared::error::ApiResult;
@@ -170,38 +170,31 @@ async fn bridge(socket: WebSocket, lease: Arc<SandboxLease>, resp: reqwest::Resp
                                     break;
                                 }
                                 Ok(Some(ConnectFrame::Message(val))) => {
-                                    if let Some(event) = val.get("event") {
-                                        if let Some(start) = event.get("start") {
-                                            if let Some(p) = start.get("pid").and_then(|v| {
-                                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-                                            }).filter(|&p| p > 0) {
-                                                pid = Some(p);
+                                    if let Some(process_event) = parse_process_event(&val) {
+                                        match process_event {
+                                            EnvdProcessEvent::Start { pid: process_pid } => {
+                                                pid = Some(process_pid);
                                                 if let Some((c, r)) = pending_resize.take() {
-                                                    let _ = lease.manager.update_pty(&lease.conn, p, c, r).await;
+                                                    let _ = lease.manager.update_pty(&lease.conn, process_pid, c, r).await;
                                                 }
                                                 for bytes in pending_inputs.drain(..) {
-                                                    let _ = lease.manager.send_input_pty(&lease.conn, p, &bytes).await;
+                                                    let _ = lease.manager.send_input_pty(&lease.conn, process_pid, &bytes).await;
                                                 }
                                             }
-                                        }
-                                        if let Some(data) = event.get("data") {
-                                            for field in ["pty", "stdout", "stderr"] {
-                                                if let Some(b64) = data.get(field).and_then(Value::as_str) {
-                                                    if let Ok(bytes) = STANDARD.decode(b64) {
-                                                        let text = utf8.decode(&bytes);
-                                                        if !text.is_empty()
-                                                            && !send_ws(&mut ws_tx, json!({ "type": "data", "data": text })).await
-                                                        {
-                                                            exited = true;
-                                                            break;
-                                                        }
+                                            EnvdProcessEvent::Data { stdout, stderr, pty } => {
+                                                for bytes in [pty, stdout, stderr].into_iter().flatten() {
+                                                    let text = utf8.decode(&bytes);
+                                                    if !text.is_empty()
+                                                        && !send_ws(&mut ws_tx, json!({ "type": "data", "data": text })).await
+                                                    {
+                                                        exited = true;
+                                                        break;
                                                     }
                                                 }
                                             }
-                                        }
-                                        if event.get("end").is_some() {
-                                            exited = true;
-                                            break;
+                                            EnvdProcessEvent::End { .. } => {
+                                                exited = true;
+                                            }
                                         }
                                     }
                                 }

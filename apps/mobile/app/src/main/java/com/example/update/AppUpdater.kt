@@ -20,12 +20,14 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 data class UpdateInfo(
     val versionCode: Long,
     val tag: String,
     val apkUrl: String,
+    val checksumUrl: String,
     val sizeBytes: Long
 )
 
@@ -73,7 +75,10 @@ class AppUpdater(private val context: Context) {
                 val versionCode = versionCodeOf(release.tag) ?: return@mapNotNull null
                 val asset = release.assets.firstOrNull { it.name == APK_NAME && it.url.isNotBlank() }
                     ?: return@mapNotNull null
-                UpdateInfo(versionCode, displayVersion(versionCode), asset.url, asset.size)
+                val checksum = release.assets.firstOrNull {
+                    it.name == CHECKSUM_NAME && it.url.isNotBlank()
+                } ?: return@mapNotNull null
+                UpdateInfo(versionCode, displayVersion(versionCode), asset.url, checksum.url, asset.size)
             }
             .maxByOrNull { it.versionCode }
     }
@@ -81,7 +86,7 @@ class AppUpdater(private val context: Context) {
     suspend fun download(info: UpdateInfo, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
         directory.mkdirs()
         val target = File(directory, "Orch-${info.versionCode}.apk")
-        if (isValid(target, info)) return@withContext target
+        if (isValid(target, info) && verifyChecksum(target, info)) return@withContext target
 
         directory.listFiles()?.forEach { it.delete() }
         val partial = File(directory, target.name + ".part")
@@ -108,9 +113,9 @@ class AppUpdater(private val context: Context) {
             partial.delete()
             throw IOException("Unable to store the update.")
         }
-        if (!isValid(target, info)) {
+        if (!isValid(target, info) || !verifyChecksum(target, info)) {
             target.delete()
-            throw IOException("The downloaded update is not valid. Please try again.")
+            throw IOException("The downloaded update failed verification. Please try again.")
         }
         target
     }
@@ -161,6 +166,26 @@ class AppUpdater(private val context: Context) {
         }
     }
 
+    private fun verifyChecksum(file: File, info: UpdateInfo): Boolean {
+        val expected = runCatching {
+            http.newCall(Request.Builder().url(info.checksumUrl).build()).execute().use { response ->
+                if (!response.isSuccessful) return false
+                response.body?.string()?.trim()?.split(Regex("\\s+"))?.firstOrNull()?.lowercase()
+            }
+        }.getOrNull()?.takeIf { it.length == 64 } ?: return false
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(BUFFER_BYTES)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        val actual = digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+        actual == expected
+    }
+
     private fun isValid(file: File, info: UpdateInfo): Boolean =
         file.isFile && archiveVersion(file) == info.versionCode
 
@@ -174,6 +199,7 @@ class AppUpdater(private val context: Context) {
 
     private companion object {
         const val APK_NAME = "Orch.apk"
+        const val CHECKSUM_NAME = "Orch.apk.sha256"
         const val BUFFER_BYTES = 64 * 1024
         const val RELEASES_PAGE_SIZE = 100
         val TAG_PATTERN = Regex("""^app-v(\d+)\.(\d+)\.(\d+)$""")

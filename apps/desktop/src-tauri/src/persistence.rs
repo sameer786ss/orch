@@ -359,8 +359,7 @@ impl SessionStore for SqliteMemory {
     async fn set_context_tokens(&self, session_id: &str, context_tokens: u64) -> AppResult<()> {
         let now = now_ms();
         sqlx::query(
-            "UPDATE sessions SET last_context_tokens = ?2, last_input_tokens = 0,
-             last_output_tokens = 0, last_cached_tokens = 0, last_reasoning_tokens = 0,
+            "UPDATE sessions SET last_context_tokens = ?2,
              updated_at = ?3 WHERE id = ?1",
         )
         .bind(session_id)

@@ -16,7 +16,6 @@ pub mod state;
 pub mod terminal;
 pub mod workspace;
 
-use orchharness::skills::seed_bundled_skills;
 use orchharness::util::{strip_prefix_ignore_ascii_case, warm_login_shell_path};
 use state::AppState;
 use tauri::{Emitter, Manager};
@@ -164,7 +163,6 @@ pub fn run() {
             warm_login_shell_path();
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            seed_bundled_skills(&data_dir);
 
             let app_state = AppState::new(&data_dir)?;
             app.manage(app_state);
@@ -242,8 +240,6 @@ pub fn run() {
             ipc::get_connector_auth_url,
             ipc::disconnect_connector,
             ipc::report_error,
-            ipc::fetch_latest_release,
-            ipc::quit_app,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the application");

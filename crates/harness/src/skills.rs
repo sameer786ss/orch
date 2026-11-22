@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -17,38 +17,6 @@ pub struct Skill {
 }
 
 static EMBEDDED_SKILLS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/skills");
-
-const BUNDLED_VERSION: &str = "v5";
-
-pub fn seed_bundled_skills(data_dir: &Path) {
-    let global_skills_dir = data_dir.join("skills");
-    let version_file = global_skills_dir.join(".version");
-
-    if version_file.exists()
-        && std::fs::read_to_string(&version_file).ok().as_deref() == Some(BUNDLED_VERSION)
-    {
-        return;
-    }
-
-    if let Err(e) = std::fs::create_dir_all(&global_skills_dir) {
-        tracing::error!(error = %e, "failed to create skills directory");
-        return;
-    }
-
-    if let Ok(files) = EMBEDDED_SKILLS_DIR.find("**/*") {
-        for file in files {
-            if let include_dir::DirEntry::File(f) = file {
-                let target_path = global_skills_dir.join(f.path());
-                if let Some(parent) = target_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&target_path, f.contents());
-            }
-        }
-    }
-
-    let _ = std::fs::write(&version_file, BUNDLED_VERSION);
-}
 
 const SKILLS_CACHE_TTL: Duration = Duration::from_secs(10);
 
@@ -108,11 +76,13 @@ pub async fn load_all_skills(data_dir: PathBuf) -> Arc<[Skill]> {
     }
     tokio::task::spawn_blocking(move || {
         skills_cache().get_with(skills_dir.clone(), || {
-            let mut skills = Vec::new();
-            let mut seen = HashSet::new();
-
-            scan_skills_directory(&skills_dir, &mut skills, &mut seen);
-
+            let mut by_name: HashMap<String, Skill> = load_embedded_skills()
+                .iter()
+                .cloned()
+                .map(|skill| (skill.name.to_lowercase(), skill))
+                .collect();
+            scan_skills_directory(&skills_dir, &mut by_name);
+            let mut skills: Vec<Skill> = by_name.into_values().collect();
             skills.sort_by(|a, b| a.name.cmp(&b.name));
             skills.into()
         })
@@ -122,18 +92,22 @@ pub async fn load_all_skills(data_dir: PathBuf) -> Arc<[Skill]> {
 }
 
 pub async fn read_skill_from_dir(data_dir: PathBuf, name: &str) -> Result<String, String> {
-    let skills = load_all_skills(data_dir).await;
+    let skills = load_all_skills(data_dir.clone()).await;
     let target = name.trim().to_lowercase();
+    let skills_root = data_dir.join("skills");
     let skill = skills
         .iter()
-        .find(|s| s.name.to_lowercase() == target)
+        .find(|s| {
+            s.name.to_lowercase() == target
+                && Path::new(&s.file_path).starts_with(&skills_root)
+        })
         .ok_or_else(|| format!("no skill named '{name}'"))?;
     tokio::fs::read_to_string(&skill.file_path)
         .await
         .map_err(|e| format!("cannot read skill '{name}': {e}"))
 }
 
-fn scan_skills_directory(dir: &Path, out: &mut Vec<Skill>, seen: &mut HashSet<String>) {
+fn scan_skills_directory(dir: &Path, out: &mut HashMap<String, Skill>) {
     if !dir.is_dir() {
         return;
     }
@@ -158,11 +132,8 @@ fn scan_skills_directory(dir: &Path, out: &mut Vec<Skill>, seen: &mut HashSet<St
         let Ok(raw) = std::fs::read_to_string(&skill_file) else {
             continue;
         };
-        let Some(skill) = parse_skill_markdown(&raw, &skill_file) else {
-            continue;
-        };
-        if seen.insert(skill.name.to_lowercase()) {
-            out.push(skill);
+        if let Some(skill) = parse_skill_markdown(&raw, &skill_file) {
+            out.insert(skill.name.to_lowercase(), skill);
         }
     }
 }

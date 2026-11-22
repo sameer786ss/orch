@@ -4,21 +4,34 @@ import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.orch.app.R
 
+private fun interFont(weight: FontWeight) = Font(
+    R.font.inter,
+    weight,
+    variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight))
+)
+
+private fun monoFont(weight: FontWeight) = Font(
+    R.font.jetbrains_mono,
+    weight,
+    variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight))
+)
+
 val InterFontFamily = FontFamily(
-    Font(R.font.inter, FontWeight.Normal),
-    Font(R.font.inter, FontWeight.Medium),
-    Font(R.font.inter, FontWeight.SemiBold),
-    Font(R.font.inter, FontWeight.Bold)
+    interFont(FontWeight.Normal),
+    interFont(FontWeight.Medium),
+    interFont(FontWeight.SemiBold),
+    interFont(FontWeight.Bold)
 )
 
 val JetBrainsMonoFontFamily = FontFamily(
-    Font(R.font.jetbrains_mono, FontWeight.Normal),
-    Font(R.font.jetbrains_mono, FontWeight.Medium),
-    Font(R.font.jetbrains_mono, FontWeight.Bold)
+    monoFont(FontWeight.Normal),
+    monoFont(FontWeight.Medium),
+    monoFont(FontWeight.Bold)
 )
 
 val OrchMonoBody = TextStyle(
