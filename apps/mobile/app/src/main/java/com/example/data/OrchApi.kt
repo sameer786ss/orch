@@ -107,6 +107,8 @@ interface OrchApi {
     @GET("composio/catalog")
     suspend fun connectorCatalog(): List<ConnectorDefinition>
 
+    @GET("composio/accounts")
+    suspend fun connectorAccounts(): ConnectorAccountsResponse
 
     @POST("composio/connect")
     suspend fun connectConnector(@Body body: ConnectorConnectRequest): ConnectorConnectResponse
