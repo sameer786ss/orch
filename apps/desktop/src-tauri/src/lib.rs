@@ -8,6 +8,7 @@ pub mod dictation;
 pub mod fsapi;
 pub mod gateway;
 pub mod ipc;
+pub mod ipc_types;
 pub mod llm;
 pub mod persistence;
 pub mod platform;

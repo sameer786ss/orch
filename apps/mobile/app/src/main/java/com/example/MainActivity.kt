@@ -1,4 +1,4 @@
-package com.example
+package com.orch.app
 
 import android.graphics.Color
 import android.os.Bundle
@@ -15,12 +15,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.ui.OrchApp
-import com.example.ui.UserScope
-import com.example.ui.auth.AuthScreen
-import com.example.ui.theme.MyApplicationTheme
-import com.example.update.UpdateDialog
-import com.example.update.UpdateViewModel
+import com.orch.app.ui.OrchApp
+import com.orch.app.ui.UserScope
+import com.orch.app.ui.auth.AuthScreen
+import com.orch.app.ui.theme.OrchTheme
+import com.orch.app.update.UpdateDialog
+import com.orch.app.update.UpdateViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
         )
         setContent {
-            MyApplicationTheme {
+            OrchTheme {
                 AppRoot()
             }
         }

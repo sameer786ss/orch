@@ -8,11 +8,33 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::persistence::{HistoryRecord, SessionRecordPage, SessionSnapshot, TurnUsage};
 
 pub const OUTPUT_RING_BYTES: usize = 100 * 1024;
 const TASK_MAX_AGE: Duration = Duration::from_secs(3600);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandStatus {
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
+impl std::fmt::Display for CommandStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+        })
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct PathStat {
@@ -24,7 +46,7 @@ pub struct PathStat {
 
 #[derive(Debug, Clone)]
 pub struct CommandResult {
-    pub status: String,
+    pub status: CommandStatus,
     pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
@@ -35,7 +57,7 @@ pub struct CommandResult {
 pub struct CommandTaskStatus {
     pub task_id: String,
     pub command: String,
-    pub status: String,
+    pub status: CommandStatus,
     pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
@@ -54,24 +76,33 @@ impl RingBuffer {
     }
 
     pub fn push(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            if self.data.len() == OUTPUT_RING_BYTES {
-                self.data.pop_front();
-            }
-            self.data.push_back(byte);
+        if bytes.len() >= OUTPUT_RING_BYTES {
+            self.data.clear();
+            self.data
+                .extend(bytes[bytes.len() - OUTPUT_RING_BYTES..].iter().copied());
+            return;
         }
+        let excess = self
+            .data
+            .len()
+            .saturating_add(bytes.len())
+            .saturating_sub(OUTPUT_RING_BYTES);
+        if excess > 0 {
+            self.data.drain(..excess);
+        }
+        self.data.extend(bytes.iter().copied());
     }
 
     pub fn as_string(&self) -> String {
         let (first, second) = self.data.as_slices();
-        if second.is_empty() {
-            String::from_utf8_lossy(first).into_owned()
-        } else {
-            let mut bytes = Vec::with_capacity(first.len() + second.len());
-            bytes.extend_from_slice(first);
-            bytes.extend_from_slice(second);
-            String::from_utf8_lossy(&bytes).into_owned()
-        }
+        let mut bytes = Vec::with_capacity(first.len() + second.len());
+        bytes.extend_from_slice(first);
+        bytes.extend_from_slice(second);
+        let start = match std::str::from_utf8(&bytes) {
+            Ok(_) => 0,
+            Err(error) => error.valid_up_to(),
+        };
+        String::from_utf8_lossy(&bytes[start..]).into_owned()
     }
 }
 
@@ -86,7 +117,7 @@ struct ManagedTask {
     run_id: String,
     background: bool,
     command: String,
-    status: String,
+    status: CommandStatus,
     exit_code: Option<i32>,
     stdout: RingBuffer,
     stderr: RingBuffer,
@@ -96,7 +127,7 @@ struct ManagedTask {
 
 impl ManagedTask {
     fn request_kill(&mut self) -> bool {
-        if self.status != "running" {
+        if self.status != CommandStatus::Running {
             return false;
         }
         self.cancel_token.cancel();
@@ -119,47 +150,47 @@ impl CommandTaskHandle {
     }
 
     pub fn is_running(&self) -> bool {
-        self.inner.lock().status == "running"
+        self.inner.lock().status == CommandStatus::Running
     }
 
     pub fn set_completed(&self, code: i32) {
         let mut g = self.inner.lock();
         g.exit_code = Some(code);
         g.status = if code == 0 {
-            "completed".to_string()
+            CommandStatus::Completed
         } else {
-            "failed".to_string()
+            CommandStatus::Failed
         };
     }
 
     pub fn set_finished_default(&self) {
         let mut g = self.inner.lock();
-        if g.status == "running" {
-            g.status = "completed".to_string();
+        if g.status == CommandStatus::Running {
+            g.status = CommandStatus::Completed;
             g.exit_code.get_or_insert(0);
         }
     }
 
     pub fn set_cancelled(&self) {
-        self.inner.lock().status = "cancelled".to_string();
+        self.inner.lock().status = CommandStatus::Cancelled;
     }
 
     pub fn set_timed_out(&self, message: &str) {
         let mut g = self.inner.lock();
-        g.status = "timed_out".to_string();
+        g.status = CommandStatus::TimedOut;
         g.stderr.push(message.as_bytes());
     }
 
     pub fn set_failed(&self, message: &str) {
         let mut g = self.inner.lock();
-        g.status = "failed".to_string();
+        g.status = CommandStatus::Failed;
         g.stderr.push(message.as_bytes());
     }
 
     pub fn set_failed_if_running(&self, message: &str) {
         let mut g = self.inner.lock();
-        if g.status == "running" {
-            g.status = "failed".to_string();
+        if g.status == CommandStatus::Running {
+            g.status = CommandStatus::Failed;
             g.stderr.push(message.as_bytes());
         }
     }
@@ -190,7 +221,7 @@ impl CommandRegistry {
             run_id: run_id.to_string(),
             background,
             command: command.to_string(),
-            status: "running".to_string(),
+            status: CommandStatus::Running,
             exit_code: None,
             stdout: RingBuffer::new(),
             stderr: RingBuffer::new(),
@@ -256,7 +287,7 @@ impl CommandRegistry {
         let mut guard = self.tasks.lock();
         guard.retain(|_, task| {
             let g = task.lock();
-            g.status == "running" || g.started_at.elapsed() < TASK_MAX_AGE
+            g.status == CommandStatus::Running || g.started_at.elapsed() < TASK_MAX_AGE
         });
     }
 }
@@ -367,18 +398,21 @@ pub fn normalize_workspace_subpath(root: &str, input: &str) -> AppResult<String>
     use path_clean::PathClean;
     use std::path::Path;
 
-    let clean_root = root.trim_end_matches('/');
+    let root_path = Path::new(root.trim_end_matches('/')).clean();
     let trimmed = input.trim();
     let stripped = trimmed.strip_prefix("file://").unwrap_or(trimmed);
     let raw = Path::new(stripped);
-    let joined = if raw.is_absolute() {
-        raw.to_path_buf()
-    } else if clean_root.is_empty() {
+    let candidate = if raw.is_absolute() {
         raw.to_path_buf()
     } else {
-        Path::new(clean_root).join(raw)
-    };
-    Ok(joined.clean().to_string_lossy().replace('\\', "/"))
+        root_path.join(raw)
+    }
+    .clean();
+
+    if candidate.strip_prefix(&root_path).is_err() {
+        return Err(AppError::PathEscapesWorkspace(trimmed.to_string()));
+    }
+    Ok(candidate.to_string_lossy().replace('\\', "/"))
 }
 
 pub fn display_relative_str(root: &str, path: &str) -> String {
@@ -440,14 +474,37 @@ pub mod local_fs {
                 .strip_prefix("file://")
                 .unwrap_or(input.trim());
             let raw = Path::new(stripped);
-            let joined = if raw.is_absolute() {
-                raw.to_path_buf()
-            } else if let Some(root) = root {
-                root.join(raw)
-            } else {
-                raw.to_path_buf()
+            let (root, candidate) = match root {
+                Some(root) => {
+                    let canonical_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+                    let candidate = if raw.is_absolute() {
+                        raw.to_path_buf()
+                    } else {
+                        canonical_root.join(raw)
+                    };
+                    (Some(canonical_root), candidate.clean())
+                }
+                None => (None, raw.to_path_buf().clean()),
             };
-            Ok(joined.clean())
+
+            let Some(root) = root else {
+                return Ok(candidate);
+            };
+            if candidate.strip_prefix(&root).is_err() {
+                return Err(AppError::PathEscapesWorkspace(stripped.to_string()));
+            }
+
+            let mut existing = candidate.as_path();
+            while !existing.exists() {
+                existing = existing
+                    .parent()
+                    .ok_or_else(|| AppError::PathEscapesWorkspace(stripped.to_string()))?;
+            }
+            let canonical_existing = dunce::canonicalize(existing)?;
+            if canonical_existing.strip_prefix(&root).is_err() {
+                return Err(AppError::PathEscapesWorkspace(stripped.to_string()));
+            }
+            Ok(candidate)
         }
 
         pub fn resolve_in_workspace(root: &Path, input: &str) -> AppResult<PathBuf> {
@@ -760,8 +817,8 @@ pub mod local_fs {
         }
 
         async fn stat(&self, abs_path: &str) -> AppResult<PathStat> {
-            let path = PathBuf::from(abs_path);
-            let meta = match tokio::fs::metadata(&path).await {
+            let path = fs_util::resolve_in_workspace(&self.require_root()?, abs_path)?;
+            let meta = match tokio::fs::symlink_metadata(&path).await {
                 Ok(m) => m,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(PathStat::default())
@@ -777,7 +834,7 @@ pub mod local_fs {
         }
 
         async fn read_bytes(&self, abs_path: &str, max_bytes: Option<u64>) -> AppResult<Vec<u8>> {
-            let path = PathBuf::from(abs_path);
+            let path = fs_util::resolve_in_workspace(&self.require_root()?, abs_path)?;
             let meta = tokio::fs::metadata(&path).await?;
             if let Some(limit) = max_bytes {
                 if meta.len() > limit {
@@ -792,14 +849,14 @@ pub mod local_fs {
         }
 
         async fn write_bytes(&self, abs_path: &str, bytes: &[u8]) -> AppResult<()> {
-            let path = PathBuf::from(abs_path);
+            let path = fs_util::resolve_in_workspace(&self.require_root()?, abs_path)?;
             let lock = fs_util::file_lock(&path);
             let _guard = lock.lock().await;
             fs_util::atomic_write(&path, bytes).await
         }
 
         async fn list_dir(&self, abs_dir: &str) -> AppResult<Vec<String>> {
-            let resolved = PathBuf::from(abs_dir);
+            let resolved = fs_util::resolve_in_workspace(&self.require_root()?, abs_dir)?;
             tokio::task::spawn_blocking(move || {
                 if !resolved.exists() {
                     return Err(AppError::other(format!(
@@ -821,11 +878,11 @@ pub mod local_fs {
                 let mut lines: Vec<String> = Vec::new();
                 for entry in paths {
                     let name = entry.file_name().to_string_lossy().into_owned();
-                    let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
                     if is_dir && config::SKIP_DIRS.contains(&name.as_str()) {
                         continue;
                     }
-                    if lines.len() >= 200 {
+                    if lines.len() >= config::MAX_DIR_ENTRIES {
                         lines.push("... (truncated, too many entries)".to_string());
                         break;
                     }
@@ -848,7 +905,7 @@ pub mod local_fs {
             max_hits: usize,
         ) -> AppResult<String> {
             let root = self.require_root()?;
-            let search_path = PathBuf::from(abs_path);
+            let search_path = fs_util::resolve_in_workspace(&root, abs_path)?;
             let query = query.to_string();
             tokio::task::spawn_blocking(move || search_text(&root, &search_path, &query, max_hits))
                 .await
@@ -863,7 +920,8 @@ pub mod local_fs {
             timeout_secs: u64,
             run_id: &str,
         ) -> AppResult<CommandResult> {
-            let cwd_path = PathBuf::from(cwd);
+            let root = self.require_root()?;
+            let cwd_path = fs_util::resolve_in_workspace(&root, cwd)?;
             if !cwd_path.is_dir() {
                 return Err(AppError::other(format!(
                     "cwd is not a directory: {}",
@@ -886,7 +944,7 @@ pub mod local_fs {
                 self.command_manager.mark_background(&task_id);
                 let partial = self.command_manager.get_status(&task_id);
                 return Ok(CommandResult {
-                    status: "running".to_string(),
+                    status: CommandStatus::Running,
                     exit_code: None,
                     stdout: partial.as_ref().map(|s| s.stdout.clone()).unwrap_or_default(),
                     stderr: partial.as_ref().map(|s| s.stderr.clone()).unwrap_or_default(),

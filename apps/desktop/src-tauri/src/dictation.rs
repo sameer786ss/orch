@@ -11,7 +11,7 @@ use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolat
 use tauri::ipc::Channel;
 
 use orchharness::error::{AppError, AppResult};
-use orchharness::events::DictationEvent;
+use crate::ipc_types::DictationEvent;
 use crate::gateway::Gateway;
 
 const MAX_SECONDS: u32 = 300;
@@ -118,14 +118,14 @@ fn capture_loop(
     let host = cpal::default_host();
     let device = host
         .default_input_device()
-        .ok_or_else(|| AppError::Audio("no input device found".to_string()))?;
+        .ok_or_else(|| AppError::Other("no input device found".to_string()))?;
     let supported = device
         .default_input_config()
-        .map_err(|e| AppError::Audio(format!("no default input config: {e}")))?;
+        .map_err(|e| AppError::Other(format!("no default input config: {e}")))?;
 
     let sr = supported.sample_rate().0;
     if sr == 0 {
-        return Err(AppError::Audio("input device reported a zero sample rate".to_string()));
+        return Err(AppError::Other("input device reported a zero sample rate".to_string()));
     }
     let channels = supported.channels().max(1) as usize;
     sample_rate.store(sr, Ordering::SeqCst);
@@ -225,16 +225,16 @@ fn capture_loop(
             )
         }
         other => {
-            return Err(AppError::Audio(format!(
+            return Err(AppError::Other(format!(
                 "unsupported sample format: {other:?}"
             )))
         }
     }
-    .map_err(|e| AppError::Audio(format!("failed to build input stream: {e}")))?;
+    .map_err(|e| AppError::Other(format!("failed to build input stream: {e}")))?;
 
     stream
         .play()
-        .map_err(|e| AppError::Audio(format!("failed to start stream: {e}")))?;
+        .map_err(|e| AppError::Other(format!("failed to start stream: {e}")))?;
 
     let (lock, cvar) = &**stop_signal;
     let mut stopped = lock.lock();
@@ -362,14 +362,19 @@ fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
 
 async fn transcribe(gateway: &Gateway, samples: &[i16], sample_rate: u32) -> AppResult<String> {
     let target = crate::config::DICTATION_TARGET_SAMPLE_RATE;
-    let (samples, sample_rate) = if sample_rate > target {
-        (resample(samples, sample_rate, target), target)
-    } else {
-        (samples.to_vec(), sample_rate)
-    };
-    let wav = encode_wav(&samples, sample_rate)?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&wav);
-    gateway.transcribe(&b64, "wav").await
+    let input = samples.to_vec();
+    let (b64, format) = tokio::task::spawn_blocking(move || -> AppResult<(String, &'static str)> {
+        let (samples, sample_rate) = if sample_rate > target {
+            (resample(&input, sample_rate, target), target)
+        } else {
+            (input, sample_rate)
+        };
+        let wav = encode_wav(&samples, sample_rate)?;
+        Ok((base64::engine::general_purpose::STANDARD.encode(&wav), "wav"))
+    })
+    .await
+    .map_err(|error| AppError::other(format!("audio encoding task failed: {error}")))??;
+    gateway.transcribe(&b64, format).await
 }
 
 fn encode_wav(samples: &[i16], sample_rate: u32) -> AppResult<Vec<u8>> {
@@ -382,15 +387,15 @@ fn encode_wav(samples: &[i16], sample_rate: u32) -> AppResult<Vec<u8>> {
     let mut cursor = std::io::Cursor::new(Vec::<u8>::new());
     {
         let mut writer = hound::WavWriter::new(&mut cursor, spec)
-            .map_err(|e| AppError::Audio(format!("wav init failed: {e}")))?;
+            .map_err(|e| AppError::Other(format!("wav init failed: {e}")))?;
         for &s in samples {
             writer
                 .write_sample(s)
-                .map_err(|e| AppError::Audio(format!("wav write failed: {e}")))?;
+                .map_err(|e| AppError::Other(format!("wav write failed: {e}")))?;
         }
         writer
             .finalize()
-            .map_err(|e| AppError::Audio(format!("wav finalize failed: {e}")))?;
+            .map_err(|e| AppError::Other(format!("wav finalize failed: {e}")))?;
     }
     Ok(cursor.into_inner())
 }

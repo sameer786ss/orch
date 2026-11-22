@@ -39,7 +39,7 @@ use crate::shared::util::{now_ms, safe_file_name};
 use crate::state::ServerState;
 
 const MEGABYTE: usize = 1024 * 1024;
-const FINISHED_RUN_TTL_SECS: u64 = 600;
+const FINISHED_RUN_TTL_SECS: u64 = 120;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -180,7 +180,7 @@ async fn stage_attachments(
                 path: remote_path,
                 name: attachment.name.clone(),
                 is_image,
-                data_base64: Some(attachment.data_base64.clone()),
+                data_base64: None,
             });
         } else {
             notes.push(format!("Attached binary file uploaded to {remote_path}"));
@@ -269,19 +269,20 @@ pub async fn stream(
         }
     }
 
-    let outcome = start_turn(&state, &request, &user, &workspace, &model, &run).await;
+    let session_id = request.session_id.clone();
+    let outcome = start_turn(&state, request, &user, &workspace, &model, &run).await;
     if outcome.is_err() {
         run.finish();
         state
             .active_runs
-            .remove_if(&request.session_id, |_, entry| entry.run_id == run.run_id);
+            .remove_if(&session_id, |_, entry| entry.run_id == run.run_id);
     }
     outcome
 }
 
 async fn start_turn(
     state: &ServerState,
-    request: &CloudChatStreamReq,
+    request: CloudChatStreamReq,
     user: &VerifiedUser,
     workspace: &CloudWorkspace,
     model: &ModelInfo,
@@ -298,22 +299,23 @@ async fn start_turn(
         )
         .await?;
 
+    let session_id = request.session_id.clone();
     let outcome = launch(state, request, user, workspace, model, run, &record).await;
     if outcome.is_err()
         && created
         && let Err(error) = state
             .firestore
-            .delete_session_and_entries(&request.session_id)
+            .delete_session_and_entries(&session_id)
             .await
     {
-        tracing::warn!(session = %request.session_id, %error, "failed to remove unstarted session");
+        tracing::warn!(session = %session_id, %error, "failed to remove unstarted session");
     }
     outcome
 }
 
 async fn launch(
     state: &ServerState,
-    request: &CloudChatStreamReq,
+    mut request: CloudChatStreamReq,
     user: &VerifiedUser,
     workspace: &CloudWorkspace,
     model: &ModelInfo,
@@ -322,6 +324,7 @@ async fn launch(
 ) -> ApiResult<Response> {
     let lease = Arc::new(state.sandbox_manager.acquire(&user.id, workspace).await?);
     let (attachment_refs, extra_notes) = stage_attachments(&lease, &request.attachments).await?;
+    request.attachments.clear();
 
     let ops: Arc<dyn WorkspaceOps> = Arc::new(CloudWorkspaceOps {
         lease: lease.clone(),

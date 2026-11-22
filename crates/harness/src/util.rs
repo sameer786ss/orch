@@ -163,9 +163,13 @@ pub fn clip_middle(text: &str, max_chars: usize) -> String {
         Some((idx, _)) => idx,
         None => return text.to_string(),
     };
-    let tail_start = match text.char_indices().rev().nth(tail_chars.saturating_sub(1)) {
-        Some((idx, _)) => idx,
-        None => return text.to_string(),
+    let tail_start = if tail_chars == 0 {
+        text.len()
+    } else {
+        match text.char_indices().nth(char_count - tail_chars) {
+            Some((idx, _)) => idx,
+            None => return text.to_string(),
+        }
     };
     if head_end >= tail_start {
         return text.to_string();
@@ -203,14 +207,7 @@ pub fn warm_login_shell_path() {
 }
 
 fn resolve_login_path() -> Option<String> {
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let _ = sender.send(resolve_login_path_from_profiles());
-    });
-    receiver
-        .recv_timeout(Duration::from_secs(3))
-        .ok()
-        .flatten()
+    resolve_login_path_from_profiles()
         .or_else(|| std::env::var("PATH").ok().filter(|path| !path.trim().is_empty()))
 }
 

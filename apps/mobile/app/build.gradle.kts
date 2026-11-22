@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.orch.app"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
@@ -14,7 +14,7 @@ android {
     minSdk = 24
     targetSdk = 36
     versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1_000_001
-    versionName = System.getenv("VERSION_NAME") ?: "1.0.1"
+    versionName = System.getenv("VERSION_NAME") ?: "1.0.2"
 
     buildConfigField("String", "ORCH_API_BASE_URL", "\"https://orchapi.duckdns.org\"")
     buildConfigField("String", "ORCH_UPDATE_REPO", "\"sameer786ss/orch\"")
@@ -38,7 +38,8 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
@@ -64,7 +65,6 @@ dependencies {
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.material3)
-  implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)

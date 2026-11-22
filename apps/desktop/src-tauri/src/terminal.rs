@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
 use orchharness::error::{AppError, AppResult};
-use orchharness::events::TerminalEvent;
+use crate::ipc_types::TerminalEvent;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::json;

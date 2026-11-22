@@ -1,9 +1,10 @@
-package com.example.data
+package com.orch.app.data
 
 import android.util.Base64
 import android.util.Base64OutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
@@ -91,7 +92,7 @@ class OrchStream(private val client: OrchClient, cacheDir: File) {
                     val kind = type?.takeIf { it.isNotBlank() }
                         ?: payload?.get("type")?.jsonPrimitive?.contentOrNull
                         ?: return
-                    trySend(SseFrame(id?.toLongOrNull(), kind, payload ?: JsonObject(emptyMap())))
+                    trySendBlocking(SseFrame(id?.toLongOrNull(), kind, payload ?: JsonObject(emptyMap())))
                     if (kind == "done") close()
                 }
 
@@ -110,13 +111,17 @@ class OrchStream(private val client: OrchClient, cacheDir: File) {
             }
         )
         awaitClose { source.cancel() }
-    }.buffer(Channel.UNLIMITED)
+    }.buffer(Channel.BUFFERED)
 
     private fun writePayload(head: String, attachments: List<AttachmentSource>): File {
         val file = File(uploads, "${UUID.randomUUID()}.json")
         try {
             file.sink().buffer().use { sink ->
-                sink.writeUtf8(head.removeSuffix("}"))
+                val objectEnd = head.lastIndexOf('}')
+                if (objectEnd < 0 || head.substring(objectEnd + 1).isNotEmpty()) {
+                    throw IOException("Unable to serialize chat request as a JSON object.")
+                }
+                sink.writeUtf8(head.substring(0, objectEnd))
                 sink.writeUtf8(",\"attachments\":[")
                 attachments.forEachIndexed { index, attachment ->
                     if (index > 0) sink.writeUtf8(",")

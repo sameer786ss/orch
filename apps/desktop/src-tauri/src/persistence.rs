@@ -375,8 +375,11 @@ impl SessionStore for SqliteMemory {
 
     async fn record_usage(&self, session_id: &str, usage: &TurnUsage) -> AppResult<()> {
         sqlx::query(
-            "UPDATE sessions SET last_context_tokens = ?2, last_input_tokens = ?3,
-             last_output_tokens = ?4, last_cached_tokens = ?5, last_reasoning_tokens = ?6,
+            "UPDATE sessions SET last_context_tokens = ?2,
+             last_input_tokens = last_input_tokens + ?3,
+             last_output_tokens = last_output_tokens + ?4,
+             last_cached_tokens = last_cached_tokens + ?5,
+             last_reasoning_tokens = last_reasoning_tokens + ?6,
              updated_at = ?7 WHERE id = ?1",
         )
         .bind(session_id)

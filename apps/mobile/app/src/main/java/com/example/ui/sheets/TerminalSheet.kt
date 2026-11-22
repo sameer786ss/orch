@@ -1,4 +1,4 @@
-package com.example.ui.sheets
+package com.orch.app.ui.sheets
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -46,15 +46,15 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
-import com.example.terminal.TerminalStatus
-import com.example.terminal.TerminalUi
-import com.example.ui.components.OrchActionChip
-import com.example.ui.components.OrchBanner
-import com.example.ui.components.OrchBottomSheet
-import com.example.ui.components.OrchSheetHeader
-import com.example.ui.theme.OrchDimens
-import com.example.ui.theme.OrchMonoBody
-import com.example.ui.theme.OrchSuccess
+import com.orch.app.terminal.TerminalStatus
+import com.orch.app.terminal.TerminalUi
+import com.orch.app.ui.components.OrchActionChip
+import com.orch.app.ui.components.OrchBanner
+import com.orch.app.ui.components.OrchBottomSheet
+import com.orch.app.ui.components.OrchSheetHeader
+import com.orch.app.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchMonoBody
+import com.orch.app.ui.theme.OrchSuccess
 
 private data class QuickKey(val label: String, val sequence: String)
 

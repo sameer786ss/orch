@@ -1,4 +1,4 @@
-package com.example.ui
+package com.orch.app.ui
 
 import android.app.Application
 import android.content.Intent
@@ -30,15 +30,15 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.ui.auth.signOutUser
-import com.example.ui.chat.ChatScreen
-import com.example.ui.components.ArtifactModalBottomSheet
-import com.example.ui.connectors.ConnectorsScreen
-import com.example.ui.sheets.AccountSheet
-import com.example.ui.sheets.AttachmentSheet
-import com.example.ui.sheets.FilesSheet
-import com.example.ui.sheets.ModelSheet
-import com.example.ui.sheets.TerminalSheet
+import com.orch.app.ui.auth.signOutUser
+import com.orch.app.ui.chat.ChatScreen
+import com.orch.app.ui.components.ArtifactModalBottomSheet
+import com.orch.app.ui.connectors.ConnectorsScreen
+import com.orch.app.ui.sheets.AccountSheet
+import com.orch.app.ui.sheets.AttachmentSheet
+import com.orch.app.ui.sheets.FilesSheet
+import com.orch.app.ui.sheets.ModelSheet
+import com.orch.app.ui.sheets.TerminalSheet
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 

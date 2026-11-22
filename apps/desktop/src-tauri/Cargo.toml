@@ -1,6 +1,6 @@
 [package]
 name = "orch"
-version = "1.0.2"
+version = "1.0.3"
 description = "Orch Desktop Application"
 authors = ["you"]
 edition = "2021"
@@ -36,14 +36,12 @@ http = "1"
 
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "multipart", "form"] }
 reqwest-middleware = { version = "0.5.2", features = ["json", "multipart"] }
-reqwest-retry = "0.9.1"
 
 cpal = "0.15"
 hound = "3"
 
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
-thiserror = "2"
 dunce = "1"
 url = "2"
 rubato = "0.15"

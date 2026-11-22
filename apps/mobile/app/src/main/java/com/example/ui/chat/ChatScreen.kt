@@ -1,4 +1,4 @@
-package com.example.ui.chat
+package com.orch.app.ui.chat
 
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
@@ -60,17 +60,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.example.chat.ChatRow
-import com.example.chat.CopyRow
-import com.example.chat.EarlierRow
-import com.example.chat.UserRow
-import com.example.data.ModelInfo
-import com.example.data.ThinkingEffort
-import com.example.ui.ChatUi
-import com.example.ui.PendingAttachment
-import com.example.ui.components.OrchCenteredSpinner
-import com.example.ui.components.OrchEmptyMessage
-import com.example.ui.theme.OrchDimens
+import com.orch.app.chat.ChatRow
+import com.orch.app.chat.CopyRow
+import com.orch.app.chat.EarlierRow
+import com.orch.app.chat.UserRow
+import com.orch.app.data.ModelInfo
+import com.orch.app.data.ThinkingEffort
+import com.orch.app.ui.ChatUi
+import com.orch.app.ui.PendingAttachment
+import com.orch.app.ui.components.OrchCenteredSpinner
+import com.orch.app.ui.components.OrchEmptyMessage
+import com.orch.app.ui.theme.OrchDimens
 import kotlinx.coroutines.launch
 
 private val BottomGap = 120.dp

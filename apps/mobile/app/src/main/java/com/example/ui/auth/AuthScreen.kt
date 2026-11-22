@@ -1,4 +1,4 @@
-package com.example.ui.auth
+package com.orch.app.ui.auth
 
 import android.app.Activity
 import android.content.Context
@@ -58,10 +58,10 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetCredentialResponse
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
-import com.example.BuildConfig
-import com.example.R
-import com.example.ui.components.OrchBanner
-import com.example.ui.theme.OrchDimens
+import com.orch.app.BuildConfig
+import com.orch.app.R
+import com.orch.app.ui.components.OrchBanner
+import com.orch.app.ui.theme.OrchDimens
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential

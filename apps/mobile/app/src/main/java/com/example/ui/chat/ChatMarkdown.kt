@@ -1,4 +1,4 @@
-package com.example.ui.chat
+package com.orch.app.ui.chat
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
@@ -13,9 +13,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.InterFontFamily
-import com.example.ui.theme.OrchMonoBody
-import com.example.ui.theme.OrchMonoLabel
+import com.orch.app.ui.theme.InterFontFamily
+import com.orch.app.ui.theme.OrchMonoBody
+import com.orch.app.ui.theme.OrchMonoLabel
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -44,7 +44,7 @@ fun ChatMarkdown(
     compact: Boolean = false,
     streaming: Boolean = false
 ) {
-    val immediate = remember { !streaming }
+    val immediate = !streaming
     val state = rememberMarkdownState(text, retainState = true, immediate = immediate)
     val baseBodyLarge = MaterialTheme.typography.bodyLarge
     val baseBodyMedium = MaterialTheme.typography.bodyMedium

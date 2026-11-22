@@ -1,4 +1,4 @@
-package com.example.ui
+package com.orch.app.ui
 
 import android.text.format.DateUtils
 import androidx.compose.foundation.BorderStroke
@@ -38,15 +38,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.chat.Repo
-import com.example.data.SessionSummary
-import com.example.ui.components.OrchAlertDialog
-import com.example.ui.components.OrchBanner
-import com.example.ui.components.OrchEmptyMessage
-import com.example.ui.components.OrchIconBadge
-import com.example.ui.components.OrchSecondaryButton
-import com.example.ui.theme.OrchDimens
-import com.example.ui.theme.OrchSuccess
+import com.orch.app.chat.Repo
+import com.orch.app.data.SessionSummary
+import com.orch.app.ui.components.OrchAlertDialog
+import com.orch.app.ui.components.OrchBanner
+import com.orch.app.ui.components.OrchEmptyMessage
+import com.orch.app.ui.components.OrchIconBadge
+import com.orch.app.ui.components.OrchSecondaryButton
+import com.orch.app.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchSuccess
 
 private const val NO_REPOSITORY = "No repository"
 
@@ -236,7 +236,7 @@ fun SessionsDrawer(
             }
         ) {
             Text(
-                text = "This removes the conversation and its sandbox.",
+                text = "This removes the conversation history and saved attachments.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

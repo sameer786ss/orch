@@ -1,6 +1,6 @@
-package com.example.data
+package com.orch.app.data
 
-import com.example.BuildConfig
+import com.orch.app.BuildConfig
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
@@ -104,8 +104,9 @@ interface OrchApi {
     @POST("transcribe")
     suspend fun transcribe(@Body body: TranscribeRequest): TranscribeResponse
 
-    @GET("composio/accounts")
-    suspend fun connectorAccounts(): ConnectorAccountsResponse
+    @GET("composio/catalog")
+    suspend fun connectorCatalog(): List<ConnectorDefinition>
+
 
     @POST("composio/connect")
     suspend fun connectConnector(@Body body: ConnectorConnectRequest): ConnectorConnectResponse

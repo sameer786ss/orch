@@ -1,4 +1,4 @@
-package com.example.chat
+package com.orch.app.chat
 
 import androidx.compose.runtime.Immutable
 

@@ -1,9 +1,9 @@
-package com.example.voice
+package com.orch.app.voice
 
 import android.content.Context
 import android.media.MediaRecorder
 import android.os.Build
-import com.example.data.runCatchingSuspend
+import com.orch.app.data.runCatchingSuspend
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File

@@ -3,7 +3,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use axum::extract::State;
 use axum::Json;
-use orchharness::backend::{TavilyRequest, TavilyResponse, WebSearchBackend};
+use orchharness::backend::{SearchTopic, TavilyRequest, TavilyResponse, WebSearchBackend};
 use orchharness::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -118,10 +118,18 @@ pub struct InProcessWebSearchBackend {
 #[async_trait]
 impl WebSearchBackend for InProcessWebSearchBackend {
     async fn tavily(&self, req: &TavilyRequest) -> AppResult<TavilyResponse> {
-        let val = serde_json::to_value(req)
-            .map_err(|e| AppError::Gateway { status: 400, body: e.to_string() })?;
-        let parsed: SearchRequest = serde_json::from_value(val)
-            .map_err(|e| AppError::Gateway { status: 400, body: e.to_string() })?;
+        let parsed = SearchRequest {
+            query: req.query.clone(),
+            search_depth: SearchDepth::Basic,
+            topic: match req.topic.unwrap_or(SearchTopic::General) {
+                orchharness::backend::SearchTopic::General => Topic::General,
+                orchharness::backend::SearchTopic::News => Topic::News,
+                orchharness::backend::SearchTopic::Finance => Topic::Finance,
+            },
+            max_results: req.max_results.map(u64::from),
+            include_images: false,
+            domain: req.domain.clone(),
+        };
         let result = execute_search(&self.state, parsed)
             .await
             .map_err(|e| AppError::Gateway { status: e.status.as_u16(), body: e.message().to_string() })?;

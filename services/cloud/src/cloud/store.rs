@@ -670,17 +670,17 @@ impl StorageClient {
                 .await
                 .map_err(|e| format!("GCS list response invalid: {e}"))?;
             if let Some(items) = body.get("items").and_then(Value::as_array) {
+                let delete_token = self
+                    .auth
+                    .token(&[config::GCS_SCOPE])
+                    .await
+                    .map_err(|e| format!("GCS auth failed: {e}"))?;
                 for item in items {
                     if let Some(name) = item.get("name").and_then(Value::as_str) {
-                        let del_token = self
-                            .auth
-                            .token(&[config::GCS_SCOPE])
-                            .await
-                            .map_err(|e| format!("GCS auth failed: {e}"))?;
                         let del_resp = self
                             .http
                             .delete(self.object_url(name))
-                            .bearer_auth(del_token.as_str())
+                            .bearer_auth(delete_token.as_str())
                             .send()
                             .await
                             .map_err(|e| format!("GCS delete failed: {e}"))?;
@@ -913,63 +913,39 @@ impl SessionStore for CloudSessionStore {
     }
 
     async fn record_usage(&self, session_id: &str, usage: &TurnUsage) -> AppResult<()> {
-        for _ in 0..3 {
-            let Some(doc) = self
-                .firestore
-                .get_document(&session_path(session_id))
-                .await
-                .map_err(AppError::other)?
-            else {
-                return Ok(());
-            };
-            let Some(update_time) = doc.get("updateTime").and_then(Value::as_str) else {
-                return Ok(());
-            };
-            let Some(record) = CloudSessionRecord::from_document(&doc) else {
-                return Ok(());
-            };
-            let add = |current: i64, delta: u64| {
-                current.saturating_add(i64::try_from(delta).unwrap_or(i64::MAX))
-            };
-            let mut update = Map::new();
-            update.insert("updated_at".into(), fields::integer(now_ms()));
-            update.insert(
-                "context_tokens".into(),
-                fields::integer(i64::try_from(usage.context_tokens).unwrap_or(i64::MAX)),
-            );
-            update.insert(
-                "input_tokens".into(),
-                fields::integer(add(record.input_tokens, usage.input_tokens)),
-            );
-            update.insert(
-                "output_tokens".into(),
-                fields::integer(add(record.output_tokens, usage.output_tokens)),
-            );
-            update.insert(
-                "cached_tokens".into(),
-                fields::integer(add(record.cached_tokens, usage.cached_tokens)),
-            );
-            update.insert(
-                "reasoning_tokens".into(),
-                fields::integer(add(record.reasoning_tokens, usage.reasoning_tokens)),
-            );
-            let reply = self
-                .firestore
-                .write_document(
-                    &session_path(session_id),
-                    &update,
-                    true,
-                    Precondition::UpdateTime(update_time),
-                )
-                .await
-                .map_err(AppError::other)?;
-            if reply.status.is_success() || reply.status == StatusCode::NOT_FOUND {
-                return Ok(());
-            }
-            if !reply.is_precondition_failure() {
-                return Err(AppError::other(reply.error("record usage")));
-            }
-        }
-        Err(AppError::other("usage update kept conflicting"))
+        let path = session_path(session_id);
+        let increments = [
+            ("input_tokens", usage.input_tokens),
+            ("output_tokens", usage.output_tokens),
+            ("cached_tokens", usage.cached_tokens),
+            ("reasoning_tokens", usage.reasoning_tokens),
+        ];
+        let field_transforms: Vec<Value> = increments
+            .into_iter()
+            .map(|(field_path, value)| {
+                json!({
+                    "fieldPath": field_path,
+                    "increment": { "integerValue": i64::try_from(value).unwrap_or(i64::MAX).to_string() }
+                })
+            })
+            .collect();
+        let mut fields = Map::new();
+        fields.insert(
+            "context_tokens".into(),
+            fields::integer(i64::try_from(usage.context_tokens).unwrap_or(i64::MAX)),
+        );
+        fields.insert("updated_at".into(), fields::integer(now_ms()));
+        self.firestore
+            .commit(vec![json!({
+                "update": {
+                    "name": self.firestore.document_name(&path),
+                    "fields": fields,
+                },
+                "updateMask": { "fieldPaths": ["context_tokens", "updated_at"] },
+                "updateTransforms": field_transforms,
+            })])
+            .await
+            .map_err(AppError::other)?;
+        Ok(())
     }
 }

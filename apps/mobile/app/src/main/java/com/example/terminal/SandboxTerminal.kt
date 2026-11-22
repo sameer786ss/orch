@@ -1,10 +1,10 @@
-package com.example.terminal
+package com.orch.app.terminal
 
 import androidx.compose.runtime.Immutable
-import com.example.data.OrchClient
-import com.example.data.OrchJson
-import com.example.data.parseErrorBody
-import com.example.data.toApiError
+import com.orch.app.data.OrchClient
+import com.orch.app.data.OrchJson
+import com.orch.app.data.parseErrorBody
+import com.orch.app.data.toApiError
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

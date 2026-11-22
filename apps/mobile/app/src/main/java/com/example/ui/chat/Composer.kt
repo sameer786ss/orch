@@ -1,4 +1,4 @@
-package com.example.ui.chat
+package com.orch.app.ui.chat
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -65,11 +65,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import coil.compose.AsyncImage
-import com.example.ui.PendingAttachment
-import com.example.ui.components.OrchCircleIconButton
-import com.example.ui.theme.OrchDimens
-import com.example.ui.theme.OrchMonoLabel
-import com.example.voice.VoicePromptRecorder
+import com.orch.app.ui.PendingAttachment
+import com.orch.app.ui.components.OrchCircleIconButton
+import com.orch.app.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchMonoLabel
+import com.orch.app.voice.VoicePromptRecorder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 

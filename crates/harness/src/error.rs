@@ -16,8 +16,6 @@ pub enum AppError {
     Http(#[from] reqwest::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("audio capture error: {0}")]
-    Audio(String),
     #[error("a run is already active for this session")]
     RunConflict,
     #[error("connector not found: {0}")]

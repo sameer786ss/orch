@@ -1,4 +1,4 @@
-package com.example.ui
+package com.orch.app.ui
 
 import android.app.Application
 import android.net.Uri
@@ -8,38 +8,37 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.example.chat.ChatReducer
-import com.example.chat.ChatRow
-import com.example.chat.EarlierRow
-import com.example.chat.Repo
-import com.example.chat.UserAttachment
-import com.example.chat.buildRows
-import com.example.data.ApiError
-import com.example.data.ArtifactLoader
-import com.example.data.ArtifactState
-import com.example.data.AttachmentSource
-import com.example.data.Budget
-import com.example.data.CancelRequest
-import com.example.data.ChatRequest
-import com.example.data.ConnectorAccount
-import com.example.data.ConnectorCatalog
-import com.example.data.ConnectorConnectRequest
-import com.example.data.ConnectorDefinition
-import com.example.data.FileEntry
-import com.example.data.ModelInfo
-import com.example.data.OrchClient
-import com.example.data.OrchPreferences
-import com.example.data.OrchStream
-import com.example.data.SessionSummary
-import com.example.data.SseFrame
-import com.example.data.ThinkingEffort
-import com.example.data.TranscribeRequest
-import com.example.data.TreeEntry
-import com.example.data.WorkspaceInit
-import com.example.data.runCatchingSuspend
-import com.example.data.toApiError
-import com.example.terminal.SandboxTerminal
-import com.example.terminal.TerminalUi
+import com.orch.app.chat.ChatReducer
+import com.orch.app.chat.ChatRow
+import com.orch.app.chat.EarlierRow
+import com.orch.app.chat.Repo
+import com.orch.app.chat.UserAttachment
+import com.orch.app.chat.buildRows
+import com.orch.app.data.ApiError
+import com.orch.app.data.ArtifactLoader
+import com.orch.app.data.ArtifactState
+import com.orch.app.data.AttachmentSource
+import com.orch.app.data.Budget
+import com.orch.app.data.CancelRequest
+import com.orch.app.data.ChatRequest
+import com.orch.app.data.ConnectorAccount
+import com.orch.app.data.ConnectorConnectRequest
+import com.orch.app.data.ConnectorDefinition
+import com.orch.app.data.FileEntry
+import com.orch.app.data.ModelInfo
+import com.orch.app.data.OrchClient
+import com.orch.app.data.OrchPreferences
+import com.orch.app.data.OrchStream
+import com.orch.app.data.SessionSummary
+import com.orch.app.data.SseFrame
+import com.orch.app.data.ThinkingEffort
+import com.orch.app.data.TranscribeRequest
+import com.orch.app.data.TreeEntry
+import com.orch.app.data.WorkspaceInit
+import com.orch.app.data.runCatchingSuspend
+import com.orch.app.data.toApiError
+import com.orch.app.terminal.SandboxTerminal
+import com.orch.app.terminal.TerminalUi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -107,7 +106,7 @@ data class ConnectorItemUi(
 
 @Immutable
 data class ConnectorsUi(
-    val items: List<ConnectorItemUi> = ConnectorCatalog.all.map { ConnectorItemUi(it) },
+    val items: List<ConnectorItemUi> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null
 ) {
@@ -184,6 +183,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     private var pagingGeneration = 0
     private var pendingConnectToolkit: String? = null
     private var lastLoadedAccounts: List<ConnectorAccount> = emptyList()
+    private var connectorDefinitions: List<ConnectorDefinition> = emptyList()
     private val deleting = HashSet<String>()
 
     init {
@@ -241,6 +241,13 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         connectorsJob = viewModelScope.launch {
             _connectors.update { it.copy(loading = true, error = null) }
             val savedActive = preferences.activeConnectors.first().toMutableSet()
+            val definitions = runCatchingSuspend { api.connectorCatalog() }.getOrElse { error ->
+                _connectors.update { state ->
+                    state.copy(loading = false, error = error.toApiError().message)
+                }
+                return@launch
+            }
+            connectorDefinitions = definitions
             runCatchingSuspend { api.connectorAccounts() }
                 .onSuccess { response ->
                     lastLoadedAccounts = response.accounts
@@ -267,7 +274,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         val byToolkit = accounts.associateBy { it.toolkit.lowercase() }
         val busyMap = _connectors.value.items.associate { it.definition.id to it.busy }
         _connectors.value = ConnectorsUi(
-            items = ConnectorCatalog.all.map { def ->
+            items = connectorDefinitions.map { def ->
                 val account = byToolkit[def.id]
                 ConnectorItemUi(
                     definition = def,

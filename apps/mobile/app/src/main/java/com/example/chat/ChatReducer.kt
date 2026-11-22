@@ -1,7 +1,7 @@
-package com.example.chat
+package com.orch.app.chat
 
-import com.example.data.OrchJson
-import com.example.data.ToolDisplay
+import com.orch.app.data.OrchJson
+import com.orch.app.data.ToolDisplay
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive

@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::extract::DefaultBodyLimit;
-use axum::http::{Method, Uri};
+use axum::http::{header, Method, Uri};
 use axum::middleware;
 use axum::routing::get;
 use axum::Router;
 use dashmap::DashMap;
 use tokio::signal::unix::{signal, SignalKind};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
@@ -80,9 +80,8 @@ async fn main() {
         )
         .layer(
             CorsLayer::new()
-                .allow_origin(Any)
                 .allow_methods([Method::GET, Method::POST, Method::DELETE])
-                .allow_headers(Any),
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
         )
         .with_state(state.clone());
 

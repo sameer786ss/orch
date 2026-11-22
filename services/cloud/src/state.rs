@@ -7,7 +7,7 @@ use moka::future::Cache;
 use crate::cloud::e2b::SandboxManager;
 use crate::cloud::runs::LiveRun;
 use crate::local::v1internal::VertexTokenPool;
-use crate::shared::auth::VerifiedUser;
+use crate::shared::auth::CachedUser;
 use crate::shared::budget::BudgetStatus;
 use crate::shared::config::{self, Config};
 use crate::shared::firestore::FirestoreClient;
@@ -20,7 +20,7 @@ pub struct ServerState {
     pub http: reqwest::Client,
     pub streaming_http: reqwest::Client,
     pub firestore: FirestoreClient,
-    pub auth_cache: Cache<String, VerifiedUser>,
+    pub auth_cache: Cache<String, CachedUser>,
     pub budget_cache: Cache<String, BudgetStatus>,
     pub vertex_pool: VertexTokenPool,
     pub sandbox_manager: SandboxManager,

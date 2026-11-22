@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use axum::extract::State;
 use axum::{Extension, Json};
-use orchharness::connector_tools::client::{
+use orchharness::connectors::connector_catalog;
     AccountWire, ComposioError, ComposioTransport, ExecuteWire, ToolWire,
 };
 use reqwest::Method;
@@ -188,6 +188,10 @@ fn is_supported_slug(toolkits: &HashMap<String, String>, slug: &str) -> bool {
         && slug.split_once('_').is_some_and(|(prefix, rest)| {
             !rest.is_empty() && toolkits.contains_key(&prefix.to_ascii_lowercase())
         })
+}
+
+pub async fn catalog() -> Json<Vec<orchharness::connectors::ConnectorCatalogEntry>> {
+    Json(connector_catalog())
 }
 
 pub async fn accounts(

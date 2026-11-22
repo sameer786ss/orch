@@ -1,4 +1,4 @@
-package com.example.update
+package com.orch.app.update
 
 import android.content.BroadcastReceiver
 import android.content.Context

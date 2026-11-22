@@ -115,7 +115,6 @@ pub const UTILITY_MODEL: &str = "gemini-3.5-flash-lite";
 pub const GROQ_TRANSCRIBE_MODEL: &str = "whisper-large-v3";
 pub const VERTEX_USER_AGENT: &str = "antigravity/2.28.2 darwin/arm64";
 
-pub const BUDGET_LIMIT_USD: f64 = 20.0;
 pub const BUDGET_CACHE_TTL_SECS: u64 = 30;
 pub const BUDGET_WRITE_ATTEMPTS: u32 = 3;
 
@@ -144,7 +143,7 @@ pub const KEEPALIVE_SECS: u64 = 15;
 pub const HEARTBEAT_SECS: u64 = 30;
 pub const RUN_LEASE_SECS: i64 = 90;
 pub const RUN_CANCEL_WAIT_SECS: u64 = 15;
-pub const MAX_RUN_BUFFER_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_RUN_BUFFER_BYTES: usize = 512 * 1024;
 pub const MAX_STREAM_BUFFER_BYTES: usize = 32 * 1024 * 1024;
 pub const TAIL_POLL_MS: u64 = 1500;
 pub const TAIL_MAX_FAILURES: u32 = 5;
@@ -155,13 +154,11 @@ pub const SESSION_PAGE_SIZE: usize = 300;
 pub const WORKSPACE_ROOT: &str = "/home/user/workspace";
 pub const UPLOAD_DIR: &str = "/home/user/uploads";
 
-pub const MAX_INDEXED_FILES: usize = 200_000;
 pub const MAX_TEXT_PREVIEW_BYTES: usize = 512 * 1024;
-pub const MAX_PREVIEW_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
-pub const MAX_BINARY_PREVIEW_BYTES: u64 = 30 * 1024 * 1024;
+pub const MAX_PREVIEW_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+pub const MAX_BINARY_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
 pub const FILE_LIST_DEFAULT_LIMIT: usize = 100;
 pub const FILE_LIST_MAX_LIMIT: usize = 2000;
 
 pub const DEFAULT_HISTORY_LIMIT: usize = 200;
 pub const MAX_HISTORY_LIMIT: usize = 1000;
-pub const SESSION_ID_MAX_LEN: usize = 64;

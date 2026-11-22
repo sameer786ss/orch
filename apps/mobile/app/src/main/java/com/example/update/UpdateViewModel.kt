@@ -1,11 +1,11 @@
-package com.example.update
+package com.orch.app.update
 
 import android.app.Application
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.runCatchingSuspend
-import com.example.data.toApiError
+import com.orch.app.data.runCatchingSuspend
+import com.orch.app.data.toApiError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

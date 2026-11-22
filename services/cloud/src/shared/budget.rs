@@ -27,11 +27,11 @@ pub struct BudgetStatus {
 }
 
 impl BudgetStatus {
-    fn new(cost_usd: f64, period: &Period) -> Self {
-        let remaining = (config::BUDGET_LIMIT_USD - cost_usd).max(0.0);
+    fn new(cost_usd: f64, limit_usd: f64, period: &Period) -> Self {
+        let remaining = (limit_usd - cost_usd).max(0.0);
         Self {
             cost_usd,
-            limit_usd: config::BUDGET_LIMIT_USD,
+            limit_usd,
             remaining,
             period: period.id.clone(),
             resets_on: period.resets_on.clone(),
@@ -73,32 +73,49 @@ fn current_period() -> Period {
     }
 }
 
+fn firestore_budget_limit(stored: &Value) -> Result<f64, String> {
+    if stored.get("limitUsd").is_none() {
+        return Err("Firebase budget document has no limitUsd".to_string());
+    }
+    let limit = fields::read_f64(stored, "limitUsd");
+    if !limit.is_finite() || limit < 0.0 {
+        return Err("Firebase budget limitUsd must be a finite non-negative number".to_string());
+    }
+    Ok(limit)
+}
+
 impl FirestoreClient {
-    async fn budget_cost(&self, user_id: &str, period: &Period) -> Result<f64, String> {
+    async fn budget_cost(&self, user_id: &str, period: &Period) -> Result<(f64, f64), String> {
         let path = format!("{BUDGET_COLLECTION}/{user_id}");
         for _ in 0..config::BUDGET_WRITE_ATTEMPTS {
             let existing = self.get_document(&path).await?;
-            if let Some(document) = &existing {
-                let stored = document.get("fields").unwrap_or(&Value::Null);
-                if fields::read_string(stored, "period") == period.id {
-                    return Ok(fields::read_f64(stored, "costUsd"));
-                }
-            }
-            let precondition = match existing
-                .as_ref()
-                .and_then(|document| document.get("updateTime"))
-                .and_then(Value::as_str)
-            {
-                Some(update_time) => Precondition::UpdateTime(update_time),
-                None => Precondition::Exists(false),
+            let Some(document) = &existing else {
+                return Err("Firebase budget document is missing".to_string());
             };
+            let stored = document.get("fields").unwrap_or(&Value::Null);
+            let limit = firestore_budget_limit(stored)?;
+            if fields::read_string(stored, "period") == period.id {
+                return Ok((fields::read_f64(stored, "costUsd"), limit));
+            }
+
+            let update_time = document
+                .get("updateTime")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Firebase budget document has no updateTime".to_string())?;
             let mut reset = Map::new();
             reset.insert("costUsd".to_string(), fields::double(0.0));
-            reset.insert("limitUsd".to_string(), fields::double(config::BUDGET_LIMIT_USD));
+            reset.insert("limitUsd".to_string(), fields::double(limit));
             reset.insert("period".to_string(), fields::string(&period.id));
-            let reply = self.write_document(&path, &reset, false, precondition).await?;
+            let reply = self
+                .write_document(
+                    &path,
+                    &reset,
+                    false,
+                    Precondition::UpdateTime(update_time),
+                )
+                .await?;
             if reply.status.is_success() {
-                return Ok(0.0);
+                return Ok((0.0, limit));
             }
             if !reply.is_precondition_failure() {
                 return Err(reply.error("budget reset"));
@@ -145,8 +162,8 @@ impl ServerState {
             return Ok(cached);
         }
         let period = current_period();
-        let cost = self.firestore.budget_cost(user_id, &period).await?;
-        let status = BudgetStatus::new(cost, &period);
+        let (cost, limit) = self.firestore.budget_cost(user_id, &period).await?;
+        let status = BudgetStatus::new(cost, limit, &period);
         self.budget_cache
             .insert(user_id.to_string(), status.clone())
             .await;

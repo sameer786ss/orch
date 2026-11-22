@@ -1,4 +1,4 @@
-package com.example.ui.connectors
+package com.orch.app.ui.connectors
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -42,15 +42,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.R
-import com.example.ui.ConnectorItemUi
-import com.example.ui.ConnectorsUi
-import com.example.ui.components.OrchBanner
-import com.example.ui.components.OrchCard
-import com.example.ui.components.OrchIconBadge
-import com.example.ui.components.OrchPrimaryButton
-import com.example.ui.theme.OrchDimens
-import com.example.ui.theme.OrchSuccess
+import com.orch.app.R
+import com.orch.app.ui.ConnectorItemUi
+import com.orch.app.ui.ConnectorsUi
+import com.orch.app.ui.components.OrchBanner
+import com.orch.app.ui.components.OrchCard
+import com.orch.app.ui.components.OrchIconBadge
+import com.orch.app.ui.components.OrchPrimaryButton
+import com.orch.app.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchSuccess
 
 @Composable
 fun ConnectorsScreen(

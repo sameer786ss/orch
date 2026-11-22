@@ -1,7 +1,7 @@
-package com.example.chat
+package com.orch.app.chat
 
 import androidx.compose.runtime.Immutable
-import com.example.data.ToolDisplay
+import com.orch.app.data.ToolDisplay
 
 enum class Role { User, Assistant }
 

@@ -416,6 +416,7 @@ impl Follower {
     ) -> Pumped {
         let mut stream = response.bytes_stream();
         let mut buffer: Vec<u8> = Vec::new();
+        let mut scan_from = 0usize;
         let idle = Duration::from_secs(config::CLOUD_STREAM_IDLE_TIMEOUT_SECS);
         loop {
             tokio::select! {
@@ -425,13 +426,18 @@ impl Follower {
                         return Pumped::Dropped;
                     };
                     buffer.extend(bytes.iter().copied().filter(|byte| *byte != b'\r'));
-                    while let Some(position) = buffer.windows(2).position(|pair| pair == b"\n\n") {
+                    while let Some(relative) = buffer[scan_from..]
+                        .windows(2)
+                        .position(|pair| pair == b"\n\n") {
+                        let position = scan_from + relative;
                         let raw: Vec<u8> = buffer.drain(..position + 2).collect();
                         let block = String::from_utf8_lossy(&raw[..position]).into_owned();
+                        scan_from = 0;
                         if forward_block(&block, event_sink, &mut self.last_id) {
                             return Pumped::Done;
                         }
                     }
+                    scan_from = buffer.len().saturating_sub(1);
                 }
             }
         }

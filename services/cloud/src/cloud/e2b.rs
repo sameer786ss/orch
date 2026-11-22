@@ -9,7 +9,7 @@ use dashmap::DashMap;
 use futures::StreamExt;
 use orchharness::backend::{
     display_relative_str, normalize_workspace_subpath, CommandRegistry, CommandResult,
-    CommandTaskStatus, PathStat, WorkspaceOps,
+    CommandStatus, CommandTaskStatus, PathStat, WorkspaceOps,
 };
 use orchharness::config as hconfig;
 use orchharness::error::{AppError, AppResult};
@@ -1331,7 +1331,7 @@ else:
             self.cmd_mgr.mark_background(&task_id);
             let partial = self.cmd_mgr.get_status(&task_id);
             return Ok(CommandResult {
-                status: "running".to_string(),
+                status: CommandStatus::Running,
                 exit_code: None,
                 stdout: partial.as_ref().map(|s| s.stdout.clone()).unwrap_or_default(),
                 stderr: partial.as_ref().map(|s| s.stderr.clone()).unwrap_or_default(),

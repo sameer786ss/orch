@@ -1,4 +1,4 @@
-package com.example.ui.sheets
+package com.orch.app.ui.sheets
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -43,21 +43,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.data.Budget
-import com.example.data.ModelInfo
-import com.example.data.ThinkingEffort
-import com.example.ui.FilesUi
-import com.example.ui.components.OrchActionChip
-import com.example.ui.components.OrchBottomSheet
-import com.example.ui.components.OrchCard
-import com.example.ui.components.OrchCenteredSpinner
-import com.example.ui.components.OrchEmptyMessage
-import com.example.ui.components.OrchIconBadge
-import com.example.ui.components.OrchSecondaryButton
-import com.example.ui.components.OrchSheetHeader
-import com.example.ui.components.OrchTextField
-import com.example.ui.theme.OrchDimens
-import com.example.ui.theme.OrchMonoLabel
+import com.orch.app.data.Budget
+import com.orch.app.data.ModelInfo
+import com.orch.app.data.ThinkingEffort
+import com.orch.app.ui.FilesUi
+import com.orch.app.ui.components.OrchActionChip
+import com.orch.app.ui.components.OrchBottomSheet
+import com.orch.app.ui.components.OrchCard
+import com.orch.app.ui.components.OrchCenteredSpinner
+import com.orch.app.ui.components.OrchEmptyMessage
+import com.orch.app.ui.components.OrchIconBadge
+import com.orch.app.ui.components.OrchSecondaryButton
+import com.orch.app.ui.components.OrchSheetHeader
+import com.orch.app.ui.components.OrchTextField
+import com.orch.app.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchMonoLabel
 
 @Composable
 fun FilesSheet(

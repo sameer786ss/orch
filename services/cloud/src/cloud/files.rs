@@ -71,7 +71,7 @@ async fn list_files(
     let mut envs = HashMap::new();
     envs.insert("WS_ROOT".to_string(), cloud_ws.repo_dir.clone());
     envs.insert("SKIP_DIRS".to_string(), hconfig::SKIP_DIRS.join(","));
-    envs.insert("MAX_FILES".to_string(), config::MAX_INDEXED_FILES.to_string());
+    envs.insert("MAX_FILES".to_string(), hconfig::MAX_INDEXED_FILES.to_string());
     envs.insert(
         "NEEDLE".to_string(),
         query.unwrap_or_default().trim().to_ascii_lowercase(),

@@ -1,4 +1,4 @@
-package com.example.update
+package com.orch.app.update
 
 import android.app.PendingIntent
 import android.content.Context
@@ -8,8 +8,8 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.pm.PackageInfoCompat
-import com.example.BuildConfig
-import com.example.data.OrchJson
+import com.orch.app.BuildConfig
+import com.orch.app.data.OrchJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext

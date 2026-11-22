@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use axum::body::Bytes;
+use dashmap::DashMap;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
@@ -15,9 +15,7 @@ use moka::future::Cache;
 use moka::Expiry;
 use orchharness::backend::SummarizerBackend;
 use orchharness::error::{AppError, AppResult};
-use orchharness::models::{
-    resolve_static_model, vertex_models_dto, GeminiUsage, ModelInfo, StaticModelInfo,
-};
+use orchharness::models::{resolve_static_model, vertex_models_dto, ModelInfo, StaticModelInfo};
 use reqwest::{header, StatusCode};
 use rig_http::http_client::{
     BoxedStream, Error as RigHttpError, HttpClientExt, LazyBody, MultipartForm,
@@ -40,6 +38,52 @@ const TOKEN_REFRESH_TIMEOUT_SECS: u64 = 15;
 const TOKEN_EXPIRY_MARGIN_SECS: u64 = 300;
 const TOKEN_MIN_TTL_SECS: u64 = 60;
 const STREAM_CHANNEL_CAPACITY: usize = 128;
+
+#[derive(Debug, Clone, Copy)]
+struct ModelRates {
+    input_per_mtok: f64,
+    output_per_mtok: f64,
+}
+
+impl ModelRates {
+    fn cost_usd(self, input_tokens: u64, output_tokens: u64) -> f64 {
+        (input_tokens as f64 * self.input_per_mtok
+            + output_tokens as f64 * self.output_per_mtok)
+            / 1_000_000.0
+    }
+}
+
+fn model_rates(_model_id: &str) -> ModelRates {
+    ModelRates {
+        input_per_mtok: 5.0,
+        output_per_mtok: 15.0,
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct GeminiUsage {
+    prompt_token_count: u64,
+    tool_use_prompt_token_count: u64,
+    candidates_token_count: u64,
+    thoughts_token_count: u64,
+}
+
+impl GeminiUsage {
+    fn from_response(response: &Value) -> Result<Option<Self>, serde_json::Error> {
+        response
+            .get("usageMetadata")
+            .map(Self::deserialize)
+            .transpose()
+    }
+
+    fn cost_usd(&self, rates: ModelRates) -> f64 {
+        rates.cost_usd(
+            self.prompt_token_count + self.tool_use_prompt_token_count,
+            self.candidates_token_count + self.thoughts_token_count,
+        )
+    }
+}
 
 #[derive(Clone)]
 struct CachedToken {
@@ -71,6 +115,7 @@ pub struct VertexTokenPool {
     refresh_tokens: Arc<[String]>,
     index: Arc<AtomicUsize>,
     cache: Cache<String, CachedToken>,
+    unhealthy_until: Arc<DashMap<usize, Instant>>,
     http: reqwest::Client,
     client_id: Arc<str>,
     client_secret: Arc<str>,
@@ -85,6 +130,7 @@ impl VertexTokenPool {
                 .max_capacity(config.refresh_tokens.len() as u64)
                 .expire_after(TokenExpiry)
                 .build(),
+            unhealthy_until: Arc::new(DashMap::new()),
             http,
             client_id: config.client_id.as_str().into(),
             client_secret: config.client_secret.as_str().into(),
@@ -92,11 +138,24 @@ impl VertexTokenPool {
     }
 
     fn current_index(&self) -> usize {
-        self.index.load(Ordering::Relaxed)
+        let start = self.index.load(Ordering::Relaxed) % self.refresh_tokens.len();
+        (0..self.refresh_tokens.len())
+            .map(|offset| (start + offset) % self.refresh_tokens.len())
+            .find(|index| {
+                self.unhealthy_until
+                    .get(index)
+                    .is_none_or(|until| *until <= Instant::now())
+            })
+            .unwrap_or(start)
     }
 
     fn advance_index(&self) -> usize {
         self.index.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn mark_unhealthy(&self, index: usize) {
+        self.unhealthy_until
+            .insert(index % self.refresh_tokens.len(), Instant::now() + Duration::from_secs(30));
     }
 
     async fn refresh(&self, refresh_token: &str) -> Result<CachedToken, String> {
@@ -238,7 +297,9 @@ async fn send_v1internal(
         attempt += 1;
         match send_attempt(state, token_index, streaming, verb, params, &envelope).await {
             Ok(resp) if resp.status() == StatusCode::TOO_MANY_REQUESTS && attempt < 3 => {
+                state.vertex_pool.mark_unhealthy(token_index);
                 token_index = state.vertex_pool.advance_index();
+                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempt))).await;
             }
             Ok(resp) if resp.status().is_server_error() && attempt < 3 => {
                 tokio::time::sleep(Duration::from_millis(300 * u64::from(attempt))).await;
@@ -309,7 +370,7 @@ async fn relay_stream(
     }
     if let Some(usage) = usage {
         state
-            .record_cost(&user_id, usage.cost_usd(&model.rates))
+            .record_cost(&user_id, usage.cost_usd(model_rates(&model.id)))
             .await;
     }
 }
@@ -365,7 +426,7 @@ pub async fn dispatch_chat(
         read_usage(&reply, &mut usage).map_err(ApiError::bad_gateway)?;
         if let Some(usage) = usage {
             state
-                .record_cost(user_id, usage.cost_usd(&model.rates))
+                .record_cost(user_id, usage.cost_usd(model_rates(&model.id)))
                 .await;
         }
         return Ok(VertexOutput::Json(reply));

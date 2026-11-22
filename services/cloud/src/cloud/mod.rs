@@ -10,6 +10,7 @@ pub mod workspace;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post};
 use axum::Router;
+use orchharness::session::is_safe_session_id;
 
 use crate::cloud::store::CloudSessionRecord;
 use crate::shared::auth::VerifiedUser;
@@ -22,7 +23,7 @@ pub async fn owned_session(
     session_id: &str,
     user: &VerifiedUser,
 ) -> ApiResult<Option<CloudSessionRecord>> {
-    if !workspace::is_safe_session_id(session_id) {
+    if !is_safe_session_id(session_id) {
         return Err(ApiError::bad_request("Invalid sessionId"));
     }
     match state.firestore.get_session(session_id).await? {

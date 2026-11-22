@@ -1,4 +1,4 @@
-package com.example.ui.theme
+package com.orch.app.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -59,7 +59,7 @@ private val OrchColorScheme = darkColorScheme(
 )
 
 @Composable
-fun MyApplicationTheme(
+fun OrchTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(

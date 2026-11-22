@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use parking_lot::Mutex;
+use futures::future::join_all;
 use rig::message::{ImageDetail, ToolResultContent};
 use rig::tool::{Tool, ToolExecutionError, ToolOutput};
 use schemars::JsonSchema;
@@ -216,17 +216,6 @@ pub fn file_uri_str(path: &str) -> String {
     }
 }
 
-fn path_lock(path: &str) -> Arc<tokio::sync::Mutex<()>> {
-    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
-    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = locks.lock();
-    guard.retain(|_, lock| Arc::strong_count(lock) > 1);
-    guard
-        .entry(path.to_string())
-        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-        .clone()
-}
-
 pub fn clamp_timeout_secs(requested: Option<u64>) -> u64 {
     requested
         .unwrap_or(config::TOOL_EXECUTION_TIMEOUT_SECS)
@@ -391,9 +380,6 @@ pub struct WriteToFileArgs {
     #[serde(rename = "Append", default)]
     #[schemars(description = "Set this to true to append CodeContent to the end of TargetFile (creating the file if it does not exist). Cannot be combined with Overwrite=true.")]
     pub append: Option<bool>,
-    #[serde(rename = "Description", default)]
-    #[schemars(description = "Brief, user-facing explanation of what this change did. Focus on non-obvious rationale, design decisions, or important context. Don't just restate what the code does.")]
-    pub description: Option<String>,
 }
 
 pub struct WriteToFile {
@@ -439,8 +425,6 @@ impl Tool for WriteToFile {
         }
 
         let path = self.ops.resolve_in_workspace(&args.target_file)?;
-        let lock = path_lock(&path);
-        let _guard = lock.lock().await;
 
         let stat = self.ops.stat(&path).await?;
         let uri = file_uri_str(&path);
@@ -489,12 +473,6 @@ pub struct ReplaceFileContentArgs {
     #[serde(rename = "TargetFile")]
     #[schemars(description = "The target file to modify. Must be an absolute path to an accessible file. Always specify the target file as the very first argument.")]
     pub target_file: String,
-    #[serde(rename = "Instruction", default)]
-    #[schemars(description = "A description of the changes that you are making to the file.")]
-    pub instruction: Option<String>,
-    #[serde(rename = "Description", default)]
-    #[schemars(description = "Brief, user-facing explanation of what this change did. Focus on non-obvious rationale, design decisions, or important context. Don't just restate what the code does.")]
-    pub description: Option<String>,
     #[serde(rename = "AllowMultiple", default)]
     #[schemars(description = "If true, multiple occurrences of 'TargetContent' within the line range will be replaced by 'ReplacementContent'. Otherwise if multiple occurrences are found, an error will be returned.")]
     pub allow_multiple: Option<bool>,
@@ -598,8 +576,6 @@ impl Tool for ReplaceFileContent {
         }
 
         let path = self.ops.resolve_in_workspace(&args.target_file)?;
-        let lock = path_lock(&path);
-        let _guard = lock.lock().await;
 
         let stat = self.ops.stat(&path).await?;
         let uri = file_uri_str(&path);
@@ -842,14 +818,14 @@ impl Tool for ExecuteBash {
         }
 
         let text = format_streams(&result.stdout, &result.stderr);
-        if result.status == "completed" {
+        if result.status == crate::backend::CommandStatus::Completed {
             Ok(text)
         } else if let Some(code) = result.exit_code {
             Err(ToolError::msg(format!("{text}\n\n[EXIT CODE] {code}")))
         } else {
             Err(ToolError::msg(format!(
                 "{text}\n\n[{}]",
-                result.status.to_uppercase()
+                result.status.to_string().to_uppercase()
             )))
         }
     }
@@ -1056,16 +1032,24 @@ impl Tool for Search {
         }
         let max_results = args.max_results.unwrap_or(5).clamp(1, 10);
 
+        let requests = queries.into_iter().map(|query| {
+            let backend = self.backend.clone();
+            let domain = args.domain.clone();
+            async move {
+                let req = TavilyRequest {
+                    query: query.clone(),
+                    max_results: Some(max_results),
+                    search_depth: Some(SearchDepth::Basic),
+                    topic: args.topic,
+                    domain,
+                };
+                backend.tavily(&req).await.map(|resp| (query, resp))
+            }
+        });
+
         let mut out = String::new();
-        for query in queries {
-            let req = TavilyRequest {
-                query: query.clone(),
-                max_results: Some(max_results),
-                search_depth: Some(SearchDepth::Basic),
-                topic: args.topic,
-                domain: args.domain.clone(),
-            };
-            let resp = self.backend.tavily(&req).await?;
+        for result in join_all(requests).await {
+            let (query, resp) = result?;
             if !out.is_empty() {
                 out.push('\n');
             }

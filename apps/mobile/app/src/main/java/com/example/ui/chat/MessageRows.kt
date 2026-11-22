@@ -1,7 +1,8 @@
-package com.example.ui.chat
+package com.orch.app.ui.chat
 
 import android.content.ClipData
 import android.graphics.BitmapFactory
+import android.util.LruCache
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -71,27 +72,27 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.example.chat.ChatRow
-import com.example.chat.CompactionRow
-import com.example.chat.CopyRow
-import com.example.chat.EarlierRow
-import com.example.chat.NoticeRow
-import com.example.chat.PendingRow
-import com.example.chat.ReasoningItem
-import com.example.chat.TextRow
-import com.example.chat.ToolItem
-import com.example.chat.ToolStatus
-import com.example.chat.UserAttachment
-import com.example.chat.UserRow
-import com.example.chat.WorkRow
-import com.example.data.ToolDisplay
-import com.example.data.ToolIcon
-import com.example.ui.components.OrchBanner
-import com.example.ui.theme.OrchAdded
-import com.example.ui.theme.OrchDimens
-import com.example.ui.theme.OrchMonoBody
-import com.example.ui.theme.OrchMonoLabel
-import com.example.ui.theme.OrchRemoved
+import com.orch.app.chat.ChatRow
+import com.orch.app.chat.CompactionRow
+import com.orch.app.chat.CopyRow
+import com.orch.app.chat.EarlierRow
+import com.orch.app.chat.NoticeRow
+import com.orch.app.chat.PendingRow
+import com.orch.app.chat.ReasoningItem
+import com.orch.app.chat.TextRow
+import com.orch.app.chat.ToolItem
+import com.orch.app.chat.ToolStatus
+import com.orch.app.chat.UserAttachment
+import com.orch.app.chat.UserRow
+import com.orch.app.chat.WorkRow
+import com.orch.app.data.ToolDisplay
+import com.orch.app.data.ToolIcon
+import com.orch.app.ui.components.OrchBanner
+import com.orch.app.ui.theme.OrchAdded
+import com.orch.app.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchMonoBody
+import com.orch.app.ui.theme.OrchMonoLabel
+import com.orch.app.ui.theme.OrchRemoved
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -158,8 +159,12 @@ private fun UserBubble(row: UserRow, onOpenFile: (String) -> Unit) {
 }
 
 private const val THUMBNAIL_PX = 144
+private val thumbnailCache = LruCache<String, ImageBitmap>(24)
 
 private fun decodeThumbnail(dataUrl: String): ImageBitmap? {
+    synchronized(thumbnailCache) {
+        thumbnailCache.get(dataUrl)?.let { return it }
+    }
     if (!dataUrl.contains("base64,")) return null
     val bytes = Base64.Mime.decode(dataUrl.substringAfter("base64,"))
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -167,7 +172,11 @@ private fun decodeThumbnail(dataUrl: String): ImageBitmap? {
     var sample = 1
     while (bounds.outWidth / (sample * 2) >= THUMBNAIL_PX && bounds.outHeight / (sample * 2) >= THUMBNAIL_PX) sample *= 2
     val options = BitmapFactory.Options().apply { inSampleSize = sample }
-    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
+    val image = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
+    if (image != null) {
+        synchronized(thumbnailCache) { thumbnailCache.put(dataUrl, image) }
+    }
+    return image
 }
 
 @Composable

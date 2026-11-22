@@ -1,3 +1,5 @@
+use orchharness::backend::normalize_workspace_subpath;
+
 pub use orchharness::persistence::CloudWorkspaceInfo;
 
 pub const CLOUD_WORKSPACE_PREFIX: &str = "cloud://";
@@ -6,18 +8,8 @@ pub fn is_cloud_workspace(workspace: &str) -> bool {
     workspace.trim().starts_with(CLOUD_WORKSPACE_PREFIX)
 }
 
-pub fn absolute_cloud_path(repo_dir: &str, path: &str) -> String {
-    let trimmed = path.trim();
-    let stripped = trimmed.strip_prefix("file://").unwrap_or(trimmed);
-    if stripped.starts_with('/') {
-        stripped.to_string()
-    } else {
-        format!(
-            "{}/{}",
-            repo_dir.trim_end_matches('/'),
-            stripped.trim_start_matches("./")
-        )
-    }
+pub fn absolute_cloud_path(repo_dir: &str, path: &str) -> Result<String, String> {
+    normalize_workspace_subpath(repo_dir, path).map_err(|error| error.to_string())
 }
 
 pub fn relative_cloud_path(repo_dir: &str, path: &str) -> Option<String> {

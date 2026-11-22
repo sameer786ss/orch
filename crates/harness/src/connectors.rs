@@ -24,7 +24,27 @@ pub struct ConnectorDef {
     pub actions: &'static [ActionDef],
 }
 
-pub static CONNECTOR_DEFS: &[ConnectorDef] = &[
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorCatalogEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+}
+
+pub fn connector_catalog() -> Vec<ConnectorCatalogEntry> {
+    CONNECTOR_DEFS
+        .iter()
+        .map(|definition| ConnectorCatalogEntry {
+            id: definition.id.to_string(),
+            name: definition.name.to_string(),
+            description: definition.description.to_string(),
+            category: definition.category.to_string(),
+        })
+        .collect()
+}
+
     ConnectorDef {
         id: "googledrive",
         name: "Google Drive",

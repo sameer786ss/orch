@@ -1,3 +1,5 @@
+use orchharness::session::is_safe_session_id;
+
 use crate::shared::config;
 use crate::shared::error::{ApiError, ApiResult};
 use crate::shared::util;
@@ -46,12 +48,4 @@ pub fn normalize(input: &str) -> ApiResult<CloudWorkspace> {
         repo_url: format!("https://{canonical_path}"),
         repo_dir: format!("{}/{}", config::WORKSPACE_ROOT, util::safe_file_name(repo)),
     })
-}
-
-pub fn is_safe_session_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= config::SESSION_ID_MAX_LEN
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
 }

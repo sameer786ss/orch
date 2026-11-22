@@ -138,6 +138,8 @@ pub fn spawn_subscriber(run: Arc<LiveRun>, after: u64) -> mpsc::Receiver<String>
         loop {
             let batch = run.read_after(last);
             if batch.gap {
+                let _ = tx.send(ChatEvent::Resync.to_sse_block()).await;
+                let _ = tx.send(ChatEvent::Done.to_sse_block()).await;
                 return;
             }
             let drained = batch.events.is_empty();

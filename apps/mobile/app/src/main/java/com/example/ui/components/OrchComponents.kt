@@ -1,4 +1,4 @@
-package com.example.ui.components
+package com.orch.app.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -60,7 +60,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchDimens
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

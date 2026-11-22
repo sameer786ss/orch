@@ -1,4 +1,4 @@
-package com.example.ui.sheets
+package com.orch.app.ui.sheets
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,18 +32,18 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.R
-import com.example.ui.ChatUi
-import com.example.ui.components.OrchBottomSheet
-import com.example.ui.components.OrchCard
-import com.example.ui.components.OrchIconBadge
-import com.example.ui.components.OrchPrimaryButton
-import com.example.ui.components.OrchSecondaryButton
-import com.example.ui.components.OrchSheetHeader
-import com.example.ui.components.OrchTextField
-import com.example.ui.theme.OrchDimens
-import com.example.ui.theme.OrchMonoBody
-import com.example.ui.theme.OrchSuccess
+import com.orch.app.R
+import com.orch.app.ui.ChatUi
+import com.orch.app.ui.components.OrchBottomSheet
+import com.orch.app.ui.components.OrchCard
+import com.orch.app.ui.components.OrchIconBadge
+import com.orch.app.ui.components.OrchPrimaryButton
+import com.orch.app.ui.components.OrchSecondaryButton
+import com.orch.app.ui.components.OrchSheetHeader
+import com.orch.app.ui.components.OrchTextField
+import com.orch.app.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchMonoBody
+import com.orch.app.ui.theme.OrchSuccess
 
 @Composable
 fun AttachmentSheet(

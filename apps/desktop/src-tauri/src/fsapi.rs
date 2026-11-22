@@ -226,7 +226,7 @@ async fn cloud_context(state: &AppState) -> Result<Option<Arc<CloudWorkspace>>, 
 #[tauri::command]
 pub async fn read_text_file(state: State<'_, AppState>, path: String) -> Result<FileContent, String> {
     if let Some(cloud) = cloud_context(&state).await? {
-        let absolute = absolute_cloud_path(&cloud.repo_dir, &path);
+        let absolute = absolute_cloud_path(&cloud.repo_dir, &path)?;
         let mut content: FileContent = state
             .gateway
             .cloud_files_json("text", &cloud.workspace_uri, &[("path", absolute)])
@@ -285,7 +285,7 @@ pub async fn read_image_data_url(state: State<'_, AppState>, path: String) -> Re
         struct Resp {
             data_url: String,
         }
-        let absolute = absolute_cloud_path(&cloud.repo_dir, &path);
+        let absolute = absolute_cloud_path(&cloud.repo_dir, &path)?;
         let resp: Resp = state
             .gateway
             .cloud_files_json("image", &cloud.workspace_uri, &[("path", absolute)])
@@ -320,7 +320,7 @@ pub async fn read_image_data_url(state: State<'_, AppState>, path: String) -> Re
 #[tauri::command]
 pub async fn read_binary_file(state: State<'_, AppState>, path: String) -> Result<tauri::ipc::Response, String> {
     if let Some(cloud) = cloud_context(&state).await? {
-        let absolute = absolute_cloud_path(&cloud.repo_dir, &path);
+        let absolute = absolute_cloud_path(&cloud.repo_dir, &path)?;
         let bytes = state
             .gateway
             .cloud_file_bytes(&cloud.workspace_uri, &absolute)

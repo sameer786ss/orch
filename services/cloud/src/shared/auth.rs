@@ -5,6 +5,8 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::Response;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use serde_json::{json, Value};
 
 use crate::shared::config;
@@ -14,6 +16,28 @@ use crate::state::ServerState;
 #[derive(Clone)]
 pub struct VerifiedUser {
     pub id: String,
+}
+
+#[derive(Clone)]
+pub struct CachedUser {
+    pub user: VerifiedUser,
+    pub expires_at: Option<i64>,
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(i64::MAX)
+}
+
+fn token_expiry(token: &str) -> Option<i64> {
+    let payload = token.split('.').nth(1)?;
+    let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    serde_json::from_slice::<Value>(&bytes)
+        .ok()?
+        .get("exp")
+        .and_then(Value::as_i64)
 }
 
 fn auth_unavailable() -> ApiError {
@@ -41,7 +65,10 @@ pub async fn require_user(
 
 async fn verify(state: &ServerState, token: &str) -> ApiResult<VerifiedUser> {
     if let Some(cached) = state.auth_cache.get(token).await {
-        return Ok(cached);
+        if cached.expires_at.is_none_or(|expires_at| expires_at > now_secs()) {
+            return Ok(cached.user);
+        }
+        state.auth_cache.invalidate(token).await;
     }
 
     let response = state
@@ -84,6 +111,21 @@ async fn verify(state: &ServerState, token: &str) -> ApiResult<VerifiedUser> {
         .ok_or_else(|| ApiError::internal("firebase account lookup returned no localId"))?;
 
     let user = VerifiedUser { id: id.to_string() };
-    state.auth_cache.insert(token.to_string(), user.clone()).await;
+    let expires_at = token_expiry(token).or_else(|| {
+        now_secs().checked_add(config::AUTH_CACHE_TTL_SECS as i64)
+    });
+    if expires_at.is_some_and(|expires_at| expires_at <= now_secs()) {
+        return Err(ApiError::unauthorized());
+    }
+    state
+        .auth_cache
+        .insert(
+            token.to_string(),
+            CachedUser {
+                user: user.clone(),
+                expires_at,
+            },
+        )
+        .await;
     Ok(user)
 }

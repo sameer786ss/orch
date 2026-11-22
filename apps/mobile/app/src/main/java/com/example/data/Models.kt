@@ -1,4 +1,4 @@
-package com.example.data
+package com.orch.app.data
 
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
@@ -173,6 +173,7 @@ data class ConnectorConnectRequest(val toolkit: String)
 @Serializable
 data class ConnectorConnectResponse(val redirectUrl: String)
 
+@Serializable
 @Immutable
 data class ConnectorDefinition(
     val id: String,
@@ -180,44 +181,3 @@ data class ConnectorDefinition(
     val description: String,
     val category: String
 )
-
-object ConnectorCatalog {
-    val all = listOf(
-        ConnectorDefinition(
-            id = "googledrive",
-            name = "Google Drive",
-            description = "Search, read, and organize files, folders, and spreadsheets in Google Drive.",
-            category = "Cloud Storage"
-        ),
-        ConnectorDefinition(
-            id = "gmail",
-            name = "Gmail",
-            description = "Search and read email, and create, send, and reply to messages in Gmail.",
-            category = "Communication"
-        ),
-        ConnectorDefinition(
-            id = "github",
-            name = "GitHub",
-            description = "Browse repositories and code, manage issues and pull requests, and commit changes.",
-            category = "Dev Tools"
-        ),
-        ConnectorDefinition(
-            id = "notion",
-            name = "Notion",
-            description = "Search, read, and edit pages and databases in Notion workspaces.",
-            category = "Productivity"
-        ),
-        ConnectorDefinition(
-            id = "slack",
-            name = "Slack",
-            description = "Search and read channel history, and send and schedule messages in Slack.",
-            category = "Communication"
-        ),
-        ConnectorDefinition(
-            id = "jira",
-            name = "Jira",
-            description = "Search, create, and update issues, comments, and workflow transitions in Jira Cloud.",
-            category = "Dev Tools"
-        )
-    )
-}

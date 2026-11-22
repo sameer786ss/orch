@@ -1,4 +1,4 @@
-package com.example.ui.components
+package com.orch.app.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
@@ -67,14 +67,14 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
-import com.example.data.ArtifactContent
-import com.example.data.ArtifactState
-import com.example.ui.chat.ChatMarkdown
-import com.example.ui.theme.OrchDimens
-import com.example.ui.theme.OrchMonoBody
-import kotlinx.coroutines.CoroutineScope
+import com.orch.app.data.ArtifactContent
+import com.orch.app.data.ArtifactState
+import com.orch.app.ui.chat.ChatMarkdown
+import com.orch.app.ui.theme.OrchDimens
+import com.orch.app.ui.theme.OrchMonoBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -244,7 +244,7 @@ private class PdfDoc(
     }
 
     fun close() {
-        CoroutineScope(Dispatchers.IO).launch {
+        runBlocking(Dispatchers.IO) {
             lock.withLock {
                 if (!closed) {
                     closed = true
