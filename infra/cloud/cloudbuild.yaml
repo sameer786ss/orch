@@ -8,7 +8,7 @@ steps:
         apt-get update
         apt-get install -y --no-install-recommends musl-tools clang mold ca-certificates pkg-config
         rustup target add x86_64-unknown-linux-musl
-        cargo build --release --locked --package orch-cloud-harness --target x86_64-unknown-linux-musl
+        cargo build --release --package orch-cloud-harness --target x86_64-unknown-linux-musl
 artifacts:
   objects:
     location: gs://orchllc-artifacts/orch-cloud-harness/$BUILD_ID/
