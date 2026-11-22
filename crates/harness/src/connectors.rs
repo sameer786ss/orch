@@ -45,6 +45,7 @@ pub fn connector_catalog() -> Vec<ConnectorCatalogEntry> {
         .collect()
 }
 
+pub static CONNECTOR_DEFS: &[ConnectorDef] = &[
     ConnectorDef {
         id: "googledrive",
         name: "Google Drive",
