@@ -55,6 +55,7 @@ jobs:
           export KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
           gradle :app:assembleRelease
           cp "$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)" Orch.apk
+          sha256sum Orch.apk > Orch.apk.sha256
 
       - name: Publish Orch.apk
         env:
@@ -64,7 +65,7 @@ jobs:
           if gh release view "$tag" > /dev/null 2>&1; then
             gh release delete "$tag" --yes
           fi
-          gh release create "$tag" Orch.apk \
+          gh release create "$tag" Orch.apk Orch.apk.sha256 \
             --verify-tag \
             --latest=false \
             --title "Orch Mobile" \

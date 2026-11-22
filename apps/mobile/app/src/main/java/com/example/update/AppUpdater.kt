@@ -183,7 +183,7 @@ class AppUpdater(private val context: Context) {
             }
         }
         val actual = digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
-        actual == expected
+        return actual == expected
     }
 
     private fun isValid(file: File, info: UpdateInfo): Boolean =
