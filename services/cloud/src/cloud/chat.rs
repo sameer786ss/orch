@@ -51,7 +51,7 @@ struct CloudAttachment {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CloudChatStreamReq {
+pub struct CloudChatStreamReq {
     session_id: String,
     prompt: String,
     model: String,
