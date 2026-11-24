@@ -372,6 +372,27 @@ pub async fn start_chat(
         return Err("a prompt or at least one attachment is required".to_string());
     }
 
+    let mut attachments = attachments;
+    for att in &mut attachments {
+        if att.data_base64.is_none() {
+            if let Ok(meta) = tokio::fs::metadata(&att.path).await {
+                if meta.is_file() {
+                    if meta.len() > orchharness::config::MAX_ATTACHMENT_SOURCE_BYTES {
+                        return Err(format!(
+                            "{} exceeds the {} MB limit",
+                            att.name,
+                            orchharness::config::MAX_ATTACHMENT_SOURCE_BYTES / (1024 * 1024)
+                        ));
+                    }
+                    if let Ok(bytes) = tokio::fs::read(&att.path).await {
+                        att.data_base64 =
+                            Some(base64::engine::general_purpose::STANDARD.encode(&bytes));
+                    }
+                }
+            }
+        }
+    }
+
     let current = state
         .current_workspace()
         .ok_or_else(|| "Open a workspace folder before starting a chat".to_string())?;
@@ -399,26 +420,8 @@ pub async fn start_chat(
 
             let mut cloud_attachments = Vec::with_capacity(attachments.len());
             let mut total_bytes = 0usize;
-            for att in attachments {
-                let data_base64 = match att.data_base64 {
-                    Some(data) => Some(data),
-                    None => match tokio::fs::metadata(&att.path).await {
-                        Ok(meta) if meta.is_file() => {
-                            if let Err(error) =
-                                ensure_cloud_attachment_budget(total_bytes + meta.len() as usize)
-                            {
-                                state.finish_run(&session_id, &run_id);
-                                return Err(error);
-                            }
-                            tokio::fs::read(&att.path)
-                                .await
-                                .ok()
-                                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(&bytes))
-                        }
-                        _ => None,
-                    },
-                };
-                match data_base64 {
+            for att in &attachments {
+                match &att.data_base64 {
                     Some(data_base64) => {
                         total_bytes += data_base64.len() / 4 * 3;
                         if let Err(error) = ensure_cloud_attachment_budget(total_bytes) {
@@ -426,8 +429,8 @@ pub async fn start_chat(
                             return Err(error);
                         }
                         cloud_attachments.push(CloudAttachment {
-                            name: att.name,
-                            data_base64,
+                            name: att.name.clone(),
+                            data_base64: data_base64.clone(),
                         });
                     }
                     None => {

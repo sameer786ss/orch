@@ -10,7 +10,6 @@ local-fs = [
     "dep:grep-regex",
     "dep:grep-searcher",
     "dep:ignore",
-    "dep:globset",
     "dep:process-wrap",
     "dep:envvars",
     "dep:tempfile",
@@ -26,7 +25,6 @@ futures = "0.3"
 gray_matter = "0.2"
 grep-regex = { version = "0.1", optional = true }
 grep-searcher = { version = "0.1", optional = true }
-globset = { version = "0.4", optional = true }
 http = "1"
 ignore = { version = "0.4", optional = true }
 include_dir = { version = "0.7", features = ["glob"] }

@@ -13,8 +13,8 @@ android {
     applicationId = "com.orch.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1_000_001
-    versionName = System.getenv("VERSION_NAME") ?: "1.0.2"
+    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1_000_003
+    versionName = System.getenv("VERSION_NAME") ?: "1.0.3"
 
     buildConfigField("String", "ORCH_API_BASE_URL", "\"https://orchapi.duckdns.org\"")
     buildConfigField("String", "ORCH_UPDATE_REPO", "\"sameer786ss/orch\"")

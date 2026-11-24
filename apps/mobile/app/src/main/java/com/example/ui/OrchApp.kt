@@ -179,7 +179,7 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
             },
             onPickFiles = {
                 sheet = Sheet.None
-                filePicker.launch(arrayOf("*/*"))
+                filePicker.launch(arrayOf("application/pdf"))
             },
             onConnectRepo = vm::connectRepo,
             onEditRepo = vm::clearRepoError,

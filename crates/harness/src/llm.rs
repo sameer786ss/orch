@@ -62,25 +62,19 @@ where
 }
 
 pub const FILE_PART_PREFIX: &str = "<file:";
-pub const PDF_PART_PREFIX: &str = "<pdf:";
 pub const MENTION_FILE_PART_PREFIX: &str = "<mention-file:";
-pub const MENTION_PDF_PART_PREFIX: &str = "<mention-pdf:";
 pub const NOTE_PART_PREFIX: &str = "<note>";
 
 pub fn is_payload_part(text: &str) -> bool {
     text.starts_with(FILE_PART_PREFIX)
-        || text.starts_with(PDF_PART_PREFIX)
         || text.starts_with(MENTION_FILE_PART_PREFIX)
-        || text.starts_with(MENTION_PDF_PART_PREFIX)
         || text.starts_with(NOTE_PART_PREFIX)
 }
 
 pub fn payload_part_label(text: &str) -> Option<String> {
     let rest = text
         .strip_prefix(FILE_PART_PREFIX)
-        .or_else(|| text.strip_prefix(PDF_PART_PREFIX))
-        .or_else(|| text.strip_prefix(MENTION_FILE_PART_PREFIX))
-        .or_else(|| text.strip_prefix(MENTION_PDF_PART_PREFIX))?;
+        .or_else(|| text.strip_prefix(MENTION_FILE_PART_PREFIX))?;
     let end = rest.find('>')?;
     let label = &rest[..end];
     if label.is_empty() {
@@ -139,9 +133,7 @@ pub fn build_agent(inputs: AgentInputs<'_>) -> ChatAgent {
         .tool(ctx.read_skill())
         .tool(ctx.write_to_file())
         .tool(ctx.replace_file_content())
-        .tool(ctx.apply_patch())
         .tool(ctx.search_workspace())
-        .tool(ctx.glob_files())
         .tool(ctx.search())
         .tool(ctx.execute_bash())
         .tool(ctx.get_command_status())
@@ -934,7 +926,7 @@ pub async fn run_chat(agent: ChatAgent, run: &ChatRun, user_message: Message) ->
 }
 
 pub fn is_mention_context_part(text: &str) -> bool {
-    text.starts_with(MENTION_FILE_PART_PREFIX) || text.starts_with(MENTION_PDF_PART_PREFIX)
+    text.starts_with(MENTION_FILE_PART_PREFIX)
 }
 
 fn mention_regex() -> &'static regex::Regex {
@@ -1049,18 +1041,8 @@ fn decode_attachment_bytes(
         }
         None => (raw_text, label.to_string()),
     };
-    let total_chars = content.chars().count();
-    let body = if total_chars > config::MAX_TEXT_ATTACHMENT_CHARS {
-        format!(
-            "{}\n\n[attachment truncated: showing {} of {total_chars} characters]",
-            truncate_chars(&content, config::MAX_TEXT_ATTACHMENT_CHARS),
-            config::MAX_TEXT_ATTACHMENT_CHARS
-        )
-    } else {
-        content
-    };
     Ok(AttachmentPart::Text(format!(
-        "{prefix}{label_with_range}>\n{body}"
+        "{prefix}{label_with_range}>\n{content}"
     )))
 }
 

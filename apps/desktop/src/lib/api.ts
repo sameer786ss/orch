@@ -1,4 +1,70 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
+export type ThinkingEffort = "low" | "medium" | "high";
+export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "high";
+export const THINKING_EFFORTS: readonly ThinkingEffort[] = ["low", "medium", "high"] as const;
+
+export type Role = "user" | "assistant" | "system";
+
+export type ToolStatus = "running" | "done" | "error";
+
+export interface UserAttachment {
+  name: string;
+  path?: string | null;
+  dataUrl?: string | null;
+  isImage?: boolean;
+}
+
+export type MessageItem =
+  | {
+      type: "work";
+      id: string;
+      active: boolean;
+      durationSeconds?: number;
+      stopped?: boolean;
+    }
+  | {
+      type: "reasoning";
+      id: string;
+      text: string;
+      active: boolean;
+      durationSeconds?: number;
+      startTime?: number;
+    }
+  | {
+      type: "toolCall";
+      id: string;
+      callId?: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+      args?: string;
+      displayInfo: ToolDisplayInfo;
+      output?: string;
+      status: ToolStatus;
+    }
+  | {
+      type: "text";
+      id: string;
+      text: string;
+      active?: boolean;
+    }
+  | {
+      type: "compactionNotice";
+      id: string;
+      originalMessageCount: number;
+      ts: number;
+    };
+
+export interface ChatMessage {
+  id: string;
+  role: Role;
+  text?: string;
+  items: MessageItem[];
+  attachments: UserAttachment[];
+  streaming: boolean;
+  error?: string;
+  notice?: string;
+}
+
 export interface ModelDto {
   key: string;
   id: string;

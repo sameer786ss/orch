@@ -176,7 +176,7 @@ const ThinkingStep = memo(function ThinkingStep({ item }: { item: ReasoningItem 
       if (item.durationSeconds !== undefined) setElapsed(item.durationSeconds);
       return;
     }
-    const tick = () => setElapsed(Math.max(1, Math.round((Date.now() - item.startTime) / 1000)));
+    const tick = () => setElapsed(Math.max(1, Math.round((Date.now() - (item.startTime ?? Date.now())) / 1000)));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -279,9 +279,9 @@ function UserMessage({ message }: { message: ChatMessage }) {
             <Attachment
               key={`${a.name}-${i}`}
               name={a.name}
-              isImage={a.isImage}
-              path={a.path}
-              dataUrl={a.dataUrl}
+              isImage={Boolean(a.isImage)}
+              path={a.path ?? undefined}
+              dataUrl={a.dataUrl ?? undefined}
               onOpen={a.path ? () => useArtifactsStore.getState().openFile(a.path!) : undefined}
             />
           ))}

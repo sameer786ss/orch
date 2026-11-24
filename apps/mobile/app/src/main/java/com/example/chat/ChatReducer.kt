@@ -284,9 +284,9 @@ class ChatReducer(private val idPrefix: String = "c") {
     private fun onToolStart(data: JsonObject) {
         val callId = data.str("id").orEmpty()
         val name = data.str("name").orEmpty()
-        val display = data["display"]?.let {
-            runCatching { OrchJson.decodeFromJsonElement<ToolDisplay>(it) }.getOrNull()
-        } ?: ToolDisplay(label = name, activeLabel = name)
+        val displayElement = data["display"]
+            ?: throw IllegalStateException("ToolStart event missing required display payload for tool: $name")
+        val display = OrchJson.decodeFromJsonElement<ToolDisplay>(displayElement)
         val tool = ToolItem(
             id = newId(),
             callId = callId,
@@ -427,9 +427,9 @@ class ChatReducer(private val idPrefix: String = "c") {
     private fun applyToolCallRecord(record: JsonObject) {
         val callId = record.str("id").orEmpty()
         val name = record.str("name").orEmpty()
-        val display = record["display"]?.let {
-            runCatching { OrchJson.decodeFromJsonElement<ToolDisplay>(it) }.getOrNull()
-        } ?: ToolDisplay(label = name, activeLabel = name)
+        val displayElement = record["display"]
+            ?: throw IllegalStateException("ToolCall history record missing required display payload for tool: $name")
+        val display = OrchJson.decodeFromJsonElement<ToolDisplay>(displayElement)
         val output = record.str("output")
         val isError = record.bool("isError") == true
         appendToWorkGroup(

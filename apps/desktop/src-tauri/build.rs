@@ -3,6 +3,7 @@ const REQUIRED_VARS: &[&str] = &["FIREBASE_API_KEY"];
 const OPTIONAL_VARS: &[&str] = &["SENTRY_DSN"];
 
 fn main() {
+    std::env::remove_var("STATIC_VCRUNTIME");
     load_dotenv_for_compile();
 
     let target = std::env::var("TARGET").unwrap_or_default();

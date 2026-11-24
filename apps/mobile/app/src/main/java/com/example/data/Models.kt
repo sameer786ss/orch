@@ -13,7 +13,7 @@ enum class ThinkingEffort(val wire: String, val label: String, val shortLabel: S
 
     companion object {
         fun fromWire(value: String?): ThinkingEffort =
-            entries.firstOrNull { it.wire.equals(value, ignoreCase = true) } ?: Medium
+            entries.firstOrNull { it.wire.equals(value, ignoreCase = true) } ?: High
     }
 }
 

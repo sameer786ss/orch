@@ -193,13 +193,14 @@ async fn stage_attachments(
         let is_pdf = is_pdf_extension(&ext);
         let is_text = !is_image && !is_pdf && !orchharness::util::looks_binary(&bytes);
         let data_base64 = STANDARD.encode(&bytes);
+        let attachable = is_image || is_pdf || is_text;
         pending.push((
             attachment.name.clone(),
             remote_path,
             bytes,
             data_base64,
             is_image,
-            is_pdf || is_text,
+            attachable,
         ));
     }
 

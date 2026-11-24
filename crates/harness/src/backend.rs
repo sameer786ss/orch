@@ -353,12 +353,6 @@ pub trait WorkspaceOps: Send + Sync {
         query: &str,
         max_hits: usize,
     ) -> AppResult<String>;
-    async fn glob_files(
-        &self,
-        abs_path: &str,
-        pattern: &str,
-        max_results: usize,
-    ) -> AppResult<String>;
     async fn execute_bash(
         &self,
         command: &str,
@@ -933,49 +927,6 @@ pub mod local_fs {
             tokio::task::spawn_blocking(move || search_text(&root, &search_path, &query, max_hits))
                 .await
                 .map_err(|e| AppError::other(format!("search task failed: {e}")))?
-        }
-
-        async fn glob_files(
-            &self,
-            abs_path: &str,
-            pattern: &str,
-            max_results: usize,
-        ) -> AppResult<String> {
-            let root = self.require_root()?;
-            let search_path = fs_util::resolve_in_workspace(&root, abs_path)?;
-            let pattern = pattern.to_string();
-            tokio::task::spawn_blocking(move || {
-                let matcher = globset::GlobBuilder::new(&pattern)
-                    .literal_separator(false)
-                    .build()
-                    .map_err(|e| AppError::other(format!("invalid glob pattern: {e}")))?
-                    .compile_matcher();
-                let mut matches = Vec::new();
-                for entry in fs_util::workspace_walker(&search_path).build().flatten() {
-                    if !entry.file_type().map(|file_type| file_type.is_file()).unwrap_or(false) {
-                        continue;
-                    }
-                    let relative = fs_util::display_relative(&root, entry.path());
-                    if matcher.is_match(&relative) {
-                        matches.push(relative);
-                        if matches.len() >= max_results {
-                            break;
-                        }
-                    }
-                }
-                matches.sort();
-                if matches.is_empty() {
-                    Ok(format!("No files matched glob: '{pattern}'"))
-                } else {
-                    let mut output = matches.join("\n");
-                    if matches.len() >= max_results {
-                        output.push_str("\n\n[results limited; narrow the pattern or pass a smaller path]");
-                    }
-                    Ok(output)
-                }
-            })
-            .await
-            .map_err(|e| AppError::other(format!("glob task failed: {e}")))?
         }
 
         async fn execute_bash(

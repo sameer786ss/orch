@@ -1270,28 +1270,39 @@ impl WorkspaceOps for CloudWorkspaceOps {
         query: &str,
         max_hits: usize,
     ) -> AppResult<String> {
+        let rel_path = abs_path
+            .strip_prefix(&format!("{}/", self.repo_dir))
+            .or_else(|| abs_path.strip_prefix(&self.repo_dir))
+            .unwrap_or(abs_path)
+            .trim_start_matches('/');
+
+        let search_target = if rel_path.is_empty() || rel_path == "." {
+            "."
+        } else {
+            rel_path
+        };
+
         let mut args = vec![
-            "--color=never".to_string(),
-            "--no-heading".to_string(),
-            "--line-number".to_string(),
-            "--with-filename".to_string(),
-            "--ignore-case".to_string(),
-            format!("--max-filesize={}b", hconfig::MAX_SEARCHABLE_FILE_BYTES),
+            "grep".to_string(),
+            "-n".to_string(),
+            "-I".to_string(),
+            "-i".to_string(),
+            "--untracked".to_string(),
+            "-e".to_string(),
+            query.to_string(),
+            "--".to_string(),
+            search_target.to_string(),
         ];
         for skipped in hconfig::SKIP_DIRS {
-            args.push("--glob".to_string());
-            args.push(format!("!{skipped}/**"));
+            args.push(format!(":(exclude){skipped}"));
         }
-        args.push("--".to_string());
-        args.push(query.to_string());
-        args.push(abs_path.to_string());
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self
             .lease
             .manager
             .run_oneshot(
                 &self.lease.conn,
-                "rg",
+                "git",
                 &arg_refs,
                 Some(&self.repo_dir),
                 None,
@@ -1337,64 +1348,6 @@ impl WorkspaceOps for CloudWorkspaceOps {
             output.push_str("\n\n[results limited; narrow the pattern or pass path to search a subdirectory]");
         }
         Ok(output)
-    }
-
-    async fn glob_files(
-        &self,
-        abs_path: &str,
-        pattern: &str,
-        max_results: usize,
-    ) -> AppResult<String> {
-        let mut args = vec![
-            "--files".to_string(),
-            "--hidden".to_string(),
-            "--color=never".to_string(),
-            "--glob".to_string(),
-            pattern.to_string(),
-        ];
-        for skipped in hconfig::SKIP_DIRS {
-            args.push("--glob".to_string());
-            args.push(format!("!{skipped}/**"));
-        }
-        args.push("--".to_string());
-        args.push(abs_path.to_string());
-        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (code, stdout, stderr) = self
-            .lease
-            .manager
-            .run_oneshot(
-                &self.lease.conn,
-                "rg",
-                &arg_refs,
-                Some(&self.repo_dir),
-                None,
-                60,
-            )
-            .await
-            .map_err(map_api_err)?;
-        if code != 0 && code != 1 {
-            return Err(AppError::other(stderr.trim().to_string()));
-        }
-        let mut matches: Vec<String> = stdout
-            .lines()
-            .map(|line| {
-                line.strip_prefix(&format!("{}/", self.repo_dir))
-                    .unwrap_or(line)
-                    .trim_start_matches("./")
-                    .to_string()
-            })
-            .collect();
-        matches.sort();
-        matches.truncate(max_results);
-        if matches.is_empty() {
-            Ok(format!("No files matched glob: '{pattern}'"))
-        } else {
-            let mut output = matches.join("\n");
-            if matches.len() >= max_results {
-                output.push_str("\n\n[results limited; narrow the pattern or pass a smaller path]");
-            }
-            Ok(output)
-        }
     }
 
     async fn execute_bash(

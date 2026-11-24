@@ -77,7 +77,7 @@ function parseList(raw: string | null): WorkspaceMeta[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return (parsed as Array<Record<string, unknown>>)
-      .filter((w) => !w.isQuickProject && !(typeof w.path === "string" && w.path.includes("quick-projects")))
+      .filter((w) => typeof w.id === "string" && typeof w.path === "string")
       .map((w) => ({
         id: String(w.id),
         name: String(w.name),

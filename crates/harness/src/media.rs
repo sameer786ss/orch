@@ -20,7 +20,6 @@ fn extension_image_media_type(ext: &str) -> Option<ImageMediaType> {
         "webp" => Some(ImageMediaType::WEBP),
         "heic" => Some(ImageMediaType::HEIC),
         "heif" => Some(ImageMediaType::HEIF),
-        "gif" => Some(ImageMediaType::GIF),
         _ => None,
     }
 }

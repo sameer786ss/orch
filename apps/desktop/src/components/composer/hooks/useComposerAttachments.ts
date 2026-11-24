@@ -18,11 +18,10 @@ export function useComposerAttachments({
   const addAttachments = useCallback(
     (paths: string[]) => {
       if (paths.length === 0) return;
-      const rejected = paths
-        .filter((path) => utils.isImagePath(path) && !modelSupportsImages)
-        .map((path) => utils.getBasename(path));
+      const unsupportedFormat = paths.filter((path) => !utils.isSupportedAttachment(path));
+      const unsupportedImage = paths.filter((path) => utils.isImagePath(path) && !modelSupportsImages);
       const accepted = paths.filter(
-        (path) => !(utils.isImagePath(path) && !modelSupportsImages)
+        (path) => utils.isSupportedAttachment(path) && !(utils.isImagePath(path) && !modelSupportsImages)
       );
       setAttachments((previous) => {
         const known = new Set(previous.map((a) => a.path));
@@ -38,11 +37,17 @@ export function useComposerAttachments({
         }
         return next;
       });
-      setNotice(
-        rejected.length > 0
-          ? `${modelName ?? "This model"} cannot read images: ${rejected.join(", ")}`
-          : null
-      );
+      if (unsupportedFormat.length > 0) {
+        setNotice(
+          `Unsupported format: ${unsupportedFormat.map(utils.getBasename).join(", ")}. Supported formats: PNG, JPG, JPEG, WEBP, HEIC, HEIF, and PDF.`
+        );
+      } else if (unsupportedImage.length > 0) {
+        setNotice(
+          `${modelName ?? "This model"} cannot read images: ${unsupportedImage.map(utils.getBasename).join(", ")}`
+        );
+      } else {
+        setNotice(null);
+      }
     },
     [modelSupportsImages, modelName, setNotice]
   );
@@ -74,7 +79,11 @@ export function useComposerAttachments({
         multiple: true,
         filters: imagesOnly
           ? [{ name: "Images", extensions: [...utils.IMAGE_EXTENSIONS] }]
-          : undefined,
+          : [
+              { name: "Documents", extensions: [...utils.DOCUMENT_EXTENSIONS] },
+              { name: "Images", extensions: [...utils.IMAGE_EXTENSIONS] },
+              { name: "All Supported Files", extensions: [...utils.SUPPORTED_ATTACHMENT_EXTENSIONS] },
+            ],
       });
       if (!selected) return;
       addAttachments(Array.isArray(selected) ? selected : [selected]);

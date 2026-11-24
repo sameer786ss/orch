@@ -88,10 +88,21 @@ export function getExt(pathStr: string): string {
   return base.slice(idx + 1).toLowerCase();
 }
 
-export const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp"]);
+export const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "heic", "heif"]);
+export const DOCUMENT_EXTENSIONS = new Set(["pdf"]);
+export const SUPPORTED_ATTACHMENT_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...DOCUMENT_EXTENSIONS]);
+export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 export function isImagePath(pathStr: string): boolean {
   return IMAGE_EXTENSIONS.has(getExt(pathStr));
+}
+
+export function isDocumentPath(pathStr: string): boolean {
+  return DOCUMENT_EXTENSIONS.has(getExt(pathStr));
+}
+
+export function isSupportedAttachment(pathStr: string): boolean {
+  return SUPPORTED_ATTACHMENT_EXTENSIONS.has(getExt(pathStr));
 }
 
 export function looksLikePath(value: string): boolean {

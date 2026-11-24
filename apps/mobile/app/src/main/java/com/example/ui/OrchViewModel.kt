@@ -137,7 +137,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedModelId = MutableStateFlow("")
     val selectedModelId: StateFlow<String> = _selectedModelId.asStateFlow()
 
-    private val _thinkingEffort = MutableStateFlow(ThinkingEffort.Medium)
+    private val _thinkingEffort = MutableStateFlow(ThinkingEffort.High)
     val thinkingEffort: StateFlow<ThinkingEffort> = _thinkingEffort.asStateFlow()
 
     private val _budget = MutableStateFlow<Budget?>(null)
@@ -516,12 +516,12 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
             val described = withContext(Dispatchers.IO) { fresh.map(::describe) }
             val unreadable = described.count { it == null }
             if (unreadable > 0) {
-                notice(if (unreadable == 1) "Couldn't read that file." else "Couldn't read $unreadable files.")
+                notice(if (unreadable == 1) "Unsupported format or unreadable file." else "$unreadable files were unsupported or unreadable.")
             }
             val current = _attachments.value
             val added = described.filterNotNull().filter { item -> current.none { it.uri == item.uri } }
             if (current.sumOf { it.size } + added.sumOf { it.size } > MAX_ATTACHMENT_BYTES) {
-                notice("Attachments cannot exceed 18 MB.")
+                notice("Attachments cannot exceed 20 MB.")
                 return@launch
             }
             _attachments.value = current + added
@@ -544,7 +544,14 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         if (size < 0) size = resolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
-        PendingAttachment(uri, name, size.coerceAtLeast(0), resolver.getType(uri)?.startsWith("image/") == true)
+        val mime = resolver.getType(uri)?.lowercase() ?: ""
+        val ext = name.substringAfterLast('.', "").lowercase()
+        val isImage = mime in SUPPORTED_IMAGE_MIMES || ext in SUPPORTED_IMAGE_EXTS
+        val isPdf = mime == "application/pdf" || ext == "pdf"
+        if (!isImage && !isPdf) {
+            return null
+        }
+        PendingAttachment(uri, name, size.coerceAtLeast(0), isImage)
     }.getOrNull()
 
     fun send(text: String): Boolean {
@@ -923,12 +930,14 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        private val SUPPORTED_IMAGE_MIMES = setOf("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif")
+        private val SUPPORTED_IMAGE_EXTS = setOf("png", "jpg", "jpeg", "webp", "heic", "heif")
         private const val HISTORY_LIMIT = 200
         private const val PUBLISH_INTERVAL_MS = 80L
         private const val MAX_RETRIES = 6
         private const val TITLE_ATTEMPTS = 5
         private const val TITLE_RETRY_MS = 2000L
-        private const val MAX_ATTACHMENT_BYTES = 18L * 1024 * 1024
+        private const val MAX_ATTACHMENT_BYTES = 20L * 1024 * 1024
         private const val FILE_LIST_LIMIT = 500
 
         fun factory(application: Application) = viewModelFactory {

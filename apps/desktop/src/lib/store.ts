@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "./api";
-import { newId } from "./api";
+import { newId, DEFAULT_THINKING_EFFORT } from "./api";
 import { useWorkspaceStore } from "./workspace";
 import { useArtifactsStore } from "./artifacts";
 import { useConnectorsStore } from "./connectors";
@@ -13,57 +13,18 @@ import type {
   ChatStreamEvent,
   ModelDto,
   SessionSummary,
-  ToolDisplayInfo,
+  UserAttachment,
+  MessageItem,
+  ChatMessage,
 } from "./api";
 
-interface MessageAttachment {
-  name: string;
-  isImage: boolean;
-  path?: string;
-  dataUrl?: string;
-}
-
-export interface ReasoningItem {
-  type: "reasoning";
-  id: string;
-  text: string;
-  active: boolean;
-  startTime: number;
-  durationSeconds?: number;
-}
-
-export interface ToolCallItem {
-  type: "toolCall";
-  id: string;
-  name: string;
-  args: string;
-  displayInfo: ToolDisplayInfo;
-  output?: string;
-  status: "running" | "done" | "error";
-}
-
-export interface WorkRunItem {
-  type: "work";
-  id: string;
-  active: boolean;
-  durationSeconds?: number;
-  stopped?: boolean;
-}
-
-export interface TextItem {
-  type: "text";
-  id: string;
-  text: string;
-}
-
-export interface CompactionNoticeItem {
-  type: "compactionNotice";
-  id: string;
-  originalMessageCount: number;
-  ts: number;
-}
-
-export type MessageItem = ReasoningItem | ToolCallItem | WorkRunItem | TextItem | CompactionNoticeItem;
+export type MessageAttachment = UserAttachment;
+export type ReasoningItem = Extract<MessageItem, { type: "reasoning" }>;
+export type ToolCallItem = Extract<MessageItem, { type: "toolCall" }>;
+export type WorkRunItem = Extract<MessageItem, { type: "work" }>;
+export type TextItem = Extract<MessageItem, { type: "text" }>;
+export type CompactionNoticeItem = Extract<MessageItem, { type: "compactionNotice" }>;
+export type { MessageItem, ChatMessage };
 
 interface TokenUsage {
   contextTokens: number;
@@ -71,16 +32,6 @@ interface TokenUsage {
   outputTokens?: number;
   cachedTokens?: number;
   reasoningTokens?: number;
-}
-
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant" | "system";
-  items: MessageItem[];
-  attachments: MessageAttachment[];
-  streaming: boolean;
-  error?: string;
-  notice?: string;
 }
 
 const ZERO_USAGE: TokenUsage = { contextTokens: 0 };
@@ -179,7 +130,7 @@ const INITIAL_STATE: ChatState = {
   sessionTokens: ZERO_USAGE,
   models: [],
   selectedModel: null,
-  thinkingEffort: "high",
+  thinkingEffort: DEFAULT_THINKING_EFFORT,
   budget: null,
   error: null,
   initialized: false,
