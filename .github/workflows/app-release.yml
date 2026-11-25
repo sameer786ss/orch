@@ -71,6 +71,7 @@ jobs:
         run: |
           version="${{ inputs.version }}"
           tag="app-v${version}"
+          gh release delete "$tag" --yes --cleanup-tag || true
           gh release create "$tag" Orch.apk Orch.apk.sha256 app-latest.json \
             --target "$GITHUB_SHA" \
             --latest=false \

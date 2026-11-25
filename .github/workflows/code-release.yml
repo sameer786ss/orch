@@ -29,13 +29,12 @@ jobs:
         run: |
           version="${{ inputs.version }}"
           tag="code-v${version}"
-          if ! gh release view "$tag" > /dev/null 2>&1; then
-            gh release create "$tag" \
-              --target "$GITHUB_SHA" \
-              --latest \
-              --title "Orch Desktop v${version}" \
-              --notes ""
-          fi
+          gh release delete "$tag" --yes --cleanup-tag || true
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --latest \
+            --title "Orch Desktop v${version}" \
+            --notes ""
 
   build-mac:
     name: Build & Publish macOS (${{ matrix.target }})

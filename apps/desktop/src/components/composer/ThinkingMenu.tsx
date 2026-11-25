@@ -8,11 +8,11 @@ import { Slider } from "../ui/Slider";
 const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export function ThinkingMenu() {
-  const efforts = useChatStore((s) => s.selectedModel?.thinkingEfforts ?? []);
+  const efforts = useChatStore((s) => s.selectedModel?.thinkingEfforts);
   const effort = useChatStore((s) => s.thinkingEffort);
   const setEffort = useChatStore((s) => s.setThinkingEffort);
 
-  if (efforts.length === 0) return null;
+  if (!efforts || efforts.length === 0) return null;
 
   const index = Math.max(0, efforts.indexOf(effort));
   const label = titleCase(efforts[index]);
