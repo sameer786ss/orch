@@ -1,10 +1,5 @@
 name: Desktop Build
 
-# Builds apps/desktop from main via workflow_dispatch:
-#   gh workflow run code-release.yml -f version=1.0.6
-# Running on main ensures every release reads and updates main's build cache.
-# The version input (MAJOR.MINOR.PATCH) is stamped into tauri.conf.json, Cargo.toml
-# and package.json, and published under tag code-vX.Y.Z as GitHub's "latest" desktop release.
 on:
   workflow_dispatch:
     inputs:
@@ -30,7 +25,6 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
       - name: Create release
         run: |
           version="${{ inputs.version }}"
