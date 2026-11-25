@@ -1,10 +1,5 @@
 name: Mobile Build
 
-# Builds apps/mobile from main via workflow_dispatch:
-#   gh workflow run app-release.yml -f version=1.0.6
-# Running on main ensures every release reads and updates main's Gradle cache.
-# Publishes Orch.apk on release app-vX.Y.Z and updates app-latest.json on app-latest.
-# Mobile releases are never flagged as GitHub's "latest" (that flag belongs to desktop releases).
 on:
   workflow_dispatch:
     inputs:
@@ -35,7 +30,6 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      # Restores and saves the Gradle user home, dependency and build caches.
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: 9.3.1
@@ -48,8 +42,6 @@ jobs:
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          # MAJOR.MINOR.PATCH -> versionCode MAJOR*1000000 + MINOR*1000 + PATCH.
-          # The app's updater uses the same formula to compare versions.
           version="${{ inputs.version }}"
           tag="app-v${version}"
           IFS=. read -r major minor patch <<< "$version"
@@ -84,14 +76,3 @@ jobs:
             --latest=false \
             --title "Orch Mobile v${version}" \
             --notes ""
-
-          # Atomically update the rolling app-latest pointer for rate-limit-free update checks.
-          if gh release view app-latest > /dev/null 2>&1; then
-            gh release upload app-latest app-latest.json --clobber
-          else
-            gh release create app-latest app-latest.json \
-              --target "$GITHUB_SHA" \
-              --latest=false \
-              --title "Orch Mobile Latest Manifest" \
-              --notes "Rolling updater manifest pointing to the latest mobile release."
-          fi

@@ -50,8 +50,16 @@ class AppUpdater(private val context: Context) {
         get() = PackageInfoCompat.getLongVersionCode(context.packageManager.getPackageInfo(context.packageName, 0))
 
     suspend fun latest(): UpdateInfo? = withContext(Dispatchers.IO) {
+        val feedRequest = Request.Builder()
+            .url("https://github.com/${BuildConfig.ORCH_UPDATE_REPO}/releases.atom")
+            .build()
+        val feed = http.newCall(feedRequest).execute().use { response ->
+            if (response.isSuccessful) response.body?.string() else null
+        } ?: return@withContext null
+        val tag = APP_TAG_REGEX.find(feed)?.groupValues?.getOrNull(1) ?: return@withContext null
+
         val request = Request.Builder()
-            .url("https://github.com/${BuildConfig.ORCH_UPDATE_REPO}/releases/download/$MANIFEST_TAG/$MANIFEST_NAME")
+            .url("https://github.com/${BuildConfig.ORCH_UPDATE_REPO}/releases/download/$tag/$MANIFEST_NAME")
             .header("Accept", "application/json")
             .build()
         val body = http.newCall(request).execute().use { response ->
@@ -188,9 +196,9 @@ class AppUpdater(private val context: Context) {
     }
 
     private companion object {
-        const val MANIFEST_TAG = "app-latest"
         const val MANIFEST_NAME = "app-latest.json"
         const val BUFFER_BYTES = 64 * 1024
+        val APP_TAG_REGEX = Regex("""/releases/tag/(app-v[^"<\s]+)""")
 
         val sharedHttp: OkHttpClient by lazy {
             OkHttpClient.Builder()

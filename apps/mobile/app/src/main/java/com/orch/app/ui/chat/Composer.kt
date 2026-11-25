@@ -6,8 +6,15 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -16,10 +23,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -201,40 +210,56 @@ fun Composer(
                             trackColor = MaterialTheme.colorScheme.outline
                         )
                     }
-                    if (!streaming && canSend && (micActive || !hasContent)) {
-                        MicButton(
-                            transcribe = transcribe,
-                            onBusyChange = { micActive = it },
-                            onText = { text ->
-                                val current = state.text
-                                val separator = if (current.isNotEmpty() && !current.last().isWhitespace()) " " else ""
-                                state.edit { append(separator + text) }
-                            }
-                        )
-                    } else {
-                        OrchCircleIconButton(
-                            onClick = {
-                                if (streaming) {
-                                    onStop()
-                                } else {
-                                    if (onSend(state.text.toString())) state.clearText()
+                    val action = when {
+                        streaming -> ComposerAction.Stop
+                        canSend && (micActive || !hasContent) -> ComposerAction.Mic
+                        else -> ComposerAction.Send
+                    }
+                    AnimatedContent(
+                        targetState = action,
+                        transitionSpec = {
+                            (fadeIn() + scaleIn(initialScale = 0.8f)) togetherWith
+                                (fadeOut() + scaleOut(targetScale = 0.8f))
+                        },
+                        label = "composerAction"
+                    ) { target ->
+                        when (target) {
+                            ComposerAction.Mic -> MicButton(
+                                transcribe = transcribe,
+                                onBusyChange = { micActive = it },
+                                onText = { text ->
+                                    val current = state.text
+                                    val separator = if (current.isNotEmpty() && !current.last().isWhitespace()) " " else ""
+                                    state.edit { append(separator + text) }
                                 }
-                            },
-                            enabled = streaming || sendEnabled,
-                            icon = if (streaming) OrchIcons.Stop else OrchIcons.ArrowUpward,
-                            contentDescription = if (streaming) "Stop" else "Send",
-                            containerColor = if (streaming) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            contentColor = if (streaming) {
-                                MaterialTheme.colorScheme.onError
-                            } else {
-                                MaterialTheme.colorScheme.background
-                            },
-                            modifier = Modifier.testTag("composer_send_button")
-                        )
+                            )
+                            ComposerAction.Stop, ComposerAction.Send -> {
+                                val isStop = target == ComposerAction.Stop
+                                OrchCircleIconButton(
+                                    onClick = {
+                                        if (isStop) {
+                                            onStop()
+                                        } else {
+                                            if (onSend(state.text.toString())) state.clearText()
+                                        }
+                                    },
+                                    enabled = isStop || sendEnabled,
+                                    icon = if (isStop) OrchIcons.Stop else OrchIcons.ArrowUpward,
+                                    contentDescription = if (isStop) "Stop" else "Send",
+                                    containerColor = if (isStop) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                    contentColor = if (isStop) {
+                                        MaterialTheme.colorScheme.onError
+                                    } else {
+                                        MaterialTheme.colorScheme.background
+                                    },
+                                    modifier = Modifier.testTag("composer_send_button")
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -242,58 +267,94 @@ fun Composer(
     }
 }
 
+private enum class ComposerAction {
+    Mic,
+    Send,
+    Stop
+}
+
 @Composable
 private fun AttachmentStrip(attachments: List<PendingAttachment>, onRemove: (Uri) -> Unit) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap),
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
             .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 8.dp)
     ) {
         attachments.forEach { attachment ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .clip(MaterialTheme.shapes.small)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .padding(start = 6.dp, top = 4.dp, bottom = 4.dp, end = 2.dp)
-            ) {
-                if (attachment.isImage) {
+            if (attachment.isImage) {
+                Box(modifier = Modifier.padding(top = 6.dp, end = 6.dp)) {
                     AsyncImage(
                         model = attachment.uri,
                         contentDescription = attachment.name,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(34.dp)
-                            .clip(MaterialTheme.shapes.extraSmall)
+                            .size(56.dp)
+                            .clip(MaterialTheme.shapes.small)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
                     )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 6.dp, y = (-6).dp)
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                            .clickable { onRemove(attachment.uri) }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Remove ${attachment.name}",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
                 }
-                Text(
-                    text = attachment.name,
-                    style = OrchMonoLabel,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier
-                        .padding(horizontal = 4.dp)
-                        .widthIn(max = 160.dp)
-                )
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .size(32.dp)
-                        .clip(MaterialTheme.shapes.extraSmall)
-                        .clickable { onRemove(attachment.uri) }
+                        .heightIn(min = 40.dp)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                        .padding(start = 8.dp, top = 4.dp, bottom = 4.dp, end = 2.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Remove ${attachment.name}",
+                        imageVector = OrchIcons.AttachFile,
+                        contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp)
                     )
+                    Text(
+                        text = attachment.name,
+                        style = OrchMonoLabel,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 160.dp)
+                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(32.dp)
+                            .clip(MaterialTheme.shapes.extraSmall)
+                            .clickable { onRemove(attachment.uri) }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Remove ${attachment.name}",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
         }

@@ -1,5 +1,6 @@
 package com.orch.app.ui.sheets
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,7 +10,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -17,6 +20,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -25,7 +29,6 @@ import com.orch.app.ui.icons.OrchIcons
 import com.orch.app.ui.components.OrchBottomSheet
 import com.orch.app.ui.components.OrchCard
 import com.orch.app.ui.components.OrchIconBadge
-import com.orch.app.ui.components.OrchSecondaryButton
 import com.orch.app.ui.components.OrchSheetHeader
 import com.orch.app.ui.theme.OrchDimens
 import com.orch.app.ui.theme.OrchSuccess
@@ -56,16 +59,18 @@ fun AttachmentSheet(
                 horizontalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                OrchSecondaryButton(
-                    text = "Photos",
-                    onClick = onPickImages,
+                AttachmentSourceTile(
+                    title = "Photos",
+                    subtitle = "Images & screenshots",
                     icon = OrchIcons.Image,
+                    onClick = onPickImages,
                     modifier = Modifier.weight(1f)
                 )
-                OrchSecondaryButton(
-                    text = "Files",
-                    onClick = onPickFiles,
+                AttachmentSourceTile(
+                    title = "Files",
+                    subtitle = "Docs & code",
                     icon = OrchIcons.AttachFile,
+                    onClick = onPickFiles,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -144,6 +149,52 @@ fun AttachmentSheet(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentSourceTile(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = modifier
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(14.dp)
+        ) {
+            OrchIconBadge(
+                size = 36.dp,
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

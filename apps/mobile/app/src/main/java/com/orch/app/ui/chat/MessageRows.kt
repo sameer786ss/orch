@@ -194,45 +194,55 @@ private fun AttachmentChip(attachment: UserAttachment, onOpenFile: (String) -> U
         }
     }
     val path = attachment.path
-    val previewModifier = Modifier
-        .size(36.dp)
-        .clip(MaterialTheme.shapes.extraSmall)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap),
-        modifier = Modifier
-            .heightIn(min = 44.dp)
-            .clip(MaterialTheme.shapes.small)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .then(if (path != null) Modifier.clickable { onOpenFile(path) } else Modifier)
-            .padding(horizontal = 8.dp, vertical = 6.dp)
-    ) {
-        val previewUri = attachment.previewUri
-        val bitmap = thumbnail
-        when {
-            previewUri != null -> AsyncImage(
-                model = previewUri,
-                contentDescription = attachment.name,
-                contentScale = ContentScale.Crop,
-                modifier = previewModifier
+    val previewUri = attachment.previewUri
+    val bitmap = thumbnail
+    val openModifier = if (path != null) Modifier.clickable { onOpenFile(path) } else Modifier
+    val imageTileModifier = Modifier
+        .size(72.dp)
+        .clip(MaterialTheme.shapes.medium)
+        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+        .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium)
+        .then(openModifier)
+
+    when {
+        previewUri != null -> AsyncImage(
+            model = previewUri,
+            contentDescription = attachment.name,
+            contentScale = ContentScale.Crop,
+            modifier = imageTileModifier
+        )
+        bitmap != null -> Image(
+            bitmap = bitmap,
+            contentDescription = attachment.name,
+            contentScale = ContentScale.Crop,
+            modifier = imageTileModifier
+        )
+        else -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .heightIn(min = 40.dp)
+                .clip(MaterialTheme.shapes.small)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                .then(openModifier)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
+            Icon(
+                imageVector = OrchIcons.AttachFile,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp)
             )
-            bitmap != null -> Image(
-                bitmap = bitmap,
-                contentDescription = attachment.name,
-                contentScale = ContentScale.Crop,
-                modifier = previewModifier
+            Text(
+                text = attachment.name,
+                style = OrchMonoLabel,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 200.dp)
             )
         }
-        Text(
-            text = attachment.name,
-            style = OrchMonoLabel,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .widthIn(max = 200.dp)
-                .padding(horizontal = 4.dp)
-        )
     }
 }
 

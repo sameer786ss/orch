@@ -44,8 +44,7 @@ fun ChatMarkdown(
     compact: Boolean = false,
     streaming: Boolean = false
 ) {
-    val immediate = !streaming
-    val state = rememberMarkdownState(text, retainState = true, immediate = immediate)
+    val state = rememberMarkdownState(text, retainState = true, immediate = true)
     val baseBodyLarge = MaterialTheme.typography.bodyLarge
     val baseBodyMedium = MaterialTheme.typography.bodyMedium
     val primaryColor = MaterialTheme.colorScheme.primary
