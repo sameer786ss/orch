@@ -1,37 +1,35 @@
+import { BsGithub } from "react-icons/bs";
 import { LuChevronDown, LuFolder, LuFolderOpen } from "react-icons/lu";
-import { GITHUB_ID } from "../../lib/connectors";
 import { useChatStore } from "../../lib/store";
 import { useWorkspaceStore, workspaceMode, type WorkspaceMeta } from "../../lib/workspace";
-import { ConnectorIcon } from "../common/ConnectorIcon";
 import { Button } from "../ui/Button";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../ui/Menu";
-import { useRepoDialog } from "./RepoDialog";
+import { useNewProjectDialog } from "./NewProjectDialog";
 
 export function ProjectIcon({ project, open }: { project: WorkspaceMeta; open?: boolean }) {
-  if (workspaceMode(project) === "cloud") return <ConnectorIcon id={GITHUB_ID} />;
+  if (workspaceMode(project) === "cloud") return <BsGithub />;
   return open ? <LuFolderOpen /> : <LuFolder />;
 }
 
 export function OpenProjectItems() {
-  const pickAndOpen = useWorkspaceStore((s) => s.pickAndOpen);
   const busy = useWorkspaceStore((s) => s.busy);
   const streaming = useChatStore((s) => s.streaming);
   const locked = busy || streaming;
-  const openRepoDialog = useRepoDialog((s) => s.setOpen);
+  const openProjectDialog = useNewProjectDialog((s) => s.setOpen);
   return (
     <>
-      <MenuItem disabled={locked} onSelect={() => void pickAndOpen()}>
+      <MenuItem disabled={locked} onSelect={() => openProjectDialog(true, "local")}>
         <LuFolderOpen />
         <span className="row-label">
-          Open local folder
-          <span className="menu-hint">Work on files on this computer</span>
+          Local folder
+          <span className="menu-hint">Open or create a folder on this computer</span>
         </span>
       </MenuItem>
-      <MenuItem disabled={locked} onSelect={() => openRepoDialog(true)}>
-        <ConnectorIcon id={GITHUB_ID} />
+      <MenuItem disabled={locked} onSelect={() => openProjectDialog(true, "cloud")}>
+        <BsGithub />
         <span className="row-label">
-          Open GitHub repository
-          <span className="menu-hint">Work in a cloud workspace</span>
+          GitHub repository
+          <span className="menu-hint">Open or create a cloud workspace</span>
         </span>
       </MenuItem>
     </>

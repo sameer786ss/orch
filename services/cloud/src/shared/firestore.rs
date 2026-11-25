@@ -213,6 +213,16 @@ impl FirestoreClient {
         reply.into_result(&format!("get {path}")).map(Some)
     }
 
+    pub async fn delete_document(&self, path: &str) -> Result<(), String> {
+        let reply = self
+            .send(Method::DELETE, &self.document_url(path), &[], None)
+            .await?;
+        if reply.status == StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        reply.into_result(&format!("delete {path}")).map(|_| ())
+    }
+
     pub async fn write_document(
         &self,
         path: &str,

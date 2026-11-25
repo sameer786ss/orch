@@ -6,7 +6,8 @@ import { toRelativeWorkspacePath, getExt } from "./utils";
 
 function normalizeWorkspacePath(path: string): string {
   const current = useWorkspaceStore.getState().current;
-  return toRelativeWorkspacePath(path, current?.path, current?.repoDir);
+  const cloudRepoDir = current?.kind === "cloud" ? current.project.repoDir : undefined;
+  return toRelativeWorkspacePath(path, current?.path, cloudRepoDir);
 }
 
 export type ArtifactKind = "file" | "browser" | "terminal" | DocumentArtifactKind;

@@ -7,54 +7,42 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import com.orch.app.R
-import com.orch.app.ui.ChatUi
+import coil.compose.AsyncImage
+import com.orch.app.ui.ConnectorsUi
 import com.orch.app.ui.components.OrchBottomSheet
 import com.orch.app.ui.components.OrchCard
 import com.orch.app.ui.components.OrchIconBadge
-import com.orch.app.ui.components.OrchPrimaryButton
 import com.orch.app.ui.components.OrchSecondaryButton
 import com.orch.app.ui.components.OrchSheetHeader
-import com.orch.app.ui.components.OrchTextField
 import com.orch.app.ui.theme.OrchDimens
-import com.orch.app.ui.theme.OrchMonoBody
 import com.orch.app.ui.theme.OrchSuccess
 
 @Composable
 fun AttachmentSheet(
-    chat: ChatUi,
+    connectors: ConnectorsUi,
     onPickImages: () -> Unit,
     onPickFiles: () -> Unit,
-    onConnectRepo: (String) -> Unit,
-    onEditRepo: () -> Unit,
-    onDisconnectRepo: () -> Unit,
+    onToggleConnector: (String) -> Unit,
+    onManageConnectors: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val connectedApps = connectors.items.filter { it.connected }
+
     OrchBottomSheet(onDismiss = onDismiss) {
         OrchSheetHeader(
             title = "Add to chat",
@@ -86,126 +74,79 @@ fun AttachmentSheet(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 
-            GitHubSection(chat, onConnectRepo, onEditRepo, onDisconnectRepo)
-        }
-    }
-}
-
-@Composable
-private fun GitHubSection(
-    chat: ChatUi,
-    onConnect: (String) -> Unit,
-    onEdit: () -> Unit,
-    onDisconnect: () -> Unit
-) {
-    val repo = chat.repo
-    var editing by rememberSaveable { mutableStateOf(false) }
-    var input by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(repo) { if (repo != null) editing = false }
-    val locked = chat.repoLocked
-    val showForm = !locked && (repo == null || editing)
-
-    Column(verticalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            OrchIconBadge {
-                Icon(
-                    painter = painterResource(R.drawable.ic_github_logo),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "GitHub repository",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = when {
-                        repo != null && !editing -> "Repository connected"
-                        locked -> "This chat has no repository"
-                        else -> "Connect a public repository"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (repo != null && !editing && !chat.repoLocked) {
-                TextButton(onClick = { editing = true }) {
-                    Text("Change", color = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
-
-        if (!showForm && repo != null) {
-            OrchCard {
+            Column(verticalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Check,
-                        contentDescription = null,
-                        tint = OrchSuccess,
-                        modifier = Modifier.size(18.dp)
-                    )
                     Text(
-                        text = repo.name,
-                        style = OrchMonoBody,
+                        text = "Connectors",
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    if (!chat.repoLocked) {
-                        TextButton(onClick = onDisconnect) {
-                            Text("Remove", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = onManageConnectors) {
+                        Text("Manage", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                if (connectedApps.isEmpty()) {
+                    Text(
+                        text = "No connected apps yet. Link Drive, Gmail, Jira, or Slack in Connectors.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    connectedApps.forEach { item ->
+                        OrchCard {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OrchIconBadge(
+                                    size = 34.dp,
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                                ) {
+                                    item.definition.iconUrl?.trim()?.takeIf { it.isNotEmpty() }?.let { url ->
+                                        AsyncImage(
+                                            model = url,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Fit,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.definition.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (item.definition.category.isNotBlank()) {
+                                        Text(
+                                            text = item.definition.category,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = item.active,
+                                    onCheckedChange = { onToggleConnector(item.definition.id) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = MaterialTheme.colorScheme.background,
+                                        checkedTrackColor = OrchSuccess,
+                                        uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        uncheckedBorderColor = MaterialTheme.colorScheme.outline
+                                    )
+                                )
+                            }
                         }
                     }
                 }
             }
         }
-
-        if (showForm) {
-            val connect = { if (input.isNotBlank()) onConnect(input) }
-            OrchTextField(
-                value = input,
-                onValueChange = {
-                    input = it
-                    onEdit()
-                },
-                placeholder = "owner/repo",
-                isError = chat.repoError != null,
-                supportingText = chat.repoError,
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.None,
-                    imeAction = ImeAction.Go
-                ),
-                keyboardActions = KeyboardActions(onGo = { connect() })
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (repo != null) {
-                    TextButton(onClick = { editing = false }) {
-                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                OrchPrimaryButton(
-                    text = "Connect",
-                    onClick = connect,
-                    enabled = input.isNotBlank(),
-                    loading = chat.connecting
-                )
-            }
-        }
     }
 }
-

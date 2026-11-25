@@ -16,7 +16,7 @@ use moka::future::Cache;
 use moka::Expiry;
 use orchharness::backend::SummarizerBackend;
 use orchharness::error::{AppError, AppResult};
-use orchharness::models::{resolve_static_model, vertex_models_dto, ModelInfo, StaticModelInfo};
+use orchharness::models::{resolve_static_model, vertex_models_dto, ModelInfo, ModelRates, StaticModelInfo};
 use reqwest::{header, StatusCode};
 use rig_http::http_client::{
     BoxedStream, Error as RigHttpError, HttpClientExt, LazyBody, MultipartForm,
@@ -39,39 +39,6 @@ const TOKEN_REFRESH_TIMEOUT_SECS: u64 = 15;
 const TOKEN_EXPIRY_MARGIN_SECS: u64 = 300;
 const TOKEN_MIN_TTL_SECS: u64 = 60;
 const STREAM_CHANNEL_CAPACITY: usize = 128;
-
-#[derive(Debug, Clone, Copy)]
-struct ModelRates {
-    input_per_mtok: f64,
-    cached_input_per_mtok: f64,
-    output_per_mtok: f64,
-}
-
-impl ModelRates {
-    fn cost_usd(self, input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> f64 {
-        let cached = cached_input_tokens.min(input_tokens);
-        let uncached = input_tokens.saturating_sub(cached);
-        (uncached as f64 * self.input_per_mtok
-            + cached as f64 * self.cached_input_per_mtok
-            + output_tokens as f64 * self.output_per_mtok)
-            / 1_000_000.0
-    }
-}
-
-fn model_rates(model_id: &str) -> ModelRates {
-    match model_id {
-        "gemini-3.5-flash-lite" => ModelRates {
-            input_per_mtok: 0.1,
-            cached_input_per_mtok: 0.025,
-            output_per_mtok: 0.4,
-        },
-        _ => ModelRates {
-            input_per_mtok: 5.0,
-            cached_input_per_mtok: 0.5,
-            output_per_mtok: 15.0,
-        },
-    }
-}
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -385,7 +352,7 @@ async fn relay_stream(
     }
     if let Some(usage) = usage {
         state
-            .record_cost(&user_id, usage.cost_usd(model_rates(&model.id)))
+            .record_cost(&user_id, usage.cost_usd(model.rates))
             .await;
     }
 }
@@ -441,7 +408,7 @@ pub async fn dispatch_chat(
         read_usage(&reply, &mut usage).map_err(ApiError::bad_gateway)?;
         if let Some(usage) = usage {
             state
-                .record_cost(user_id, usage.cost_usd(model_rates(&model.id)))
+                .record_cost(user_id, usage.cost_usd(model.rates))
                 .await;
         }
         return Ok(VertexOutput::Json(reply));
@@ -483,26 +450,40 @@ fn non_success_rig_error(err: ApiError) -> RigHttpError {
 }
 
 fn percent_decode(s: &str) -> String {
-    let s = s.replace('+', " ");
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let h1 = chars.next().unwrap_or('\0');
-            let h2 = chars.next().unwrap_or('\0');
-            let hex = format!("{h1}{h2}");
-            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                out.push(byte as char);
-            } else {
-                out.push('%');
-                out.push(h1);
-                out.push(h2);
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
             }
-        } else {
-            out.push(c);
+            b'%' if i + 2 < bytes.len() => {
+                if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                    out.push((hi << 4) | lo);
+                    i += 3;
+                } else {
+                    out.push(b'%');
+                    i += 1;
+                }
+            }
+            byte => {
+                out.push(byte);
+                i += 1;
+            }
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_val(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn parse_query_pairs(uri: &http::Uri) -> HashMap<String, String> {

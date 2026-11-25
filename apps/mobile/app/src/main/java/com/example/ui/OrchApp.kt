@@ -1,7 +1,6 @@
 package com.orch.app.ui
 
 import android.app.Application
-import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,20 +32,29 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.orch.app.ui.auth.signOutUser
 import com.orch.app.ui.chat.ChatScreen
 import com.orch.app.ui.components.ArtifactModalBottomSheet
+import com.orch.app.ui.components.openOAuthBrowser
 import com.orch.app.ui.connectors.ConnectorsScreen
 import com.orch.app.ui.sheets.AccountSheet
 import com.orch.app.ui.sheets.AttachmentSheet
 import com.orch.app.ui.sheets.FilesSheet
 import com.orch.app.ui.sheets.ModelSheet
+import com.orch.app.ui.sheets.NewProjectSheet
 import com.orch.app.ui.sheets.TerminalSheet
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-private enum class Sheet { None, Attach, Files, Terminal, Models, Account }
+private enum class Sheet { None, Attach, NewProject, Files, Terminal, Models, Account }
 private enum class AppScreen { Chat, Connectors }
 
 @Composable
-fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: String?) {
+fun OrchApp(
+    userScope: UserScope,
+    userId: String,
+    userName: String?,
+    userEmail: String?,
+    deepLinks: Flow<Uri>
+) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
     val vm: OrchViewModel = viewModel(
@@ -60,6 +68,20 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
     var sheet by rememberSaveable { mutableStateOf(Sheet.None) }
     var screen by rememberSaveable { mutableStateOf(AppScreen.Chat) }
 
+    val projects by vm.projects.collectAsStateWithLifecycle()
+    val projectsFailed by vm.projectsFailed.collectAsStateWithLifecycle()
+    val activeProjectId by vm.activeProjectId.collectAsStateWithLifecycle()
+    val deletingProjectId by vm.deletingProjectId.collectAsStateWithLifecycle()
+    val projectBusy by vm.projectBusy.collectAsStateWithLifecycle()
+    val projectError by vm.projectError.collectAsStateWithLifecycle()
+    val githubAccounts by vm.githubAccounts.collectAsStateWithLifecycle()
+    val githubAccountsLoading by vm.githubAccountsLoading.collectAsStateWithLifecycle()
+    val githubConnecting by vm.githubConnecting.collectAsStateWithLifecycle()
+    val githubDisconnectingId by vm.githubDisconnectingId.collectAsStateWithLifecycle()
+    val githubError by vm.githubError.collectAsStateWithLifecycle()
+    val githubRepos by vm.githubRepos.collectAsStateWithLifecycle()
+    val githubReposLoading by vm.githubReposLoading.collectAsStateWithLifecycle()
+    val githubReposError by vm.githubReposError.collectAsStateWithLifecycle()
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val sessionsFailed by vm.sessionsFailed.collectAsStateWithLifecycle()
     val chat by vm.chat.collectAsStateWithLifecycle()
@@ -74,10 +96,21 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
     val artifact by vm.artifact.collectAsStateWithLifecycle()
     val saving by vm.saving.collectAsStateWithLifecycle()
 
+    val launchOAuth: (String) -> Unit = { url ->
+        runCatching {
+            openOAuthBrowser(context, url)
+        }.onFailure {
+            Toast.makeText(context, "Unable to open browser.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onForeground() }
     LaunchedEffect(vm) { vm.notices.collectLatest { snackbar.showSnackbar(it) } }
     LaunchedEffect(vm) {
         vm.saveResults.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+    }
+    LaunchedEffect(deepLinks, vm) {
+        deepLinks.collect { uri -> vm.onOAuthRedirect(uri) }
     }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) {
@@ -98,18 +131,37 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
                 modifier = Modifier.width(320.dp)
             ) {
                 SessionsDrawer(
+                    projects = projects,
+                    projectsFailed = projectsFailed,
+                    activeProjectId = activeProjectId,
+                    deletingProjectId = deletingProjectId,
                     sessions = sessions,
                     loadFailed = sessionsFailed,
-                    onRetry = vm::refreshSessions,
+                    onRetry = {
+                        vm.refreshProjects()
+                        vm.refreshSessions()
+                    },
                     activeId = chat.sessionId,
                     userName = userName,
                     onConnectorsScreen = screen == AppScreen.Connectors,
                     activeConnectorCount = connectors.activeIds.size,
-                    onNewChat = {
-                        vm.newChat()
+                    onNewProject = {
+                        screen = AppScreen.Chat
+                        vm.clearProjectError()
+                        scope.launch { drawerState.close() }
+                        sheet = Sheet.NewProject
+                    },
+                    onSelectProject = { projectId ->
+                        vm.selectProject(projectId)
                         screen = AppScreen.Chat
                         scope.launch { drawerState.close() }
                     },
+                    onNewChatInProject = { projectId ->
+                        vm.newChat(projectId = projectId)
+                        screen = AppScreen.Chat
+                        scope.launch { drawerState.close() }
+                    },
+                    onDeleteProject = vm::deleteProject,
                     onConnectors = {
                         screen = AppScreen.Connectors
                         scope.launch { drawerState.close() }
@@ -129,41 +181,48 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
         }
     ) {
         when (screen) {
-            AppScreen.Chat -> ChatScreen(
-                title = title,
-                chat = chat,
-                attachments = attachments,
-                models = models,
-                selectedModelId = selectedModelId,
-                thinkingEffort = thinkingEffort,
-                snackbar = snackbar,
-                onMenu = { scope.launch { drawerState.open() } },
-                onOpenExplorer = { sheet = Sheet.Files },
-                onOpenTerminal = { sheet = Sheet.Terminal },
-                onSend = vm::send,
-                onStop = vm::stop,
-                onAttach = { sheet = Sheet.Attach },
-                onPickModel = { sheet = Sheet.Models },
-                onRemoveAttachment = vm::removeAttachment,
-                onOpenFile = vm::openFile,
-                onLoadEarlier = vm::loadEarlier,
-                onRetryLoad = { vm.openSession(chat.sessionId, force = true) },
-                transcribe = vm::transcribe
-            )
+            AppScreen.Chat -> {
+                val connectorIcons = remember(connectors.items) {
+                    connectors.items.mapNotNull { item ->
+                        item.definition.iconUrl?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                            item.definition.id.lowercase() to it
+                        }
+                    }.toMap()
+                }
+                ChatScreen(
+                    title = title,
+                    chat = chat,
+                    attachments = attachments,
+                    models = models,
+                    selectedModelId = selectedModelId,
+                    thinkingEffort = thinkingEffort,
+                    connectorIcons = connectorIcons,
+                    snackbar = snackbar,
+                    onMenu = { scope.launch { drawerState.open() } },
+                    onPickProject = {
+                        vm.clearProjectError()
+                        sheet = Sheet.NewProject
+                    },
+                    onReconnectGithub = { vm.connectGithub(launchOAuth) },
+                    onOpenExplorer = { sheet = Sheet.Files },
+                    onOpenTerminal = { sheet = Sheet.Terminal },
+                    onSend = vm::send,
+                    onStop = vm::stop,
+                    onAttach = { sheet = Sheet.Attach },
+                    onPickModel = { sheet = Sheet.Models },
+                    onRemoveAttachment = vm::removeAttachment,
+                    onOpenFile = vm::openFile,
+                    onLoadEarlier = vm::loadEarlier,
+                    onRetryLoad = { vm.openSession(chat.sessionId, force = true) },
+                    transcribe = vm::transcribe
+                )
+            }
             AppScreen.Connectors -> ConnectorsScreen(
                 connectors = connectors,
                 onBack = { screen = AppScreen.Chat },
                 onRefresh = vm::loadConnectors,
                 onToggle = vm::toggleConnector,
-                onConnect = { id ->
-                    vm.connectConnector(id) { url ->
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        }.onFailure {
-                            Toast.makeText(context, "Unable to open browser.", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
+                onConnect = { id -> vm.connectConnector(id, launchOAuth) },
                 onDisconnect = vm::disconnectConnector
             )
         }
@@ -171,8 +230,28 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
 
     when (sheet) {
         Sheet.None -> Unit
+        Sheet.NewProject -> NewProjectSheet(
+            accounts = githubAccounts,
+            accountsLoading = githubAccountsLoading,
+            connectingGithub = githubConnecting,
+            repos = githubRepos,
+            reposLoading = githubReposLoading,
+            reposError = githubReposError,
+            projectBusy = projectBusy,
+            projectError = projectError,
+            onConnectGithub = { vm.connectGithub(launchOAuth) },
+            onLoadRepos = vm::loadGithubRepos,
+            onOpenRepo = { repoUrl, accountId ->
+                vm.openGithubProject(repoUrl, accountId) { sheet = Sheet.None }
+            },
+            onCreateRepo = { accountId, name, description, private ->
+                vm.createGithubProject(accountId, name, description, private) { sheet = Sheet.None }
+            },
+            onClearError = vm::clearProjectError,
+            onDismiss = { sheet = Sheet.None }
+        )
         Sheet.Attach -> AttachmentSheet(
-            chat = chat,
+            connectors = connectors,
             onPickImages = {
                 sheet = Sheet.None
                 imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -181,25 +260,34 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
                 sheet = Sheet.None
                 filePicker.launch(arrayOf("application/pdf"))
             },
-            onConnectRepo = vm::connectRepo,
-            onEditRepo = vm::clearRepoError,
-            onDisconnectRepo = vm::disconnectRepo,
+            onToggleConnector = vm::toggleConnector,
+            onManageConnectors = {
+                sheet = Sheet.None
+                screen = AppScreen.Connectors
+            },
             onDismiss = { sheet = Sheet.None }
         )
-        Sheet.Files -> FilesSheet(
-            repoName = chat.repo?.name ?: "Workspace",
-            files = files,
-            onBrowse = vm::browseFiles,
-            onNavigateUp = vm::browseUp,
-            onOpen = vm::openFile,
-            onDismiss = { sheet = Sheet.None }
-        )
+        Sheet.Files -> {
+            val project = chat.project
+            if (project != null) {
+                FilesSheet(
+                    repoName = project.name,
+                    files = files,
+                    onBrowse = vm::browseFiles,
+                    onNavigateUp = vm::browseUp,
+                    onOpen = vm::openFile,
+                    onDismiss = { sheet = Sheet.None }
+                )
+            } else {
+                sheet = Sheet.None
+            }
+        }
         Sheet.Terminal -> {
-            val repo = chat.repo
-            if (repo != null) {
+            val project = chat.project
+            if (project != null) {
                 TerminalSheet(
-                    repoName = repo.name,
-                    workspace = repo.workspace,
+                    repoName = project.name,
+                    workspace = project.workspace,
                     terminal = terminal,
                     onConnect = vm::connectTerminal,
                     onInput = vm::sendTerminalInput,
@@ -224,6 +312,12 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
             name = userName,
             email = userEmail,
             budget = budget,
+            githubAccounts = githubAccounts,
+            githubConnecting = githubConnecting,
+            githubDisconnectingId = githubDisconnectingId,
+            githubError = githubError,
+            onConnectGithub = { vm.connectGithub(launchOAuth) },
+            onDisconnectGithub = vm::disconnectGithub,
             onSignOut = {
                 sheet = Sheet.None
                 userScope.autoSignIn = false
@@ -240,4 +334,3 @@ fun OrchApp(userScope: UserScope, userId: String, userName: String?, userEmail: 
         onDismiss = vm::closeArtifact
     )
 }
-

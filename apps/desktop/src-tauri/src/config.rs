@@ -1,11 +1,11 @@
 use std::sync::OnceLock;
 
 pub use orchharness::config::{
-    compaction_trigger_tokens, MAX_DIR_ENTRIES, MAX_INDEXED_FILES, SUMMARY_REQUEST_TIMEOUT_SECS,
+    compaction_trigger_tokens, is_cloud_workspace, CLOUD_MAX_ATTACHMENT_TOTAL_BYTES,
+    CLOUD_WORKSPACE_PREFIX, MAX_DIR_ENTRIES, MAX_INDEXED_FILES, SUMMARY_REQUEST_TIMEOUT_SECS,
+    SUPPORTED_CLOUD_GIT_HOSTS,
 };
-
 pub const CLOUD_FILE_LIST_LIMIT: usize = 2_000;
-pub const CLOUD_MAX_ATTACHMENT_TOTAL_BYTES: usize = 18 * 1024 * 1024;
 pub const CLOUD_STREAM_IDLE_TIMEOUT_SECS: u64 = 60;
 
 pub fn gcp_functions_url() -> &'static str {
@@ -106,6 +106,10 @@ pub fn tavily_url() -> &'static str {
 
 pub fn composio_url(path: &str) -> String {
     format!("{}/composio{}", gcp_functions_url(), path)
+}
+
+pub fn github_url(path: &str) -> String {
+    format!("{}/github{}", gcp_functions_url(), path)
 }
 
 pub fn cloud_url(path: &str) -> String {

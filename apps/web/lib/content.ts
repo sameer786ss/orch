@@ -8,13 +8,6 @@ export const DOWNLOAD_LINKS = {
 
 export const CONNECTORS = [
   {
-    id: 'github',
-    name: 'GitHub',
-    icon: '/connectors/github.svg',
-    scope: 'Repos, PRs, Actions & Checks',
-    summary: 'Inspect pull requests, checkout branches, read CI failure logs, and open verified diffs directly from the Orch harness.',
-  },
-  {
     id: 'drive',
     name: 'Google Drive',
     icon: '/connectors/drive.svg',

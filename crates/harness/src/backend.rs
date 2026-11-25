@@ -9,7 +9,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
-use crate::persistence::{HistoryRecord, SessionRecordPage, SessionSnapshot, TurnUsage};
+use crate::persistence::{ChatEvent, SessionRecordPage, SessionSnapshot, TurnUsage};
 
 pub const OUTPUT_RING_BYTES: usize = 100 * 1024;
 const TASK_MAX_AGE: Duration = Duration::from_secs(3600);
@@ -375,7 +375,7 @@ pub trait SessionStore: Send + Sync {
     async fn append_history(
         &self,
         session_id: &str,
-        records: &[HistoryRecord],
+        records: &[ChatEvent],
     ) -> AppResult<()>;
     async fn get_history(
         &self,
@@ -1000,10 +1000,7 @@ pub mod local_fs {
         }
 
         async fn read_skill(&self, name: &str) -> AppResult<Option<String>> {
-            match crate::skills::read_skill_from_dir(self.data_dir.clone(), name).await {
-                Ok(content) => Ok(Some(content)),
-                Err(_) => Ok(None),
-            }
+            Ok(crate::skills::read_skill_from_dir(self.data_dir.clone(), name).await)
         }
     }
 

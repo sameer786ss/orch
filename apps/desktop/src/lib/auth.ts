@@ -7,6 +7,7 @@ import type { UserDisplay } from "./api";
 import { useArtifactsStore } from "./artifacts";
 import { useChatStore } from "./store";
 import { useConnectorsStore } from "./connectors";
+import { useGithubStore } from "./github";
 import { useWorkspaceStore } from "./workspace";
 
 export type AuthStatus = "loading" | "signedOut" | "signedIn";
@@ -38,6 +39,7 @@ interface AuthChangedPayload {
 function clearWorkspaceState() {
   useChatStore.getState().reset();
   useConnectorsStore.getState().reset();
+  useGithubStore.getState().reset();
   useArtifactsStore.getState().reset();
   useWorkspaceStore.getState().reset();
 }

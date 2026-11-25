@@ -16,9 +16,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,7 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.orch.app.chat.Repo
+import com.orch.app.data.CloudProject
 import com.orch.app.data.SessionSummary
 import com.orch.app.ui.components.OrchAlertDialog
 import com.orch.app.ui.components.OrchBanner
@@ -48,33 +52,12 @@ import com.orch.app.ui.components.OrchSecondaryButton
 import com.orch.app.ui.theme.OrchDimens
 import com.orch.app.ui.theme.OrchSuccess
 
-private const val NO_REPOSITORY = "No repository"
-
-private sealed interface DrawerRow {
-    val key: String
-
-    data class Header(val title: String) : DrawerRow {
-        override val key: String = "header:$title"
-    }
-
-    data class Chat(val session: SessionSummary) : DrawerRow {
-        override val key: String = session.id
-    }
-}
-
-private fun groupByRepo(sessions: List<SessionSummary>): List<DrawerRow> {
-    val groups = LinkedHashMap<String, MutableList<SessionSummary>>()
-    for (session in sessions) {
-        val label = Repo.fromWorkspacePath(session.workspacePath)?.name ?: NO_REPOSITORY
-        groups.getOrPut(label) { mutableListOf() }.add(session)
-    }
-    return groups.flatMap { (label, chats) ->
-        listOf<DrawerRow>(DrawerRow.Header(label)) + chats.map { DrawerRow.Chat(it) }
-    }
-}
-
 @Composable
 fun SessionsDrawer(
+    projects: List<CloudProject>,
+    projectsFailed: Boolean,
+    activeProjectId: String?,
+    deletingProjectId: String?,
     sessions: List<SessionSummary>,
     loadFailed: Boolean,
     onRetry: () -> Unit,
@@ -82,14 +65,18 @@ fun SessionsDrawer(
     userName: String?,
     onConnectorsScreen: Boolean,
     activeConnectorCount: Int,
-    onNewChat: () -> Unit,
+    onNewProject: () -> Unit,
+    onSelectProject: (String) -> Unit,
+    onNewChatInProject: (String) -> Unit,
+    onDeleteProject: (String) -> Unit,
     onConnectors: () -> Unit,
     onOpen: (String) -> Unit,
     onDelete: (String) -> Unit,
     onAccount: () -> Unit
 ) {
-    var pendingDelete by remember { mutableStateOf<SessionSummary?>(null) }
-    val rows = remember(sessions) { groupByRepo(sessions) }
+    var pendingDeleteSession by remember { mutableStateOf<SessionSummary?>(null) }
+    var pendingDeleteProject by remember { mutableStateOf<CloudProject?>(null) }
+    val sessionsByWorkspace = remember(sessions) { sessions.groupBy { it.workspacePath } }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -99,17 +86,17 @@ fun SessionsDrawer(
                 .padding(horizontal = OrchDimens.ScreenPadding, vertical = OrchDimens.CardPaddingV)
         ) {
             Text(
-                text = "Chats",
+                text = "Projects",
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface
             )
             OrchSecondaryButton(
-                text = "New chat",
-                onClick = onNewChat,
-                icon = Icons.Outlined.EditNote,
+                text = "New project",
+                onClick = onNewProject,
+                icon = Icons.Outlined.CreateNewFolder,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("drawer_new_chat_button")
+                    .testTag("drawer_new_project_button")
             )
             Surface(
                 onClick = onConnectors,
@@ -156,15 +143,17 @@ fun SessionsDrawer(
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         when {
-            sessions.isEmpty() && loadFailed -> OrchEmptyMessage(
-                text = "Couldn't load chats",
+            projects.isEmpty() && projectsFailed -> OrchEmptyMessage(
+                text = "Couldn't load projects",
                 isError = true,
                 actionLabel = "Retry",
                 onAction = onRetry,
                 modifier = Modifier.weight(1f)
             )
-            sessions.isEmpty() -> OrchEmptyMessage(
-                text = "No chats yet",
+            projects.isEmpty() -> OrchEmptyMessage(
+                text = "No projects yet",
+                actionLabel = "New project",
+                onAction = onNewProject,
                 modifier = Modifier.weight(1f)
             )
             else -> LazyColumn(
@@ -172,24 +161,51 @@ fun SessionsDrawer(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                if (loadFailed) {
+                if (projectsFailed || loadFailed) {
                     item(key = "load-failed") {
                         OrchBanner(
-                            text = "Couldn't refresh chats",
+                            text = "Couldn't refresh everything",
                             isError = true,
+                            actionLabel = "Retry",
+                            onAction = onRetry,
                             modifier = Modifier.padding(bottom = OrchDimens.ItemGap)
                         )
                     }
                 }
-                items(rows, key = { it.key }) { row ->
-                    when (row) {
-                        is DrawerRow.Header -> RepoHeader(row.title)
-                        is DrawerRow.Chat -> SessionItem(
-                            session = row.session,
-                            selected = !onConnectorsScreen && row.session.id == activeId,
-                            onClick = { onOpen(row.session.id) },
-                            onDelete = { pendingDelete = row.session }
+                projects.forEach { project ->
+                    item(key = "project:${project.id}") {
+                        ProjectHeader(
+                            project = project,
+                            selected = !onConnectorsScreen && project.id == activeProjectId,
+                            deleting = deletingProjectId == project.id,
+                            onSelect = { onSelectProject(project.id) },
+                            onNewChat = { onNewChatInProject(project.id) },
+                            onDelete = { pendingDeleteProject = project }
                         )
+                    }
+                    val projectSessions = sessionsByWorkspace[project.workspace].orEmpty()
+                    if (projectSessions.isEmpty()) {
+                        item(key = "empty:${project.id}") {
+                            Text(
+                                text = "No chats yet — tap + to start",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.small)
+                                    .clickable { onNewChatInProject(project.id) }
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
+                    } else {
+                        items(projectSessions, key = { it.id }) { session ->
+                            SessionItem(
+                                session = session,
+                                selected = !onConnectorsScreen && session.id == activeId,
+                                onClick = { onOpen(session.id) },
+                                onDelete = { pendingDeleteSession = session }
+                            )
+                        }
                     }
                 }
             }
@@ -225,18 +241,36 @@ fun SessionsDrawer(
         }
     }
 
-    pendingDelete?.let { session ->
+    pendingDeleteSession?.let { session ->
         OrchAlertDialog(
             title = "Delete chat?",
-            onDismiss = { pendingDelete = null },
+            onDismiss = { pendingDeleteSession = null },
             confirmLabel = "Delete",
             onConfirm = {
                 onDelete(session.id)
-                pendingDelete = null
+                pendingDeleteSession = null
             }
         ) {
             Text(
-                text = "This removes the conversation history and saved attachments.",
+                text = "This removes the conversation history and saved attachments. The project and its cloud sandbox are kept.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    pendingDeleteProject?.let { project ->
+        OrchAlertDialog(
+            title = "Remove project?",
+            onDismiss = { pendingDeleteProject = null },
+            confirmLabel = "Remove",
+            onConfirm = {
+                onDeleteProject(project.id)
+                pendingDeleteProject = null
+            }
+        ) {
+            Text(
+                text = "This deletes all conversations in ${project.name}, destroys its cloud sandbox, and removes it from Orch. Your GitHub repository is not affected.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -245,17 +279,89 @@ fun SessionsDrawer(
 }
 
 @Composable
-private fun RepoHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+private fun ProjectHeader(
+    project: CloudProject,
+    selected: Boolean,
+    deleting: Boolean,
+    onSelect: () -> Unit,
+    onNewChat: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = OrchDimens.ItemGap, bottom = OrchDimens.TightGap)
-    )
+            .padding(top = OrchDimens.ItemGap, bottom = OrchDimens.TightGap)
+            .clip(MaterialTheme.shapes.small)
+            .background(if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
+            .clickable(enabled = !deleting, onClick = onSelect)
+            .padding(start = 10.dp, end = 2.dp, top = 4.dp, bottom = 4.dp)
+    ) {
+        Icon(
+            imageVector = when {
+                !project.accountConnected -> Icons.Rounded.WarningAmber
+                project.isPrivate -> Icons.Outlined.Lock
+                else -> Icons.Outlined.Public
+            },
+            contentDescription = null,
+            tint = if (project.accountConnected) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.error
+            },
+            modifier = Modifier.size(16.dp)
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 8.dp)
+        ) {
+            Text(
+                text = project.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (project.accountLogin.isNotBlank()) {
+                Text(
+                    text = if (project.accountConnected) "@${project.accountLogin}" else "@${project.accountLogin} · disconnected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (project.accountConnected) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        IconButton(onClick = onNewChat, enabled = !deleting) {
+            Icon(
+                imageVector = Icons.Outlined.Add,
+                contentDescription = "New chat in ${project.name}",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        IconButton(onClick = onDelete, enabled = !deleting) {
+            if (deleting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.error
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Outlined.Delete,
+                    contentDescription = "Remove ${project.name}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable

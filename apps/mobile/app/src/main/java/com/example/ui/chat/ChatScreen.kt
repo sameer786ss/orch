@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,10 +28,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -56,6 +63,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -64,12 +72,14 @@ import com.orch.app.chat.ChatRow
 import com.orch.app.chat.CopyRow
 import com.orch.app.chat.EarlierRow
 import com.orch.app.chat.UserRow
+import com.orch.app.data.CloudProject
 import com.orch.app.data.ModelInfo
-import com.orch.app.data.ThinkingEffort
 import com.orch.app.ui.ChatUi
 import com.orch.app.ui.PendingAttachment
+import com.orch.app.ui.components.OrchBanner
 import com.orch.app.ui.components.OrchCenteredSpinner
 import com.orch.app.ui.components.OrchEmptyMessage
+import com.orch.app.ui.components.OrchPrimaryButton
 import com.orch.app.ui.theme.OrchDimens
 import kotlinx.coroutines.launch
 
@@ -87,9 +97,12 @@ fun ChatScreen(
     attachments: List<PendingAttachment>,
     models: List<ModelInfo>,
     selectedModelId: String,
-    thinkingEffort: ThinkingEffort,
+    thinkingEffort: String,
+    connectorIcons: Map<String, String> = emptyMap(),
     snackbar: SnackbarHostState,
     onMenu: () -> Unit,
+    onPickProject: () -> Unit,
+    onReconnectGithub: () -> Unit,
     onOpenExplorer: () -> Unit,
     onOpenTerminal: () -> Unit,
     onSend: (String) -> Boolean,
@@ -112,7 +125,7 @@ fun ChatScreen(
     }
     val modelLabel = remember(model, thinkingEffort) {
         model?.let {
-            if (it.supportsThinking) "${it.name} · ${thinkingEffort.shortLabel}" else it.name
+            "${it.name} · ${thinkingEffort.replaceFirstChar(Char::uppercase)}"
         } ?: "Model"
     }
 
@@ -123,8 +136,9 @@ fun ChatScreen(
     ) {
         TopBar(
             title = title,
-            hasWorkspace = chat.repo != null,
+            project = chat.project,
             onMenu = onMenu,
+            onPickProject = onPickProject,
             onOpenExplorer = onOpenExplorer,
             onOpenTerminal = onOpenTerminal
         )
@@ -135,10 +149,12 @@ fun ChatScreen(
         ) {
             MessageList(
                 chat = chat,
+                connectorIcons = connectorIcons,
                 snackbarVisible = snackbar.currentSnackbarData != null,
                 onOpenFile = onOpenFile,
                 onLoadEarlier = onLoadEarlier,
-                onRetryLoad = onRetryLoad
+                onRetryLoad = onRetryLoad,
+                onPickProject = onPickProject
             )
             SnackbarHost(
                 hostState = snackbar,
@@ -147,13 +163,28 @@ fun ChatScreen(
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             )
         }
+        val activeProject = chat.project
+        if (activeProject != null && !activeProject.accountConnected) {
+            OrchBanner(
+                text = if (activeProject.accountLogin.isNotBlank()) {
+                    "GitHub @${activeProject.accountLogin} disconnected"
+                } else {
+                    "GitHub account disconnected"
+                },
+                isError = true,
+                actionLabel = "Reconnect",
+                onAction = onReconnectGithub,
+                modifier = Modifier.padding(horizontal = OrchDimens.ScreenPadding, vertical = OrchDimens.TightGap)
+            )
+        }
         key(chat.sessionId) {
             Composer(
                 placeholder = when {
                     chat.loading -> "Loading chat…"
-                    chat.canSend -> "Ask anything"
                     chat.loadFailed -> "This chat could not be loaded"
-                    else -> "Connect a GitHub repository to start"
+                    chat.project == null -> "Open or create a GitHub repository"
+                    !chat.project.accountConnected -> "Reconnect GitHub or ask anything"
+                    else -> "Ask anything"
                 },
                 streaming = chat.streaming,
                 canSend = chat.canSend && !chat.loading,
@@ -177,11 +208,13 @@ fun ChatScreen(
 @Composable
 private fun TopBar(
     title: String,
-    hasWorkspace: Boolean,
+    project: CloudProject?,
     onMenu: () -> Unit,
+    onPickProject: () -> Unit,
     onOpenExplorer: () -> Unit,
     onOpenTerminal: () -> Unit
 ) {
+    val hasWorkspace = project != null
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -197,20 +230,69 @@ private fun TopBar(
         ) {
             Icon(
                 imageVector = Icons.Rounded.Menu,
-                contentDescription = "Sessions",
+                contentDescription = "Projects and chats",
                 tint = MaterialTheme.colorScheme.onSurface
             )
         }
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 4.dp)
-        )
+                .clip(MaterialTheme.shapes.small)
+                .clickable(onClick = onPickProject)
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (project != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = when {
+                            !project.accountConnected -> Icons.Rounded.WarningAmber
+                            project.isPrivate -> Icons.Outlined.Lock
+                            else -> Icons.Outlined.Public
+                        },
+                        contentDescription = null,
+                        tint = if (project.accountConnected) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Text(
+                        text = if (project.accountLogin.isNotBlank()) {
+                            "${project.name} · @${project.accountLogin}"
+                        } else {
+                            project.name
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (project.accountConnected) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            } else {
+                Text(
+                    text = "Open or create GitHub repo",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
         IconButton(
             onClick = onOpenExplorer,
             enabled = hasWorkspace,
@@ -272,10 +354,12 @@ private fun gapAbove(above: ChatRow?, row: ChatRow): Dp = when {
 @Composable
 private fun MessageList(
     chat: ChatUi,
+    connectorIcons: Map<String, String>,
     snackbarVisible: Boolean,
     onOpenFile: (String) -> Unit,
     onLoadEarlier: () -> Unit,
-    onRetryLoad: () -> Unit
+    onRetryLoad: () -> Unit,
+    onPickProject: () -> Unit
 ) {
     key(chat.sessionId) {
         val listState = rememberLazyListState()
@@ -336,7 +420,7 @@ private fun MessageList(
 
         Box(modifier = Modifier.fillMaxSize()) {
             if (rows.isEmpty()) {
-                EmptyState(chat, onRetryLoad)
+                EmptyState(chat, onRetryLoad, onPickProject)
             }
             LazyColumn(
                 state = listState,
@@ -356,7 +440,7 @@ private fun MessageList(
                     contentType = { _, row -> row::class }
                 ) { index, row ->
                     Box(modifier = Modifier.padding(top = gapAbove(rows.getOrNull(index - 1), row))) {
-                        ChatRowView(row, onOpenFile, onLoadEarlier)
+                        ChatRowView(row, connectorIcons, onOpenFile, onLoadEarlier)
                     }
                 }
                 item(key = "end") { Spacer(Modifier.height(1.dp)) }
@@ -403,7 +487,11 @@ private fun MessageList(
 }
 
 @Composable
-private fun EmptyState(chat: ChatUi, onRetryLoad: () -> Unit) {
+private fun EmptyState(
+    chat: ChatUi,
+    onRetryLoad: () -> Unit,
+    onPickProject: () -> Unit
+) {
     when {
         chat.loading -> OrchCenteredSpinner()
         chat.loadFailed -> OrchEmptyMessage(
@@ -411,12 +499,33 @@ private fun EmptyState(chat: ChatUi, onRetryLoad: () -> Unit) {
             actionLabel = "Try again",
             onAction = onRetryLoad
         )
-        chat.canSend -> OrchEmptyMessage(
-            text = chat.repo?.let { "What should we work on in ${it.name}?" } ?: "Start the conversation"
+        chat.project != null -> OrchEmptyMessage(
+            text = "What should we work on in ${chat.project.name}?"
         )
-        else -> OrchEmptyMessage(
-            text = "Tap + and connect a GitHub repository to start"
-        )
+        else -> Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(OrchDimens.SectionGap)
+            ) {
+                Text(
+                    text = "Open an existing GitHub repository or create a new one to start.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                OrchPrimaryButton(
+                    text = "Open or create GitHub repo",
+                    onClick = onPickProject,
+                    icon = Icons.Outlined.Add,
+                    modifier = Modifier.testTag("empty_new_project_button")
+                )
+            }
+        }
     }
 }
 

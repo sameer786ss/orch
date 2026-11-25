@@ -1,12 +1,12 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::future::try_join_all;
 use moka::future::Cache;
 use rig::tool::DynamicTool;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 
-use crate::connector_tools::actions::{self, ActionDef};
+pub use crate::connector_tools::client::ConnectorCatalogEntry;
 use crate::connector_tools::client::{AccountWire, ComposioTransport};
 use crate::connector_tools::tool::ToolSpec;
 use crate::error::{AppError, AppResult};
@@ -14,115 +14,18 @@ use crate::error::{AppError, AppResult};
 const ACTIVE_STATUS: &str = "ACTIVE";
 const DEFINITIONS_TTL: Duration = Duration::from_secs(300);
 
-#[derive(Debug)]
-pub struct ConnectorDef {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub category: &'static str,
-    pub slug_prefix: &'static str,
-    pub actions: &'static [ActionDef],
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectorCatalogEntry {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub category: String,
-}
-
-pub fn connector_catalog() -> Vec<ConnectorCatalogEntry> {
-    CONNECTOR_DEFS
-        .iter()
-        .map(|definition| ConnectorCatalogEntry {
-            id: definition.id.to_string(),
-            name: definition.name.to_string(),
-            description: definition.description.to_string(),
-            category: definition.category.to_string(),
-        })
-        .collect()
-}
-
-pub static CONNECTOR_DEFS: &[ConnectorDef] = &[
-    ConnectorDef {
-        id: "googledrive",
-        name: "Google Drive",
-        description: "Search, read, and organize files, folders, and spreadsheets in Google Drive.",
-        category: "Cloud Storage",
-        slug_prefix: "GOOGLEDRIVE_",
-        actions: actions::GOOGLEDRIVE,
-    },
-    ConnectorDef {
-        id: "gmail",
-        name: "Gmail",
-        description: "Search and read email, and create, send, and reply to messages in Gmail.",
-        category: "Communication",
-        slug_prefix: "GMAIL_",
-        actions: actions::GMAIL,
-    },
-    ConnectorDef {
-        id: "github",
-        name: "GitHub",
-        description: "Browse repositories and code, manage issues and pull requests, and commit changes.",
-        category: "Dev Tools",
-        slug_prefix: "GITHUB_",
-        actions: actions::GITHUB,
-    },
-    ConnectorDef {
-        id: "notion",
-        name: "Notion",
-        description: "Search, read, and edit pages and databases in Notion workspaces.",
-        category: "Productivity",
-        slug_prefix: "NOTION_",
-        actions: actions::NOTION,
-    },
-    ConnectorDef {
-        id: "slack",
-        name: "Slack",
-        description: "Search and read channel history, and send and schedule messages in Slack.",
-        category: "Communication",
-        slug_prefix: "SLACK_",
-        actions: actions::SLACK,
-    },
-    ConnectorDef {
-        id: "jira",
-        name: "Jira",
-        description: "Search, create, and update issues, comments, and workflow transitions in Jira Cloud.",
-        category: "Dev Tools",
-        slug_prefix: "JIRA_",
-        actions: actions::JIRA,
-    },
-];
-
-pub fn find_def(id: &str) -> Option<&'static ConnectorDef> {
-    CONNECTOR_DEFS.iter().find(|def| def.id == id)
-}
-
-pub fn resolve_defs(ids: &[String]) -> AppResult<Vec<&'static ConnectorDef>> {
-    ids.iter()
-        .map(|id| find_def(id).ok_or_else(|| AppError::ConnectorNotFound(id.clone())))
-        .collect()
-}
-
-pub fn def_for_slug(slug: &str) -> Option<&'static ConnectorDef> {
-    CONNECTOR_DEFS
-        .iter()
-        .find(|def| slug.starts_with(def.slug_prefix))
-}
-
 pub struct PreparedConnectors {
     pub tools: Vec<DynamicTool>,
-    pub defs: Vec<&'static ConnectorDef>,
+    pub connectors: Vec<ConnectorCatalogEntry>,
 }
 
-pub type ConnectorSpecCache = Cache<&'static str, Arc<Vec<ToolSpec>>>;
+pub type ConnectorSpecCache = Cache<String, Arc<Vec<ToolSpec>>>;
 
 pub struct ConnectorManager {
     client: Arc<dyn ComposioTransport>,
     specs_cache: ConnectorSpecCache,
     accounts_cache: Cache<(), Arc<Vec<AccountWire>>>,
+    catalog_cache: Cache<(), Arc<Vec<ConnectorCatalogEntry>>>,
 }
 
 impl ConnectorManager {
@@ -138,16 +41,33 @@ impl ConnectorManager {
         let accounts_cache = Cache::builder()
             .time_to_live(Duration::from_secs(30))
             .build();
+        let catalog_cache = Cache::builder()
+            .time_to_live(DEFINITIONS_TTL)
+            .build();
         Self {
             client,
             specs_cache,
             accounts_cache,
+            catalog_cache,
         }
     }
 
     pub fn clear_cache(&self) {
         self.specs_cache.invalidate_all();
         self.accounts_cache.invalidate_all();
+        self.catalog_cache.invalidate_all();
+    }
+
+    pub async fn catalog(&self) -> AppResult<Vec<ConnectorCatalogEntry>> {
+        let client = self.client.clone();
+        let cached = self
+            .catalog_cache
+            .try_get_with((), async move {
+                client.catalog().await.map(Arc::new).map_err(AppError::from)
+            })
+            .await
+            .map_err(|e| AppError::Connector(e.to_string()))?;
+        Ok((*cached).clone())
     }
 
     async fn get_accounts(&self) -> AppResult<Arc<Vec<AccountWire>>> {
@@ -160,115 +80,99 @@ impl ConnectorManager {
             .map_err(|e| AppError::Connector(e.to_string()))
     }
 
-    pub async fn connected_ids(&self) -> AppResult<Vec<&'static str>> {
+    pub async fn connected_ids(&self) -> AppResult<Vec<String>> {
         let accounts = self.get_accounts().await?;
-        Ok(CONNECTOR_DEFS
+        let mut seen = HashSet::new();
+        Ok(accounts
             .iter()
-            .filter(|def| is_connected(&accounts, def))
-            .map(|def| def.id)
+            .filter(|account| account.status == ACTIVE_STATUS)
+            .map(|account| account.toolkit.to_ascii_lowercase())
+            .filter(|id| seen.insert(id.clone()))
             .collect())
     }
 
-    pub async fn github_repos(&self, query: &str) -> AppResult<Vec<RepoInfo>> {
-        let query = query.trim();
-        let (slug, args) = if query.is_empty() {
-            (
-                "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
-                json!({ "type": "all", "sort": "updated", "per_page": 50, "raw_response": true }),
-            )
-        } else {
-            (
-                "GITHUB_FIND_REPOSITORIES",
-                json!({ "query": query, "per_page": 30, "raw_response": true }),
-            )
-        };
-        let tool = self
-            .client
-            .tools(&[slug])
-            .await?
-            .into_iter()
-            .find(|tool| tool.slug == slug)
-            .ok_or_else(|| AppError::Connector(format!("{slug} is not available")))?;
-        let result = self.client.execute(slug, &tool.version, args).await?;
-        if !result.successful {
-            return Err(AppError::Connector(
-                result
-                    .error
-                    .unwrap_or_else(|| "GitHub request failed".to_string()),
-            ));
-        }
-        let mut repos = Vec::new();
-        collect_repos(&result.data, &mut repos);
-        Ok(repos)
-    }
-
     pub async fn begin_connect(&self, id: &str) -> AppResult<String> {
-        let def = find_def(id).ok_or_else(|| AppError::ConnectorNotFound(id.to_string()))?;
+        let toolkit = id.trim().to_ascii_lowercase();
         self.accounts_cache.invalidate_all();
         self.specs_cache.invalidate_all();
-        Ok(self.client.connect(def.id).await?)
+        Ok(self.client.connect(&toolkit).await?)
     }
 
     pub async fn disconnect(&self, id: &str) -> AppResult<()> {
-        let def = find_def(id).ok_or_else(|| AppError::ConnectorNotFound(id.to_string()))?;
+        let toolkit = id.trim().to_ascii_lowercase();
         let accounts = self.client.accounts().await?;
         let account = accounts
             .iter()
-            .find(|account| account.toolkit == def.id && account.status == ACTIVE_STATUS)
-            .ok_or_else(|| AppError::ConnectorNotConnected(def.name.to_string()))?;
+            .find(|account| {
+                account.toolkit.eq_ignore_ascii_case(&toolkit) && account.status == ACTIVE_STATUS
+            })
+            .ok_or_else(|| AppError::ConnectorNotConnected(toolkit.clone()))?;
         self.accounts_cache.invalidate_all();
         self.specs_cache.invalidate_all();
         Ok(self.client.disconnect(&account.id).await?)
     }
 
     pub async fn prepare(&self, ids: &[String]) -> AppResult<PreparedConnectors> {
-        let defs = resolve_defs(ids)?;
-        if defs.is_empty() {
+        let mut seen = HashSet::new();
+        let unique: Vec<String> = ids
+            .iter()
+            .map(|id| id.trim().to_ascii_lowercase())
+            .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+            .collect();
+        if unique.is_empty() {
             return Ok(PreparedConnectors {
                 tools: Vec::new(),
-                defs,
+                connectors: Vec::new(),
             });
         }
 
-        let accounts = self.get_accounts().await?;
-        if let Some(missing) = defs.iter().find(|def| !is_connected(&accounts, def)) {
-            return Err(AppError::ConnectorNotConnected(missing.name.to_string()));
+        let (catalog, accounts) = tokio::try_join!(self.catalog(), self.get_accounts())?;
+        let mut selected = Vec::with_capacity(unique.len());
+        for id in &unique {
+            let entry = catalog
+                .iter()
+                .find(|entry| entry.id.eq_ignore_ascii_case(id))
+                .cloned()
+                .ok_or_else(|| AppError::ConnectorNotFound(id.clone()))?;
+            if !is_connected(&accounts, &entry.id) {
+                return Err(AppError::ConnectorNotConnected(entry.name));
+            }
+            selected.push(entry);
         }
 
-        let sets = futures::future::try_join_all(defs.iter().map(|def| self.specs(def))).await?;
+        let sets = try_join_all(selected.iter().map(|entry| self.specs(entry))).await?;
         let mut tools = Vec::new();
         for set in sets {
             for spec in set.iter() {
                 tools.push(spec.clone().into_tool(self.client.clone())?);
             }
         }
-        Ok(PreparedConnectors { tools, defs })
+        Ok(PreparedConnectors {
+            tools,
+            connectors: selected,
+        })
     }
 
-    async fn specs(&self, def: &'static ConnectorDef) -> AppResult<Arc<Vec<ToolSpec>>> {
+    async fn specs(&self, entry: &ConnectorCatalogEntry) -> AppResult<Arc<Vec<ToolSpec>>> {
         let client = self.client.clone();
+        let toolkit = entry.id.clone();
+        let name = entry.name.clone();
         self.specs_cache
-            .try_get_with(def.id, async move {
-                let slugs: Vec<&str> = def.actions.iter().map(|action| action.slug).collect();
-                let wires = client.tools(&slugs).await?;
-                let mut specs = Vec::with_capacity(slugs.len());
-                for action in def.actions {
-                    let Some(wire) = wires.iter().find(|wire| wire.slug == action.slug) else {
-                        tracing::warn!(slug = %action.slug, "connector action is missing from the catalog and was skipped");
-                        continue;
-                    };
+            .try_get_with(entry.id.clone(), async move {
+                let wires = client.toolkit_tools(&toolkit).await?;
+                let mut specs = Vec::with_capacity(wires.len());
+                for wire in wires {
                     if wire.is_deprecated {
-                        tracing::warn!(slug = %action.slug, "deprecated connector action was skipped");
                         continue;
                     }
-                    let spec = ToolSpec::from_wire(wire.clone())
-                        .map_err(|reason| AppError::Connector(format!("{}: {reason}", action.slug)))?;
+                    let slug = wire.slug.clone();
+                    let spec = ToolSpec::from_wire(wire)
+                        .map_err(|reason| AppError::Connector(format!("{slug}: {reason}")))?;
                     specs.push(spec);
                 }
                 if specs.is_empty() {
                     return Err(AppError::Connector(format!(
-                        "No tools are available for {}",
-                        def.name
+                        "No tools are available for {name}"
                     )));
                 }
                 Ok(Arc::new(specs))
@@ -278,35 +182,8 @@ impl ConnectorManager {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepoInfo {
-    pub full_name: String,
-    pub url: String,
-    pub description: String,
-}
-
-fn collect_repos(value: &Value, out: &mut Vec<RepoInfo>) {
-    match value {
-        Value::Array(items) => items.iter().for_each(|item| collect_repos(item, out)),
-        Value::Object(map) => match map.get("full_name").and_then(Value::as_str) {
-            Some(full_name) => out.push(RepoInfo {
-                full_name: full_name.to_string(),
-                url: format!("https://github.com/{full_name}"),
-                description: map
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            }),
-            None => map.values().for_each(|inner| collect_repos(inner, out)),
-        },
-        _ => {}
-    }
-}
-
-fn is_connected(accounts: &[AccountWire], def: &ConnectorDef) -> bool {
+fn is_connected(accounts: &[AccountWire], toolkit: &str) -> bool {
     accounts
         .iter()
-        .any(|account| account.toolkit == def.id && account.status == ACTIVE_STATUS)
+        .any(|account| account.toolkit.eq_ignore_ascii_case(toolkit) && account.status == ACTIVE_STATUS)
 }

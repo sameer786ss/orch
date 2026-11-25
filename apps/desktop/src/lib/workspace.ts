@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { open } from "@tauri-apps/plugin-dialog";
-import { getBasename, isCloudWorkspace } from "./utils";
+import { getBasename } from "./utils";
 import { clearImageCache } from "./images";
 import {
   getUserPref,
@@ -9,24 +9,39 @@ import {
   errorMessage,
   newId,
   setWorkspace,
-  initCloudWorkspace,
-  forgetWorkspace,
-  listCloudSessions,
+  createLocalWorkspace,
+  activateCloudProject,
+  listCloudProjects,
+  openCloudProject,
+  createCloudProject,
+  deleteCloudProject,
+  deleteLocalWorkspace,
+  type CloudProjectDto,
 } from "./api";
 
-export interface WorkspaceMeta {
+export type WorkspaceMode = "computer" | "cloud";
+
+export interface LocalWorkspaceMeta {
+  kind: "computer";
   id: string;
   name: string;
   path: string;
   createdAt: number;
-  repoUrl?: string;
-  repoDir?: string;
 }
 
-export type WorkspaceMode = "computer" | "cloud";
+export interface CloudWorkspaceMeta {
+  kind: "cloud";
+  id: string;
+  name: string;
+  path: string;
+  createdAt: number;
+  project: CloudProjectDto;
+}
 
-export function workspaceMode(meta: Pick<WorkspaceMeta, "path" | "repoUrl">): WorkspaceMode {
-  return isCloudWorkspace(meta.path) || Boolean(meta.repoUrl) ? "cloud" : "computer";
+export type WorkspaceMeta = LocalWorkspaceMeta | CloudWorkspaceMeta;
+
+export function workspaceMode(meta: WorkspaceMeta): WorkspaceMode {
+  return meta.kind;
 }
 
 type WorkspacePickStatus =
@@ -47,8 +62,10 @@ interface WorkspaceState {
 
 interface WorkspaceActions {
   initialize: () => Promise<void>;
-  pickAndOpen: () => Promise<void>;
-  openCloudRepo: (repoUrl: string, customName?: string) => Promise<void>;
+  pickAndOpen: () => Promise<boolean>;
+  createLocalFolder: (parentDir: string, folderName: string, initGit: boolean) => Promise<boolean>;
+  openCloudRepo: (repoUrl: string, accountId: string) => Promise<boolean>;
+  createCloudRepo: (accountId: string, name: string, description: string | null, privateRepo: boolean) => Promise<boolean>;
   switchTo: (id: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
   syncCloudProjects: () => Promise<void>;
@@ -59,8 +76,7 @@ interface WorkspaceActions {
 type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
 const PREF_LAST_WORKSPACE = "lastWorkspaceId";
-const PREF_ALL_WORKSPACES = "allWorkspaces";
-const PREF_HIDDEN_CLOUD = "hiddenCloudWorkspaces";
+const PREF_LOCAL_WORKSPACES = "localWorkspaces";
 
 const INITIAL_STATE: WorkspaceState = {
   current: null,
@@ -71,87 +87,76 @@ const INITIAL_STATE: WorkspaceState = {
   error: null,
 };
 
-function parseList(raw: string | null): WorkspaceMeta[] {
+function fromCloudDto(dto: CloudProjectDto): CloudWorkspaceMeta {
+  return {
+    kind: "cloud",
+    id: dto.id,
+    name: dto.name,
+    path: dto.workspace,
+    createdAt: dto.updatedAt,
+    project: dto,
+  };
+}
+
+function parseLocalList(raw: string | null): LocalWorkspaceMeta[] {
   if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return (parsed as Array<Record<string, unknown>>)
-      .filter((w) => typeof w.id === "string" && typeof w.path === "string")
-      .map((w) => ({
-        id: String(w.id),
-        name: String(w.name),
-        path: String(w.path),
-        createdAt: Number(w.createdAt) || 0,
-        repoUrl: typeof w.repoUrl === "string" ? w.repoUrl : undefined,
-        repoDir: typeof w.repoDir === "string" ? w.repoDir : undefined,
-      }));
-  } catch {
-    return [];
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) return [];
+  const out: LocalWorkspaceMeta[] = [];
+  for (const item of parsed) {
+    if (typeof item !== "object" || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.id !== "string" || typeof rec.name !== "string" || typeof rec.path !== "string") continue;
+    out.push({
+      kind: "computer",
+      id: rec.id,
+      name: rec.name,
+      path: rec.path,
+      createdAt: Number(rec.createdAt) || 0,
+    });
   }
+  return out;
 }
 
-async function loadAll(): Promise<WorkspaceMeta[]> {
-  const scoped = await getUserPref(PREF_ALL_WORKSPACES, true);
-  return scoped !== null ? parseList(scoped) : [];
+async function loadLocal(): Promise<LocalWorkspaceMeta[]> {
+  const scoped = await getUserPref(PREF_LOCAL_WORKSPACES, true);
+  return parseLocalList(scoped);
 }
 
-async function saveAll(list: WorkspaceMeta[]): Promise<void> {
-  await setUserPref(PREF_ALL_WORKSPACES, JSON.stringify(list), true).catch(() => undefined);
+async function saveLocal(list: WorkspaceMeta[]): Promise<void> {
+  const localOnly = list.filter((w): w is LocalWorkspaceMeta => w.kind === "computer");
+  await setUserPref(PREF_LOCAL_WORKSPACES, JSON.stringify(localOnly), true);
 }
 
 async function loadLastId(): Promise<string | null> {
-  return (await getUserPref(PREF_LAST_WORKSPACE, true).catch(() => null)) ?? null;
+  return (await getUserPref(PREF_LAST_WORKSPACE, true)) ?? null;
 }
 
 async function saveLastId(id: string): Promise<void> {
-  await setUserPref(PREF_LAST_WORKSPACE, id, true).catch(() => undefined);
-}
-
-async function loadHiddenCloud(): Promise<string[]> {
-  const raw = await getUserPref(PREF_HIDDEN_CLOUD, true).catch(() => null);
-  if (!raw) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-async function saveHiddenCloud(list: string[]): Promise<void> {
-  await setUserPref(PREF_HIDDEN_CLOUD, JSON.stringify(list), true).catch(() => undefined);
-}
-
-function cloudDisplayName(workspaceUri: string): string {
-  const stripped = workspaceUri.replace(/^cloud:\/\/[^/]+\//, "");
-  return stripped || getBasename(workspaceUri) || workspaceUri;
-}
-
-function cloudRepoUrl(workspaceUri: string): string {
-  return `https://${workspaceUri.replace(/^cloud:\/\//, "")}`;
+  await setUserPref(PREF_LAST_WORKSPACE, id, true);
 }
 
 async function activateWorkspace(meta: WorkspaceMeta): Promise<WorkspaceMeta> {
-  if (isCloudWorkspace(meta.path) || Boolean(meta.repoUrl)) {
-    const info = await initCloudWorkspace(meta.repoUrl || meta.path);
-    return {
-      ...meta,
-      name: meta.name || cloudDisplayName(info.workspace),
-      path: info.workspace,
-      repoUrl: info.repoUrl,
-      repoDir: info.repoDir,
-    };
+  if (meta.kind === "cloud") {
+    await activateCloudProject(meta.project);
+    return meta;
   }
   const canonical = await setWorkspace(meta.path);
   return canonical === meta.path ? meta : { ...meta, path: canonical };
 }
 
+function mergeAll(localList: LocalWorkspaceMeta[], cloudList: CloudWorkspaceMeta[]): WorkspaceMeta[] {
+  const map = new Map<string, WorkspaceMeta>();
+  for (const w of cloudList) map.set(w.path, w);
+  for (const w of localList) map.set(w.path, w);
+  return Array.from(map.values());
+}
+
 function upsert(list: WorkspaceMeta[], meta: WorkspaceMeta): WorkspaceMeta[] {
   const index = list.findIndex((w) => w.id === meta.id || w.path === meta.path);
-  if (index === -1) return [...list, meta];
+  if (index === -1) return [meta, ...list];
   const next = [...list];
-  next[index] = { ...next[index], ...meta };
+  next[index] = meta;
   return next;
 }
 
@@ -164,19 +169,20 @@ export const useWorkspaceStore = create(
     let inProgress = false;
     let initializeEpoch = 0;
 
-    const exclusive = async (task: () => Promise<void>) => {
-      if (inProgress || get().busy) return;
+    const exclusive = async <T,>(task: () => Promise<T>): Promise<T | undefined> => {
+      if (inProgress || get().busy) return undefined;
       inProgress = true;
       set((s) => {
         s.busy = true;
       });
       try {
-        await task();
+        return await task();
       } catch (e) {
         set((s) => {
           s.error = errorMessage(e);
           s.status = failureStatus(s.current);
         });
+        return undefined;
       } finally {
         inProgress = false;
         set((s) => {
@@ -186,7 +192,7 @@ export const useWorkspaceStore = create(
     };
 
     const commit = async (meta: WorkspaceMeta, list: WorkspaceMeta[]) => {
-      await saveAll(list);
+      await saveLocal(list);
       await saveLastId(meta.id);
       set((s) => {
         s.all = list;
@@ -196,7 +202,6 @@ export const useWorkspaceStore = create(
         s.error = null;
       });
       clearImageCache();
-      void get().syncCloudProjects();
     };
 
     return {
@@ -209,27 +214,35 @@ export const useWorkspaceStore = create(
           s.error = null;
         });
 
-        let all: WorkspaceMeta[] = [];
-        let lastId: string | null = null;
-        try {
-          [all, lastId] = await Promise.all([loadAll(), loadLastId()]);
-        } catch (e) {
-          if (epoch !== initializeEpoch) return;
+        const [localSettled, cloudSettled, lastSettled] = await Promise.allSettled([
+          loadLocal(),
+          listCloudProjects(),
+          loadLastId(),
+        ]);
+        if (epoch !== initializeEpoch) return;
+
+        if (localSettled.status === "rejected") {
           set((s) => {
-            s.status = "needs_pick";
-            s.error = `Could not load saved workspaces: ${errorMessage(e)}`;
+            s.status = "error";
+            s.error = `Could not load saved local projects: ${errorMessage(localSettled.reason)}`;
           });
           return;
         }
-        if (epoch !== initializeEpoch) return;
 
+        const localList = localSettled.value;
+        const cloudError = cloudSettled.status === "rejected" ? errorMessage(cloudSettled.reason) : null;
+        const cloudList = cloudSettled.status === "fulfilled" ? cloudSettled.value.map(fromCloudDto) : [];
+        const lastId = lastSettled.status === "fulfilled" ? lastSettled.value : null;
+
+        const all = mergeAll(localList, cloudList);
         set((s) => {
           s.all = all;
         });
 
         if (all.length === 0) {
           set((s) => {
-            s.status = "needs_pick";
+            s.status = cloudError ? "error" : "needs_pick";
+            s.error = cloudError ? `Could not load cloud projects: ${cloudError}` : null;
           });
           return;
         }
@@ -241,7 +254,7 @@ export const useWorkspaceStore = create(
           if (epoch !== initializeEpoch) return;
           const next = upsert(all, active);
           if (active !== last) {
-            await saveAll(next);
+            await saveLocal(next);
             if (epoch !== initializeEpoch) return;
           }
           set((s) => {
@@ -249,9 +262,9 @@ export const useWorkspaceStore = create(
             s.current = active;
             s.mode = workspaceMode(active);
             s.status = "ready";
+            s.error = cloudError ? `Cloud projects unavailable: ${cloudError}` : null;
           });
           clearImageCache();
-          void get().syncCloudProjects();
         } catch (e) {
           if (epoch !== initializeEpoch) return;
           set((s) => {
@@ -261,103 +274,139 @@ export const useWorkspaceStore = create(
         }
       },
 
-      pickAndOpen: () =>
-        exclusive(async () => {
+      pickAndOpen: async () => {
+        const result = await exclusive(async () => {
           const selected = await open({ directory: true, multiple: false });
-          if (typeof selected !== "string") return;
-
-          const name = getBasename(selected) || selected;
-          const activated = await activateWorkspace({
-            id: newId(),
-            name,
-            path: selected,
-            createdAt: Date.now(),
-          });
-          const existing = get().all.find((w) => w.path === activated.path);
-          const meta = existing ? { ...existing, ...activated, id: existing.id } : activated;
-          await commit(meta, upsert(get().all, meta));
-        }),
-
-      openCloudRepo: (repoUrl: string, customName?: string) =>
-        exclusive(async () => {
-          const trimmed = repoUrl.trim();
-          if (!trimmed) return;
-          const info = await initCloudWorkspace(trimmed);
-          const existing = get().all.find((w) => w.path === info.workspace);
-          const meta: WorkspaceMeta = {
+          if (typeof selected !== "string") return false;
+          const canonical = await setWorkspace(selected);
+          const name = getBasename(canonical) || canonical;
+          const existing = get().all.find((w) => w.path === canonical);
+          const meta: LocalWorkspaceMeta = {
+            kind: "computer",
             id: existing?.id ?? newId(),
-            name: customName?.trim() || existing?.name || cloudDisplayName(info.workspace),
-            path: info.workspace,
-            repoUrl: info.repoUrl,
-            repoDir: info.repoDir,
+            name,
+            path: canonical,
             createdAt: existing?.createdAt ?? Date.now(),
           };
-          const hidden = await loadHiddenCloud();
-          if (hidden.includes(meta.path)) await saveHiddenCloud(hidden.filter((path) => path !== meta.path));
           await commit(meta, upsert(get().all, meta));
-        }),
+          return true;
+        });
+        return Boolean(result);
+      },
 
-      switchTo: (id: string) =>
-        exclusive(async () => {
+      createLocalFolder: async (parentDir: string, folderName: string, initGit: boolean) => {
+        const result = await exclusive(async () => {
+          const canonical = await createLocalWorkspace(parentDir, folderName, initGit);
+          const meta: LocalWorkspaceMeta = {
+            kind: "computer",
+            id: newId(),
+            name: getBasename(canonical) || canonical,
+            path: canonical,
+            createdAt: Date.now(),
+          };
+          await commit(meta, upsert(get().all, meta));
+          return true;
+        });
+        return Boolean(result);
+      },
+
+      openCloudRepo: async (repoUrl: string, accountId: string) => {
+        const result = await exclusive(async () => {
+          const trimmed = repoUrl.trim();
+          if (!trimmed) return false;
+          const dto = await openCloudProject(trimmed, accountId);
+          const meta = fromCloudDto(dto);
+          await commit(meta, upsert(get().all, meta));
+          return true;
+        });
+        return Boolean(result);
+      },
+
+      createCloudRepo: async (
+        accountId: string,
+        name: string,
+        description: string | null,
+        privateRepo: boolean
+      ) => {
+        const result = await exclusive(async () => {
+          const dto = await createCloudProject(accountId, name.trim(), description, privateRepo);
+          const meta = fromCloudDto(dto);
+          await commit(meta, upsert(get().all, meta));
+          return true;
+        });
+        return Boolean(result);
+      },
+
+      switchTo: async (id: string) => {
+        await exclusive(async () => {
           const meta = get().all.find((w) => w.id === id);
           if (!meta) return;
           const active = await activateWorkspace(meta);
           await commit(active, upsert(get().all, active));
-        }),
+        });
+      },
 
-      remove: (id: string) =>
-        exclusive(async () => {
+      remove: async (id: string) => {
+        await exclusive(async () => {
           const target = get().all.find((w) => w.id === id);
           if (!target) return;
-          await forgetWorkspace(target.path);
-          if (workspaceMode(target) === "cloud") {
-            const hidden = await loadHiddenCloud();
-            if (!hidden.includes(target.path)) await saveHiddenCloud([...hidden, target.path]);
+          if (target.kind === "cloud") {
+            await deleteCloudProject(target.id, target.path);
+          } else {
+            await deleteLocalWorkspace(target.path);
           }
           const next = get().all.filter((w) => w.id !== id);
-          await saveAll(next);
+          await saveLocal(next);
           const wasCurrent = get().current?.id === id;
           if (wasCurrent) {
-            await setUserPref(PREF_LAST_WORKSPACE, "", true).catch(() => undefined);
-          }
-          set((s) => {
-            s.all = next;
-            s.error = null;
-            if (wasCurrent) {
-              s.current = null;
-              s.status = "needs_pick";
+            if (next.length > 0) {
+              const active = await activateWorkspace(next[0]);
+              await saveLastId(active.id);
+              set((s) => {
+                s.all = next;
+                s.current = active;
+                s.mode = workspaceMode(active);
+                s.status = "ready";
+                s.error = null;
+              });
+            } else {
+              await setUserPref(PREF_LAST_WORKSPACE, "", true);
+              set((s) => {
+                s.all = next;
+                s.current = null;
+                s.status = "needs_pick";
+                s.error = null;
+              });
             }
-          });
-          if (wasCurrent) clearImageCache();
-        }),
+            clearImageCache();
+          } else {
+            set((s) => {
+              s.all = next;
+              s.error = null;
+            });
+          }
+        });
+      },
 
       syncCloudProjects: async () => {
         if (get().status !== "ready") return;
-        const sessions = await listCloudSessions().catch(() => null);
-        if (!sessions || get().status !== "ready") return;
-        const hidden = new Set(await loadHiddenCloud());
-        const newest = new Map<string, number>();
-        for (const session of sessions) {
-          const path = session.workspacePath;
-          if (!path || !isCloudWorkspace(path) || hidden.has(path)) continue;
-          newest.set(path, Math.max(newest.get(path) ?? 0, session.updatedAt));
-        }
-        let changed = false;
+        const cloudDtos = await listCloudProjects();
+        if (get().status !== "ready") return;
+        const cloudList = cloudDtos.map(fromCloudDto);
         set((s) => {
-          const known = new Set(s.all.map((w) => w.path));
-          for (const [path, updatedAt] of newest) {
-            if (known.has(path)) continue;
-            s.all.push({
-              id: newId(),
-              name: cloudDisplayName(path),
-              path,
-              repoUrl: cloudRepoUrl(path),
-              createdAt: updatedAt,
-            });
-            changed = true;
+          const localList = s.all.filter((w): w is LocalWorkspaceMeta => w.kind === "computer");
+          const merged = mergeAll(localList, cloudList);
+          s.all = merged;
+          if (s.current?.kind === "cloud") {
+            const refreshedCurrent = cloudList.find((w) => w.id === s.current?.id || w.path === s.current?.path);
+            if (refreshedCurrent) {
+              s.current = refreshedCurrent;
+            } else {
+              s.current = null;
+              s.status = "needs_pick";
+            }
           }
         });
-        if (changed) await saveAll(get().all);
       },
 
       dismissError: () => {

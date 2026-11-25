@@ -127,7 +127,6 @@ class OrchStream(private val client: OrchClient, cacheDir: File) {
                 field("prompt", JsonPrimitive(request.prompt).toString())
                 field("model", JsonPrimitive(request.model).toString())
                 field("workspace", JsonPrimitive(request.workspace).toString())
-                request.repoUrl?.let { field("repoUrl", JsonPrimitive(it).toString()) }
                 sink.writeUtf8(",\"activeConnectors\":[")
                 request.activeConnectors.forEachIndexed { index, connector ->
                     if (index > 0) sink.writeUtf8(",")

@@ -8,7 +8,7 @@ import { buildBreadcrumbJsonLd, buildPageMetadata } from '../../lib/seo'
 export const metadata: Metadata = buildPageMetadata({
   title: 'Desktop Workspace for macOS & Windows',
   description:
-    'Download Orch for macOS (Apple Silicon ARM64 & Intel x64) and Windows. Agentic coding workspace with GitHub, Drive, Gmail, Jira & Slack connectors, Low/Medium/High thinking modes, and $20/month free compute.',
+    'Download Orch for macOS (Apple Silicon ARM64 & Intel x64) and Windows. Agentic coding workspace with native GitHub repositories, Drive, Gmail, Jira & Slack connectors, Low/Medium/High thinking modes, and $20/month free compute.',
   path: '/orch-code',
   image: '/images/orch-code-workspace.jpg',
   imageAlt: 'Orch Workspace for macOS and Windows',
@@ -48,7 +48,7 @@ export default function OrchCodePage() {
             <li><b>Agentic Workspace:</b> Deterministic worktree checkpoints, local call-graph indexing, and multi-file diff inspection inside a clean desktop interface.</li>
             <li><b>$20/Month Free Compute Included:</b> Every user automatically receives $20 of frontier model compute every month at $0 cost.</li>
             <li><b>Low / Medium / High Thinking Modes:</b> Control test-time reasoning depth per turn directly in the workspace selector.</li>
-            <li><b>Native Connectors:</b> One-click OAuth connection to GitHub, Google Drive, Gmail, Jira, and Slack.</li>
+            <li><b>GitHub &amp; Connectors:</b> Native GitHub OAuth for cloud workspaces plus optional Google Drive, Gmail, Jira, and Slack integrations.</li>
             <li><b>Cloud Sessions (Coming Soon):</b> Offload long-running branches to isolated cloud sessions synced with Orch Mobile.</li>
           </ul>
           <DownloadButtons />
@@ -66,7 +66,7 @@ export default function OrchCodePage() {
             <p>Connect Jira &amp; Drive specs, refactor auth handoff, and verify all tests<span data-cursor="" /></p>
             <div>
               <b>Connector Context Linked</b>
-              <small>GitHub, Drive, Gmail, Jira &amp; Slack</small>
+              <small>Drive, Gmail, Jira &amp; Slack + GitHub OAuth</small>
               <p>Pulled acceptance criteria from <code>JIRA-409</code>, architecture spec from Google Drive, and customer trace from Gmail.</p>
             </div>
             <div>

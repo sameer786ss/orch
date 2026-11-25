@@ -1,25 +1,21 @@
-use crate::shared::config;
+use crate::shared::config::{self, CLOUD_WORKSPACE_PREFIX, SUPPORTED_CLOUD_GIT_HOSTS};
 use crate::shared::error::{ApiError, ApiResult};
 use crate::shared::util;
 
-pub const CLOUD_WORKSPACE_PREFIX: &str = "cloud://";
-
+#[derive(Debug, Clone)]
 pub struct CloudWorkspace {
     pub uri: String,
     pub repo_url: String,
     pub repo_dir: String,
+    pub owner: String,
+    pub repo: String,
+    pub full_name: String,
 }
 
 fn supported_host(host: &str) -> bool {
-    matches!(
-        host.to_ascii_lowercase().as_str(),
-        "github.com"
-            | "www.github.com"
-            | "gitlab.com"
-            | "www.gitlab.com"
-            | "bitbucket.org"
-            | "www.bitbucket.org"
-    )
+    SUPPORTED_CLOUD_GIT_HOSTS
+        .iter()
+        .any(|allowed| host.eq_ignore_ascii_case(allowed))
 }
 
 fn valid_segment(segment: &str) -> bool {
@@ -28,7 +24,7 @@ fn valid_segment(segment: &str) -> bool {
         && segment != ".."
         && segment
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 pub fn normalize(input: &str) -> ApiResult<CloudWorkspace> {
@@ -43,34 +39,34 @@ pub fn normalize(input: &str) -> ApiResult<CloudWorkspace> {
         .or_else(|| (!trimmed.contains("://")).then_some(trimmed))
         .ok_or_else(|| {
             ApiError::bad_request(
-                "Only public HTTP/HTTPS Git repository URLs (e.g. https://github.com/owner/repo) are supported.",
+                "Only GitHub repositories (e.g. owner/repo or https://github.com/owner/repo) are supported.",
             )
         })?;
 
-    let clean = without_scheme
-        .trim_matches('/')
-        .trim_end_matches(".git");
+    let clean = without_scheme.trim_matches('/').trim_end_matches(".git");
     let parts: Vec<&str> = clean.split('/').filter(|segment| !segment.is_empty()).collect();
-    let (host, owner, repo) = match parts.as_slice() {
-        [owner, repo] if valid_segment(owner) && valid_segment(repo) => {
-            ("github.com", *owner, *repo)
-        }
+    let (owner, repo) = match parts.as_slice() {
+        [owner, repo] if valid_segment(owner) && valid_segment(repo) => (*owner, *repo),
         [host, owner, repo]
             if supported_host(host) && valid_segment(owner) && valid_segment(repo) =>
         {
-            (*host, *owner, *repo)
+            (*owner, *repo)
         }
         _ => {
             return Err(ApiError::bad_request(
-                "Invalid repository URL. Only github.com, gitlab.com, and bitbucket.org repositories are supported.",
+                "Invalid repository. Only GitHub repositories (owner/repo) are supported.",
             ));
         }
     };
 
-    let canonical_path = format!("{host}/{owner}/{repo}");
+    let full_name = format!("{owner}/{repo}");
+    let canonical_path = format!("github.com/{full_name}");
     Ok(CloudWorkspace {
         uri: format!("{CLOUD_WORKSPACE_PREFIX}{canonical_path}"),
         repo_url: format!("https://{canonical_path}"),
         repo_dir: format!("{}/{}", config::WORKSPACE_ROOT, util::safe_file_name(repo)),
+        owner: owner.to_string(),
+        repo: repo.to_string(),
+        full_name,
     })
 }

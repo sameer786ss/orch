@@ -1,4 +1,4 @@
-export type HandoffKind = 'signin' | 'connector'
+export type HandoffKind = 'signin' | 'connector' | 'github'
 
 export type HandoffState =
   | { status: 'working' }
@@ -6,11 +6,35 @@ export type HandoffState =
   | { status: 'error'; message: string; target?: string }
 
 const CONNECTOR_TARGET = 'orch://oauth/composio'
+const GITHUB_TARGET = 'orch://oauth/github'
 const SIGNIN_TARGET = 'orch://auth-callback'
 
 export function resolveHandoff(kind: HandoffKind, search: string): HandoffState {
   const normalizedSearch = search.startsWith('?') ? search : search ? `?${search}` : ''
   const params = new URLSearchParams(normalizedSearch)
+
+  if (kind === 'github') {
+    const status = params.get('status')
+    if (status !== 'success' && status !== 'failed') {
+      return {
+        status: 'error',
+        message: 'The GitHub authorization response was incomplete. Start it again from Orch.',
+      }
+    }
+    const query = new URLSearchParams({ status })
+    const login = params.get('login')?.trim()
+    const message = params.get('message')?.trim()
+    if (login) query.set('login', login)
+    if (message) query.set('message', message)
+    if (status === 'success') {
+      return { status: 'done', target: `${GITHUB_TARGET}?${query.toString()}` }
+    }
+    return {
+      status: 'error',
+      message: message || 'GitHub connection was not completed. Start it again from Orch.',
+      target: `${GITHUB_TARGET}?${query.toString()}`,
+    }
+  }
 
   if (kind === 'connector') {
     const status = params.get('status')

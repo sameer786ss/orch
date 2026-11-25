@@ -1,12 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use gray_matter::engine::YAML;
 use gray_matter::Matter;
 use include_dir::{include_dir, Dir};
-use moka::sync::Cache;
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
@@ -17,17 +15,6 @@ pub struct Skill {
 }
 
 static EMBEDDED_SKILLS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/skills");
-
-const SKILLS_CACHE_TTL: Duration = Duration::from_secs(10);
-
-fn skills_cache() -> &'static Cache<PathBuf, Arc<[Skill]>> {
-    static CACHE: OnceLock<Cache<PathBuf, Arc<[Skill]>>> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        Cache::builder()
-            .time_to_live(SKILLS_CACHE_TTL)
-            .build()
-    })
-}
 
 pub fn load_embedded_skills() -> Arc<[Skill]> {
     static EMBEDDED: OnceLock<Arc<[Skill]>> = OnceLock::new();
@@ -71,48 +58,45 @@ pub fn read_embedded_skill(name: &str) -> Result<String, String> {
 
 pub async fn load_all_skills(data_dir: PathBuf) -> Arc<[Skill]> {
     let skills_dir = data_dir.join("skills");
-    if let Some(cached) = skills_cache().get(&skills_dir) {
-        return cached;
-    }
     tokio::task::spawn_blocking(move || {
-        skills_cache().get_with(skills_dir.clone(), || {
-            let mut by_name: HashMap<String, Skill> = load_embedded_skills()
-                .iter()
-                .cloned()
-                .map(|skill| (skill.name.to_lowercase(), skill))
-                .collect();
-            scan_skills_directory(&skills_dir, &mut by_name);
-            let mut skills: Vec<Skill> = by_name.into_values().collect();
-            skills.sort_by(|a, b| a.name.cmp(&b.name));
-            skills.into()
-        })
+        let mut by_name: HashMap<String, Skill> = load_embedded_skills()
+            .iter()
+            .cloned()
+            .map(|skill| (skill.name.to_lowercase(), skill))
+            .collect();
+        for skill in scan_skills_directory(&skills_dir) {
+            by_name.insert(skill.name.to_lowercase(), skill);
+        }
+        let mut skills: Vec<Skill> = by_name.into_values().collect();
+        skills.sort_by(|a, b| a.name.cmp(&b.name));
+        skills.into()
     })
     .await
     .unwrap_or_else(|_| Arc::new([]))
 }
 
-pub async fn read_skill_from_dir(data_dir: PathBuf, name: &str) -> Result<String, String> {
-    let skills = load_all_skills(data_dir.clone()).await;
+pub async fn read_skill_from_dir(data_dir: PathBuf, name: &str) -> Option<String> {
     let target = name.trim().to_lowercase();
-    let skills_root = data_dir.join("skills");
-    let skill = skills
-        .iter()
-        .find(|s| {
-            s.name.to_lowercase() == target
-                && Path::new(&s.file_path).starts_with(&skills_root)
-        })
-        .ok_or_else(|| format!("no skill named '{name}'"))?;
-    tokio::fs::read_to_string(&skill.file_path)
-        .await
-        .map_err(|e| format!("cannot read skill '{name}': {e}"))
+    let skills_dir = data_dir.join("skills");
+    let matched_path = tokio::task::spawn_blocking(move || {
+        scan_skills_directory(&skills_dir)
+            .into_iter()
+            .find(|s| s.name.to_lowercase() == target)
+            .map(|s| s.file_path)
+    })
+    .await
+    .ok()
+    .flatten()?;
+    tokio::fs::read_to_string(matched_path).await.ok()
 }
 
-fn scan_skills_directory(dir: &Path, out: &mut HashMap<String, Skill>) {
+fn scan_skills_directory(dir: &Path) -> Vec<Skill> {
+    let mut out = Vec::new();
     if !dir.is_dir() {
-        return;
+        return out;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+        return out;
     };
 
     for entry in entries.flatten() {
@@ -133,9 +117,10 @@ fn scan_skills_directory(dir: &Path, out: &mut HashMap<String, Skill>) {
             continue;
         };
         if let Some(skill) = parse_skill_markdown(&raw, &skill_file) {
-            out.insert(skill.name.to_lowercase(), skill);
+            out.push(skill);
         }
     }
+    out
 }
 
 #[derive(Deserialize, Default)]

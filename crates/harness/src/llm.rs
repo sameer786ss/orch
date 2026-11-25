@@ -25,11 +25,11 @@ use tokio::sync::Mutex;
 
 use crate::backend::{SessionStore, SummarizerBackend, WorkspaceOps};
 use crate::config;
-use crate::connectors::ConnectorDef;
+use crate::connectors::ConnectorCatalogEntry;
 use crate::error::AppResult;
 use crate::events::{ChatEvent, EventSink, TurnUsage};
 use crate::models::ModelInfo;
-use crate::persistence::{AttachmentRef, HistoryRecord, SessionSnapshot};
+use crate::persistence::{AttachmentRef, SessionSnapshot};
 use crate::session;
 use crate::tools::{tool_display_info, window_lines, ToolContext};
 use crate::util::{clip_middle, truncate_chars};
@@ -92,11 +92,33 @@ fn parse_line_range(lr: &str) -> (Option<usize>, Option<usize>) {
     }
 }
 
-pub fn parse_thinking_effort(effort: &str) -> Effort {
-    match effort.trim().to_ascii_lowercase().as_str() {
-        "low" => Effort::Low,
-        "high" => Effort::High,
-        _ => Effort::Medium,
+pub fn parse_thinking_effort(effort: &str, model: &ModelInfo) -> Result<Effort, String> {
+    let trimmed = effort.trim();
+    let selected = if trimmed.is_empty() {
+        model.default_thinking_effort()
+    } else {
+        trimmed
+    };
+    if !model
+        .thinking_efforts
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(selected))
+    {
+        return Err(format!(
+            "Unsupported thinking effort '{}' for model '{}'; supported values: {}",
+            trimmed,
+            model.id,
+            model.thinking_efforts.join(", ")
+        ));
+    }
+    match selected.to_ascii_lowercase().as_str() {
+        "low" => Ok(Effort::Low),
+        "medium" => Ok(Effort::Medium),
+        "high" => Ok(Effort::High),
+        other => Err(format!(
+            "Unsupported thinking effort '{}' for model '{}'",
+            other, model.id
+        )),
     }
 }
 
@@ -106,7 +128,7 @@ pub struct AgentInputs<'a> {
     pub tools: &'a ToolContext,
     pub workspace: Option<&'a str>,
     pub environment_note: Option<&'a str>,
-    pub connectors: Vec<&'static ConnectorDef>,
+    pub connectors: Vec<ConnectorCatalogEntry>,
     pub connector_tools: Vec<DynamicTool>,
     pub thinking_effort: Effort,
     pub skills: Arc<[crate::skills::Skill]>,
@@ -225,7 +247,7 @@ pub fn build_preamble(
     skills: &[crate::skills::Skill],
     workspace: Option<&str>,
     environment_note: Option<&str>,
-    connectors: &[&'static ConnectorDef],
+    connectors: &[ConnectorCatalogEntry],
 ) -> String {
     let mut sections: Vec<Section> = Vec::new();
 
@@ -243,12 +265,13 @@ The skill content gives you a proven sequence of steps, tool calls, and checks â
 
     if !connectors.is_empty() {
         let mut text = String::from(
-            "The user connected these external services for this conversation. Their tools are available now and are named with the service prefix, for example GITHUB_CREATE_AN_ISSUE:\n",
+            "The user connected these external services for this conversation. Their tools are available now and are named with the service prefix, for example SLACK_SEND_MESSAGE:\n",
         );
-        for def in connectors {
+        for entry in connectors {
+            let prefix = entry.id.to_ascii_uppercase();
             text.push_str(&format!(
-                "- **{}** (`{}*`): {}\n",
-                def.name, def.slug_prefix, def.description
+                "- **{}** (`{}_*`): {}\n",
+                entry.name, prefix, entry.description
             ));
         }
         text.push_str("\nSearch or list first to find real identifiers before reading or changing anything; never invent IDs, keys, or addresses. Actions that send, post, create, or edit take effect immediately in the user's real account, so confirm ambiguous targets with the user before acting.\n");
@@ -309,7 +332,7 @@ pub enum RunOutcome {
 }
 
 pub struct RunResult {
-    pub records: Vec<HistoryRecord>,
+    pub records: Vec<ChatEvent>,
     pub outcome: RunOutcome,
     pub partial_text: String,
     pub final_messages: Option<Vec<Message>>,

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod budget;
 pub mod config;
+pub mod crypto;
 pub mod error;
 pub mod extract;
 pub mod firestore;

@@ -7,7 +7,7 @@ import { buildBreadcrumbJsonLd, buildPageMetadata } from '../../lib/seo'
 export const metadata: Metadata = buildPageMetadata({
   title: 'Orch Mobile (Upcoming) — Cloud Session Engineering App',
   description:
-    'Orch Mobile is our upcoming Cloud Session companion app. Spawn isolated micro-VMs, steer Low/Medium/High thinking runs, and review GitHub, Jira, Slack, Drive & Gmail workflows from anywhere.',
+    'Orch Mobile is our upcoming Cloud Session companion app. Spawn isolated micro-VMs on your GitHub repositories, steer Low/Medium/High thinking runs, and review Drive, Gmail, Jira & Slack workflows from anywhere.',
   path: '/mobile',
   image: '/images/orch-mobile-cloud.jpg',
   imageAlt: 'Orch Mobile Cloud Session App',
@@ -82,7 +82,7 @@ export default function OrchMobilePage() {
       <dl>
         <div><dt>380 ms</dt><dd>cloud micro-VM warm resume</dd></div>
         <div><dt>$20 / mo</dt><dd>shared free compute credit every month</dd></div>
-        <div><dt>5 Connectors</dt><dd>GitHub, Drive, Gmail, Jira &amp; Slack</dd></div>
+        <div><dt>4 Connectors</dt><dd>Drive, Gmail, Jira &amp; Slack + GitHub OAuth</dd></div>
         <div><dt>Android</dt><dd>upcoming preview under active works</dd></div>
       </dl>
 

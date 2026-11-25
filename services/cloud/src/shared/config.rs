@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::de::DeserializeOwned;
 
+use crate::shared::crypto;
+
 pub struct Config {
     pub port: u16,
     pub project_id: String,
@@ -13,6 +15,7 @@ pub struct Config {
     pub gcs_bucket: String,
     pub antigravity: AntigravityConfig,
     pub composio: ComposioConfig,
+    pub github: GithubConfig,
 }
 
 pub struct AntigravityConfig {
@@ -27,6 +30,14 @@ pub struct ComposioConfig {
     pub api_key: String,
     pub callback_url: String,
     pub auth_config_ids: HashMap<String, String>,
+}
+
+pub struct GithubConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    pub callback_url: String,
+    pub web_handoff_url: String,
+    pub token_key: [u8; 32],
 }
 
 fn var(key: &str) -> String {
@@ -62,13 +73,22 @@ impl Config {
             !refresh_tokens.is_empty(),
             "ANTIGRAVITY_REFRESH_TOKENS must contain at least one token"
         );
-        let auth_config_ids: HashMap<String, String> = json_var("COMPOSIO_AUTH_CONFIG_IDS");
+        let auth_config_ids: HashMap<String, String> =
+            json_var::<HashMap<String, String>>("COMPOSIO_AUTH_CONFIG_IDS")
+                .into_iter()
+                .map(|(k, v)| (k.trim().to_ascii_lowercase(), v))
+                .collect();
         assert!(
             !auth_config_ids.is_empty(),
             "COMPOSIO_AUTH_CONFIG_IDS must contain at least one toolkit"
         );
         let gcs_bucket = normalize_bucket(var("GCS_BUCKET"));
         assert!(!gcs_bucket.is_empty(), "GCS_BUCKET must not be empty");
+        let github_token_key = crypto::parse_key(&var("GITHUB_TOKEN_KEY"));
+        let github_callback_url = var("GITHUB_CALLBACK_URL");
+        let github_web_handoff_url = var("GITHUB_WEB_HANDOFF_URL");
+        reqwest::Url::parse(&github_callback_url).expect("GITHUB_CALLBACK_URL must be a valid URL");
+        reqwest::Url::parse(&github_web_handoff_url).expect("GITHUB_WEB_HANDOFF_URL must be a valid URL");
         Self {
             port: var("PORT").parse().expect("PORT must be a valid port number"),
             project_id: var("VERTEX_PROJECT_ID"),
@@ -90,6 +110,13 @@ impl Config {
                 callback_url: var("COMPOSIO_CALLBACK_URL"),
                 auth_config_ids,
             },
+            github: GithubConfig {
+                client_id: var("GITHUB_CLIENT_ID"),
+                client_secret: var("GITHUB_CLIENT_SECRET"),
+                callback_url: github_callback_url,
+                web_handoff_url: github_web_handoff_url,
+                token_key: github_token_key,
+            },
         }
     }
 }
@@ -99,6 +126,10 @@ pub const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 pub const TAVILY_SEARCH_URL: &str = "https://api.tavily.com/search";
 pub const GROQ_TRANSCRIBE_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
 pub const COMPOSIO_API_BASE: &str = "https://backend.composio.dev/api/v3";
+pub const GITHUB_AUTHORIZE_URL: &str = "https://github.com/login/oauth/authorize";
+pub const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+pub const GITHUB_API_BASE: &str = "https://api.github.com";
+pub const OAUTH_STATE_TTL_SECS: i64 = 600;
 pub const FIRESTORE_SCOPE: &str = "https://www.googleapis.com/auth/datastore";
 pub const GCS_STORAGE_BASE: &str = "https://storage.googleapis.com";
 pub const GCS_SCOPE: &str = "https://www.googleapis.com/auth/devstorage.read_write";
@@ -129,7 +160,9 @@ pub const SHUTDOWN_GRACE_SECS: u64 = 8;
 
 pub const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 pub const LARGE_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
-pub const MAX_ATTACHMENT_TOTAL_BYTES: usize = 18 * 1024 * 1024;
+pub use orchharness::config::{
+    CLOUD_MAX_ATTACHMENT_TOTAL_BYTES, CLOUD_WORKSPACE_PREFIX, SUPPORTED_CLOUD_GIT_HOSTS,
+};
 
 pub const TITLE_PROMPT: &str = "Generate a concise, 3 to 6 word title summarizing this user prompt. Do not use quotes or punctuation.\n\nUser prompt: ";
 pub const TITLE_PROMPT_MAX_CHARS: usize = 2000;

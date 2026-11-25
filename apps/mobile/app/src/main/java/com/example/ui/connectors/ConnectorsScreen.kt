@@ -2,7 +2,6 @@ package com.orch.app.ui.connectors
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -39,10 +37,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.orch.app.R
+import coil.compose.AsyncImage
 import com.orch.app.ui.ConnectorItemUi
 import com.orch.app.ui.ConnectorsUi
 import com.orch.app.ui.components.OrchBanner
@@ -190,7 +187,7 @@ private fun ConnectorCard(
                 size = 44.dp,
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
             ) {
-                ConnectorLogo(id = def.id)
+                ConnectorLogo(iconUrl = def.iconUrl)
             }
             Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -203,17 +200,19 @@ private fun ConnectorCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = MaterialTheme.shapes.extraSmall,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                ) {
-                    Text(
-                        text = def.category,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                    )
+                if (def.category.isNotBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = MaterialTheme.shapes.extraSmall,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    ) {
+                        Text(
+                            text = def.category,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
                 }
             }
             when {
@@ -285,38 +284,12 @@ private fun ConnectorCard(
 }
 
 @Composable
-private fun ConnectorLogo(id: String) {
-    when (id) {
-        "github" -> Icon(
-            painter = painterResource(R.drawable.ic_github_logo),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.size(24.dp)
-        )
-        else -> {
-            val logoRes = when (id) {
-                "googledrive" -> R.drawable.ic_connector_googledrive
-                "gmail" -> R.drawable.ic_connector_gmail
-                "notion" -> R.drawable.ic_connector_notion
-                "slack" -> R.drawable.ic_connector_slack
-                "jira" -> R.drawable.ic_connector_jira
-                else -> null
-            }
-            if (logoRes != null) {
-                Image(
-                    painter = painterResource(logoRes),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.size(24.dp)
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Outlined.Extension,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        }
-    }
+private fun ConnectorLogo(iconUrl: String?) {
+    val url = iconUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return
+    AsyncImage(
+        model = url,
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.size(24.dp)
+    )
 }

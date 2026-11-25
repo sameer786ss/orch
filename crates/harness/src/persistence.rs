@@ -1,13 +1,7 @@
 use rig::conversation::Conversation;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-pub use crate::events::TurnUsage;
-use crate::events::ToolDisplayInfo;
-
-fn is_false(value: &bool) -> bool {
-    !*value
-}
+pub use crate::events::{ChatEvent, TurnUsage};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,53 +33,11 @@ pub enum HistoryUserPart {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum HistoryRecord {
-    User {
-        content: Vec<HistoryUserPart>,
-    },
-    Work {
-        #[serde(rename = "durationSeconds")]
-        duration_seconds: u64,
-        #[serde(default, skip_serializing_if = "is_false")]
-        stopped: bool,
-    },
-    Reasoning {
-        text: String,
-        #[serde(rename = "durationSeconds")]
-        duration_seconds: u64,
-    },
-    ToolCall {
-        id: String,
-        name: String,
-        arguments: Value,
-        display: ToolDisplayInfo,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        output: Option<String>,
-        #[serde(default, skip_serializing_if = "is_false")]
-        #[serde(rename = "isError")]
-        is_error: bool,
-    },
-    Text {
-        text: String,
-    },
-    Compaction {
-        id: String,
-        #[serde(rename = "originalMessageCount")]
-        original_message_count: usize,
-        ts: i64,
-    },
-    Error {
-        message: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
     pub seq: i64,
     #[serde(flatten)]
-    pub record: HistoryRecord,
+    pub record: ChatEvent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

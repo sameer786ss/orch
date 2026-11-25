@@ -9,18 +9,12 @@ use serde_json::{json, Value};
 
 use crate::cloud::owned_session;
 use crate::cloud::store::{CloudSessionStore, StorageClient};
-use crate::cloud::workspace::{self, CLOUD_WORKSPACE_PREFIX};
+use crate::cloud::workspace;
 use crate::shared::auth::VerifiedUser;
-use crate::shared::config;
+use crate::shared::config::{self, CLOUD_WORKSPACE_PREFIX};
 use crate::shared::error::{ApiError, ApiResult};
-use crate::shared::extract::{ApiJson, ApiPath, ApiQuery};
+use crate::shared::extract::{ApiPath, ApiQuery};
 use crate::state::ServerState;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceInitRequest {
-    repo_url: String,
-}
 
 #[derive(Deserialize)]
 pub struct ListQuery {
@@ -31,21 +25,6 @@ pub struct ListQuery {
 pub struct HistoryQuery {
     limit: Option<usize>,
     before: Option<i64>,
-}
-
-pub async fn workspace_init(
-    State(state): State<ServerState>,
-    Extension(user): Extension<VerifiedUser>,
-    ApiJson(request): ApiJson<WorkspaceInitRequest>,
-) -> ApiResult<Json<Value>> {
-    let workspace = workspace::normalize(&request.repo_url)?;
-    let lease = state.sandbox_manager.acquire(&user.id, &workspace).await?;
-    drop(lease);
-    Ok(Json(json!({
-        "workspace": workspace.uri,
-        "repoUrl": workspace.repo_url,
-        "repoDir": workspace.repo_dir,
-    })))
 }
 
 pub async fn list(
@@ -98,21 +77,27 @@ pub async fn history(
     Ok(Json(page))
 }
 
-pub async fn workspace_info(
-    State(state): State<ServerState>,
-    Extension(user): Extension<VerifiedUser>,
-    ApiPath(session_id): ApiPath<String>,
-) -> ApiResult<Json<Value>> {
-    let record = owned_session(&state, &session_id, &user)
-        .await?
-        .filter(|record| record.workspace_path.starts_with(CLOUD_WORKSPACE_PREFIX))
-        .ok_or_else(|| ApiError::not_found("no cloud workspace for session"))?;
-    let workspace = workspace::normalize(&record.workspace_path)?;
-    Ok(Json(json!({
-        "workspace": workspace.uri,
-        "repoUrl": workspace.repo_url,
-        "repoDir": workspace.repo_dir,
-    })))
+pub async fn purge_session(state: &ServerState, session_id: &str) -> ApiResult<()> {
+    if let Some((_, run)) = state.active_runs.remove(session_id) {
+        run.cancel.cancel();
+        let wait = Duration::from_secs(config::RUN_CANCEL_WAIT_SECS);
+        if tokio::time::timeout(wait, run.wait_finished()).await.is_err() {
+            tracing::warn!(session = %session_id, "run did not stop before session deletion");
+        }
+    }
+
+    let storage = StorageClient::new(
+        state.http.clone(),
+        state.firestore.auth_provider(),
+        &state.config.gcs_bucket,
+        session_id,
+    );
+    storage.delete_prefix().await.map_err(ApiError::internal)?;
+    state
+        .firestore
+        .delete_session_and_entries(session_id)
+        .await?;
+    Ok(())
 }
 
 pub async fn delete(
@@ -121,27 +106,10 @@ pub async fn delete(
     ApiPath(session_id): ApiPath<String>,
 ) -> ApiResult<Json<Value>> {
     let record = owned_session(&state, &session_id, &user).await?;
-
-    if let Some((_, run)) = state.active_runs.remove(&session_id) {
-        run.cancel.cancel();
-        let wait = Duration::from_secs(config::RUN_CANCEL_WAIT_SECS);
-        if tokio::time::timeout(wait, run.wait_finished()).await.is_err() {
-            tracing::warn!(session = %session_id, "run did not stop before session deletion");
-        }
-    }
-
     if record.is_some() {
-        let storage = StorageClient::new(
-            state.http.clone(),
-            state.firestore.auth_provider(),
-            &state.config.gcs_bucket,
-            &session_id,
-        );
-        storage.delete_prefix().await.map_err(ApiError::internal)?;
+        purge_session(&state, &session_id).await?;
+    } else if let Some((_, run)) = state.active_runs.remove(&session_id) {
+        run.cancel.cancel();
     }
-    state
-        .firestore
-        .delete_session_and_entries(&session_id)
-        .await?;
     Ok(Json(json!({ "ok": true })))
 }

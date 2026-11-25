@@ -25,5 +25,13 @@ service cloud.firestore {
     match /orch_cloud_workspaces/{workspaceId} {
       allow read, write: if false;
     }
+
+    match /orch_github_accounts/{accountId} {
+      allow read, write: if false;
+    }
+
+    match /orch_oauth_states/{stateId} {
+      allow read, write: if false;
+    }
   }
 }

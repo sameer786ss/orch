@@ -56,7 +56,7 @@ export default function CookiesPolicyPage() {
           </p>
           <ul>
             <li><b>Public Informational &amp; Blog Pages:</b> Delivered statically and server-rendered with a strict Content Security Policy (<code>script-src &apos;self&apos;</code>, <code>connect-src &apos;self&apos;</code>) that prevents third-party ad networks or tracking scripts from executing.</li>
-            <li><b>OAuth Handoff Routes (<code>/auth-callback</code>, <code>/oauth/composio</code>):</b> Marked <code>noindex</code>, load zero external scripts, and immediately scrub query parameters from browser history via <code>window.history.replaceState</code> before handing off to Orch Desktop.</li>
+            <li><b>OAuth Handoff Routes (<code>/auth-callback</code>, <code>/oauth/github</code>, <code>/oauth/composio</code>):</b> Marked <code>noindex</code>, load zero external scripts, and immediately scrub query parameters from browser history via <code>window.history.replaceState</code> before returning to Orch.</li>
             <li><b>Orch Desktop &amp; Mobile Applications:</b> Contain zero advertising SDKs, zero third-party ad cookies, and zero behavioral tracking pixels.</li>
           </ul>
 

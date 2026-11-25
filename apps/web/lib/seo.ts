@@ -7,7 +7,7 @@ export const SITE_URL = 'https://orch.live'
 const SITE_DOMAIN = 'orch.live'
 export const DEFAULT_TITLE = 'Orch — Agentic Engineering Workspace & AI Systems Research Lab'
 export const DEFAULT_DESCRIPTION =
-  'Orch builds an agentic coding workspace for macOS & Windows with GitHub, Drive, Gmail, Jira & Slack connectors, Low/Medium/High thinking modes, $20/mo free compute, and empirical AI systems research.'
+  'Orch builds an agentic coding workspace for macOS, Windows & Android with native GitHub workspaces, Drive, Gmail, Jira & Slack connectors, Low/Medium/High thinking modes, $20/mo free compute, and empirical AI systems research.'
 export const DEFAULT_OG_IMAGE = '/images/orch-code-workspace.jpg'
 export const DEFAULT_OG_ALT =
   'Orch agentic engineering workspace for macOS and Windows'

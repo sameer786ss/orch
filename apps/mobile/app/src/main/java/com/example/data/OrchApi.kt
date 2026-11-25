@@ -53,8 +53,32 @@ interface OrchApi {
     @GET("budget")
     suspend fun budget(): Budget
 
-    @POST("cloud/workspace/init")
-    suspend fun initWorkspace(@Body body: WorkspaceInit): Workspace
+    @GET("github/accounts")
+    suspend fun githubAccounts(): List<GithubAccount>
+
+    @POST("github/connect")
+    suspend fun connectGithub(@Body body: GithubConnectRequest = GithubConnectRequest()): GithubConnectResponse
+
+    @DELETE("github/accounts/{id}")
+    suspend fun disconnectGithub(@Path("id") id: String)
+
+    @GET("github/repos")
+    suspend fun githubRepos(
+        @Query("accountId") accountId: String? = null,
+        @Query("query") query: String? = null
+    ): List<GithubRepo>
+
+    @GET("cloud/projects")
+    suspend fun projects(): List<CloudProject>
+
+    @POST("cloud/projects")
+    suspend fun openProject(@Body body: OpenProjectRequest): CloudProject
+
+    @POST("cloud/projects/create")
+    suspend fun createProject(@Body body: CreateProjectRequest): CloudProject
+
+    @DELETE("cloud/projects/{id}")
+    suspend fun deleteProject(@Path("id") id: String)
 
     @GET("cloud/sessions")
     suspend fun sessions(): List<SessionSummary>
@@ -65,9 +89,6 @@ interface OrchApi {
         @Query("limit") limit: Int,
         @Query("before") before: Long?
     ): HistoryPage
-
-    @GET("cloud/sessions/{id}/workspace")
-    suspend fun sessionWorkspace(@Path("id") id: String): Workspace
 
     @DELETE("cloud/sessions/{id}")
     suspend fun deleteSession(@Path("id") id: String)

@@ -2,10 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use moka::future::Cache;
-
-use orchharness::connectors::ConnectorSpecCache;
 use jsonwebtoken::DecodingKey;
+use moka::future::Cache;
+use orchharness::connectors::{ConnectorCatalogEntry, ConnectorSpecCache};
 
 use crate::cloud::e2b::SandboxManager;
 use crate::cloud::runs::LiveRun;
@@ -27,6 +26,7 @@ pub struct ServerState {
     pub auth_key_cache: Cache<String, Arc<DecodingKey>>,
     pub budget_cache: Cache<String, BudgetStatus>,
     pub connector_specs_cache: ConnectorSpecCache,
+    pub connector_catalog_cache: Cache<(), Arc<Vec<ConnectorCatalogEntry>>>,
     pub vertex_pool: VertexTokenPool,
     pub sandbox_manager: SandboxManager,
     pub active_runs: Arc<DashMap<String, Arc<LiveRun>>>,
@@ -49,6 +49,9 @@ impl ServerState {
         let firestore = FirestoreClient::new(http.clone(), &config.project_id).await;
         let vertex_pool = VertexTokenPool::new(&config.antigravity, http.clone());
         let connector_specs_cache = moka::future::Cache::builder()
+            .time_to_live(Duration::from_secs(300))
+            .build();
+        let connector_catalog_cache = moka::future::Cache::builder()
             .time_to_live(Duration::from_secs(300))
             .build();
         let config = Arc::new(config);
@@ -76,6 +79,7 @@ impl ServerState {
                 .max_capacity(config::AUTH_CACHE_CAPACITY)
                 .build(),
             connector_specs_cache,
+            connector_catalog_cache,
             vertex_pool,
             sandbox_manager,
             active_runs: Arc::new(DashMap::new()),

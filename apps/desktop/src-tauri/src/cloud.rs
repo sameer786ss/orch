@@ -1,12 +1,8 @@
 use orchharness::backend::normalize_workspace_subpath;
 
-pub use crate::gateway::CloudWorkspaceInfo;
+pub use crate::gateway::CloudProjectDto;
 
-pub const CLOUD_WORKSPACE_PREFIX: &str = "cloud://";
-
-pub fn is_cloud_workspace(workspace: &str) -> bool {
-    workspace.trim().starts_with(CLOUD_WORKSPACE_PREFIX)
-}
+pub use orchharness::config::{is_cloud_workspace, CLOUD_WORKSPACE_PREFIX};
 
 pub fn absolute_cloud_path(repo_dir: &str, path: &str) -> Result<String, String> {
     normalize_workspace_subpath(repo_dir, path).map_err(|error| error.to_string())
@@ -25,7 +21,7 @@ pub struct CloudWorkspace {
 }
 
 impl CloudWorkspace {
-    pub fn from_info(info: CloudWorkspaceInfo) -> Self {
+    pub fn from_project(info: CloudProjectDto) -> Self {
         Self {
             workspace_uri: info.workspace,
             repo_url: info.repo_url,

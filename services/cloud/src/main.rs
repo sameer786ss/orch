@@ -28,7 +28,7 @@ use crate::shared::{auth, budget};
 use crate::state::ServerState;
 
 fn api_routes(state: &ServerState) -> Router<ServerState> {
-    let public = local::public_routes();
+    let public = local::public_routes().merge(cloud::public_routes());
     let protected = cloud::protected_routes()
         .merge(local::protected_routes())
         .route("/budget", get(budget::handle))

@@ -10,7 +10,8 @@ import { useWorkspaceStore } from "./lib/workspace";
 import { Button } from "./components/ui/Button";
 import { TooltipProvider } from "./components/ui/Tooltip";
 import { FileFinder } from "./components/panel/FileFinder";
-import { RepoDialog } from "./components/projects/RepoDialog";
+import { AccountDialog } from "./components/projects/AccountDialog";
+import { NewProjectDialog } from "./components/projects/NewProjectDialog";
 import { Frame } from "./components/shell/Frame";
 import { TitleBar } from "./components/shell/TitleBar";
 import { ProjectPicker } from "./components/screens/ProjectPicker";
@@ -101,7 +102,8 @@ function Root() {
   return (
     <>
       {screen}
-      <RepoDialog />
+      <NewProjectDialog />
+      <AccountDialog />
     </>
   );
 }

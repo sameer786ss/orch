@@ -5,18 +5,6 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
-@Immutable
-enum class ThinkingEffort(val wire: String, val label: String, val shortLabel: String) {
-    Low("low", "Low", "Low"),
-    Medium("medium", "Medium", "Med"),
-    High("high", "High", "High");
-
-    companion object {
-        fun fromWire(value: String?): ThinkingEffort =
-            entries.firstOrNull { it.wire.equals(value, ignoreCase = true) } ?: High
-    }
-}
-
 @Serializable
 @Immutable
 data class ModelInfo(
@@ -26,9 +14,10 @@ data class ModelInfo(
     val contextWindow: Long = 0,
     val maxTokens: Long = 0,
     val capabilities: List<String> = emptyList(),
-    val badge: String? = null
+    val badge: String? = null,
+    val thinkingEfforts: List<String> = emptyList()
 ) {
-    val supportsThinking: Boolean get() = "thinking" in capabilities
+    val defaultThinkingEffort: String get() = thinkingEfforts.firstOrNull() ?: "low"
 }
 
 @Serializable
@@ -58,14 +47,64 @@ data class SessionSummary(
 )
 
 @Serializable
-data class WorkspaceInit(val repoUrl: String)
+@Immutable
+data class GithubAccount(
+    val id: String,
+    val login: String,
+    val name: String = "",
+    val avatarUrl: String = "",
+    val email: String = "",
+    val updatedAt: Long = 0
+)
 
 @Serializable
 @Immutable
-data class Workspace(
+data class GithubRepo(
+    val id: String,
+    val fullName: String,
+    val owner: String,
+    val name: String,
+    val description: String = "",
+    val private: Boolean = false,
+    val url: String,
+    val updatedAt: String = "",
+    val accountId: String,
+    val accountLogin: String
+)
+
+@Serializable
+data class GithubConnectRequest(val platform: String = "mobile")
+
+@Serializable
+data class GithubConnectResponse(val redirectUrl: String)
+
+@Serializable
+@Immutable
+data class CloudProject(
+    val id: String,
+    val name: String,
     val workspace: String,
     val repoUrl: String,
-    val repoDir: String = ""
+    val repoDir: String = "",
+    val githubAccountId: String = "",
+    val accountLogin: String = "",
+    val isPrivate: Boolean = false,
+    val accountConnected: Boolean = true,
+    val updatedAt: Long = 0
+)
+
+@Serializable
+data class OpenProjectRequest(
+    val repoUrl: String,
+    val accountId: String
+)
+
+@Serializable
+data class CreateProjectRequest(
+    val accountId: String,
+    val name: String,
+    val description: String? = null,
+    val private: Boolean = true
 )
 
 @Serializable
@@ -74,9 +113,8 @@ data class ChatRequest(
     val prompt: String,
     val model: String,
     val workspace: String,
-    val repoUrl: String? = null,
     val activeConnectors: List<String> = emptyList(),
-    val thinkingEffort: String = ThinkingEffort.Medium.wire
+    val thinkingEffort: String = "low"
 )
 
 @Serializable
@@ -179,5 +217,7 @@ data class ConnectorDefinition(
     val id: String,
     val name: String,
     val description: String,
-    val category: String
+    val category: String,
+    val iconUrl: String? = null,
+    val toolCount: Int = 0
 )

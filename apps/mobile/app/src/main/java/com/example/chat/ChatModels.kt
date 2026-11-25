@@ -72,21 +72,3 @@ data class ChatMessage(
     val error: String? = null,
     val cancelled: Boolean = false
 )
-
-@Immutable
-data class Repo(
-    val workspace: String,
-    val repoUrl: String
-) {
-    val name: String
-        get() = repoUrl.substringAfter("://").substringAfter('/').removeSuffix("/").removeSuffix(".git")
-
-    companion object {
-        private const val PREFIX = "cloud://"
-
-        fun fromWorkspacePath(path: String?): Repo? {
-            if (path.isNullOrBlank() || !path.startsWith(PREFIX)) return null
-            return Repo(workspace = path, repoUrl = "https://" + path.removePrefix(PREFIX))
-        }
-    }
-}

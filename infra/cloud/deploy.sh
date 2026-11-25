@@ -17,8 +17,12 @@ trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/src"
 tar --exclude=target --exclude=.git --exclude=.env.yaml -C "$ROOT" -cf - Cargo.toml Cargo.lock crates/harness services/cloud | tar -xf - -C "$WORK/src"
-awk '!/^[[:space:]]*"apps\/desktop\/src-tauri",[[:space:]]*$/' "$WORK/src/Cargo.toml" > "$WORK/src/Cargo.toml.tmp"
-mv "$WORK/src/Cargo.toml.tmp" "$WORK/src/Cargo.toml"
+ruby -e '
+  src = File.read(ARGV[0])
+  out = src.sub(/\n[ \t]*"apps\/desktop\/src-tauri",?\n/, "\n")
+  abort "failed to exclude desktop workspace member" if out == src
+  File.write(ARGV[0], out)
+' "$WORK/src/Cargo.toml"
 cp "$INFRA/.gcloudignore" "$WORK/src/.gcloudignore"
 
 echo "==> Building on Cloud Build"

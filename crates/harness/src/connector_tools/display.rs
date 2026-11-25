@@ -1,55 +1,42 @@
 use serde_json::Value;
 
-use crate::connector_tools::actions::Target;
-use crate::connectors;
 use crate::events::{ToolDisplayInfo, ToolIcon};
 
 const MAX_TARGET_CHARS: usize = 160;
 
 pub fn display_info(name: &str, args: &Value) -> Option<ToolDisplayInfo> {
-    let def = connectors::def_for_slug(name)?;
-    let (label, active_label, target_text) =
-        match def.actions.iter().find(|action| action.slug == name) {
-            Some(action) => (
-                action.label.to_string(),
-                action.active_label.to_string(),
-                target_text(action.target, args),
-            ),
-            None => {
-                let label = humanize(name.strip_prefix(def.slug_prefix).unwrap_or(name));
-                (label.clone(), label, None)
-            }
-        };
+    let (prefix, action) = name.split_once('_')?;
+    if prefix.is_empty()
+        || action.is_empty()
+        || !prefix
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
+        return None;
+    }
+    let label = humanize(action);
     Some(ToolDisplayInfo {
+        active_label: label.clone(),
         label,
-        active_label,
-        target_text,
+        target_text: extract_target(args),
         icon: ToolIcon::Globe,
-        connector: Some(def.id.to_string()),
+        connector: Some(prefix.to_ascii_lowercase()),
         ..Default::default()
     })
 }
 
-fn scalar(args: &Value, key: &str) -> Option<String> {
-    match args.get(key)? {
+fn scalar(value: &Value) -> Option<String> {
+    match value {
         Value::String(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
         Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
         _ => None,
     }
 }
 
-fn target_text(target: Target, args: &Value) -> Option<String> {
-    let text = match target {
-        Target::None => return None,
-        Target::Key(key) => scalar(args, key)?,
-        Target::Path(keys) => {
-            let parts: Vec<String> = keys.iter().filter_map(|key| scalar(args, key)).collect();
-            if parts.is_empty() {
-                return None;
-            }
-            parts.join("/")
-        }
-    };
+fn extract_target(args: &Value) -> Option<String> {
+    let map = args.as_object()?;
+    let text = map.values().find_map(scalar)?;
     Some(crate::util::truncate_chars(&text, MAX_TARGET_CHARS).to_string())
 }
 

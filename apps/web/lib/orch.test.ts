@@ -47,6 +47,24 @@ test('resolveHandoff handles composio connector callbacks', () => {
   }
 })
 
+test('resolveHandoff handles github oauth callbacks', () => {
+  const ok = resolveHandoff('github', '?status=success&platform=mobile&login=alice')
+  assert.equal(ok.status, 'done')
+  if (ok.status === 'done') {
+    assert.equal(ok.target, 'orch://oauth/github?status=success&login=alice')
+  }
+
+  const failed = resolveHandoff('github', '?status=failed&message=Denied')
+  assert.equal(failed.status, 'error')
+  if (failed.status === 'error') {
+    assert.equal(failed.message, 'Denied')
+    assert.equal(failed.target, 'orch://oauth/github?status=failed&message=Denied')
+  }
+
+  const empty = resolveHandoff('github', '')
+  assert.equal(empty.status, 'error')
+})
+
 test('BLOG_POSTS has 6 complete research blogs with derived content lists', () => {
   assert.equal(BLOG_POSTS.length, 6)
   assert.equal(papers.length, BLOG_POSTS.length)
@@ -74,7 +92,7 @@ test('DOWNLOAD_LINKS and CONNECTORS match Orch specification', () => {
     DOWNLOAD_LINKS.windowsExe,
     'https://github.com/sameer786ss/orch/releases/latest/download/Orch-Windows-Setup.exe'
   )
-  assert.equal(CONNECTORS.length, 5)
+  assert.equal(CONNECTORS.length, 4)
   assert.equal(THINKING_MODES.length, 3)
 })
 

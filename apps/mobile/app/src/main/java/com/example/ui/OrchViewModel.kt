@@ -12,7 +12,6 @@ import com.orch.app.chat.ChatReducer
 import com.orch.app.chat.ChatRow
 import com.orch.app.chat.EarlierRow
 import com.orch.app.chat.LIVE_STEP_EVENTS
-import com.orch.app.chat.Repo
 import com.orch.app.chat.UserAttachment
 import com.orch.app.chat.buildRows
 import com.orch.app.data.ApiError
@@ -22,20 +21,24 @@ import com.orch.app.data.AttachmentSource
 import com.orch.app.data.Budget
 import com.orch.app.data.CancelRequest
 import com.orch.app.data.ChatRequest
+import com.orch.app.data.CloudProject
 import com.orch.app.data.ConnectorAccount
 import com.orch.app.data.ConnectorConnectRequest
 import com.orch.app.data.ConnectorDefinition
+import com.orch.app.data.CreateProjectRequest
 import com.orch.app.data.FileEntry
+import com.orch.app.data.GithubAccount
+import com.orch.app.data.GithubConnectRequest
+import com.orch.app.data.GithubRepo
 import com.orch.app.data.ModelInfo
+import com.orch.app.data.OpenProjectRequest
 import com.orch.app.data.OrchClient
 import com.orch.app.data.OrchPreferences
 import com.orch.app.data.OrchStream
 import com.orch.app.data.SessionSummary
 import com.orch.app.data.SseFrame
-import com.orch.app.data.ThinkingEffort
 import com.orch.app.data.TranscribeRequest
 import com.orch.app.data.TreeEntry
-import com.orch.app.data.WorkspaceInit
 import com.orch.app.data.runCatchingSuspend
 import com.orch.app.data.toApiError
 import com.orch.app.terminal.SandboxTerminal
@@ -68,13 +71,11 @@ data class ChatUi(
     val streaming: Boolean = false,
     val loading: Boolean = false,
     val loadFailed: Boolean = false,
-    val repo: Repo? = null,
-    val repoLocked: Boolean = false,
-    val connecting: Boolean = false,
-    val repoError: String? = null,
+    val project: CloudProject? = null,
+    val projectLocked: Boolean = false,
     val contextTokens: Long = 0
 ) {
-    val canSend: Boolean get() = !loadFailed && (repo != null || repoLocked)
+    val canSend: Boolean get() = !loadFailed && project != null
 }
 
 @Immutable
@@ -137,11 +138,53 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedModelId = MutableStateFlow("")
     val selectedModelId: StateFlow<String> = _selectedModelId.asStateFlow()
 
-    private val _thinkingEffort = MutableStateFlow(ThinkingEffort.High)
-    val thinkingEffort: StateFlow<ThinkingEffort> = _thinkingEffort.asStateFlow()
+    private val _thinkingEffort = MutableStateFlow("low")
+    val thinkingEffort: StateFlow<String> = _thinkingEffort.asStateFlow()
 
     private val _budget = MutableStateFlow<Budget?>(null)
     val budget: StateFlow<Budget?> = _budget.asStateFlow()
+
+    private val _projects = MutableStateFlow<List<CloudProject>>(emptyList())
+    val projects: StateFlow<List<CloudProject>> = _projects.asStateFlow()
+
+    private val _projectsFailed = MutableStateFlow(false)
+    val projectsFailed: StateFlow<Boolean> = _projectsFailed.asStateFlow()
+
+    private val _activeProjectId = MutableStateFlow<String?>(null)
+    val activeProjectId: StateFlow<String?> = _activeProjectId.asStateFlow()
+
+    private val _deletingProjectId = MutableStateFlow<String?>(null)
+    val deletingProjectId: StateFlow<String?> = _deletingProjectId.asStateFlow()
+
+    private val _projectBusy = MutableStateFlow(false)
+    val projectBusy: StateFlow<Boolean> = _projectBusy.asStateFlow()
+
+    private val _projectError = MutableStateFlow<String?>(null)
+    val projectError: StateFlow<String?> = _projectError.asStateFlow()
+
+    private val _githubAccounts = MutableStateFlow<List<GithubAccount>>(emptyList())
+    val githubAccounts: StateFlow<List<GithubAccount>> = _githubAccounts.asStateFlow()
+
+    private val _githubAccountsLoading = MutableStateFlow(false)
+    val githubAccountsLoading: StateFlow<Boolean> = _githubAccountsLoading.asStateFlow()
+
+    private val _githubConnecting = MutableStateFlow(false)
+    val githubConnecting: StateFlow<Boolean> = _githubConnecting.asStateFlow()
+
+    private val _githubDisconnectingId = MutableStateFlow<String?>(null)
+    val githubDisconnectingId: StateFlow<String?> = _githubDisconnectingId.asStateFlow()
+
+    private val _githubError = MutableStateFlow<String?>(null)
+    val githubError: StateFlow<String?> = _githubError.asStateFlow()
+
+    private val _githubRepos = MutableStateFlow<List<GithubRepo>>(emptyList())
+    val githubRepos: StateFlow<List<GithubRepo>> = _githubRepos.asStateFlow()
+
+    private val _githubReposLoading = MutableStateFlow(false)
+    val githubReposLoading: StateFlow<Boolean> = _githubReposLoading.asStateFlow()
+
+    private val _githubReposError = MutableStateFlow<String?>(null)
+    val githubReposError: StateFlow<String?> = _githubReposError.asStateFlow()
 
     private val _chat = MutableStateFlow(ChatUi(sessionId = newSessionId()))
     val chat: StateFlow<ChatUi> = _chat.asStateFlow()
@@ -176,6 +219,8 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     private var artifactJob: Job? = null
     private var modelsJob: Job? = null
     private var connectorsJob: Job? = null
+    private var projectsJob: Job? = null
+    private var githubReposJob: Job? = null
     private var publishJob: Job? = null
     private var earliestSeq: Long? = null
     private var hasMore = false
@@ -191,6 +236,9 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         loadPreferences()
         loadModels(reportFailure = true)
         loadConnectors()
+        refreshGithubAccounts()
+        refreshProjects()
+        refreshSessions()
     }
 
     private fun newSessionId(): String = UUID.randomUUID().toString()
@@ -203,9 +251,22 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         notice(error.toApiError().message)
     }
 
+    private fun resolveThinkingEffort(model: ModelInfo, preferred: String?): String {
+        val matched = preferred?.let { target ->
+            model.thinkingEfforts.firstOrNull { it.equals(target, ignoreCase = true) }
+        }
+        return matched ?: model.defaultThinkingEffort
+    }
+
     private fun loadPreferences() {
         viewModelScope.launch {
-            _thinkingEffort.value = preferences.thinkingEffort.first()
+            val saved = preferences.thinkingEffort.first()
+            val model = _models.value.firstOrNull { it.id == _selectedModelId.value }
+            if (model != null) {
+                _thinkingEffort.value = resolveThinkingEffort(model, saved)
+            } else if (!saved.isNullOrBlank()) {
+                _thinkingEffort.value = saved.trim().lowercase()
+            }
         }
     }
 
@@ -213,13 +274,21 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         if (modelsJob?.isActive == true) return
         modelsJob = viewModelScope.launch {
             val saved = preferences.modelId.first()
+            val savedEffort = preferences.thinkingEffort.first()
             runCatchingSuspend { api.models() }
                 .onSuccess { list ->
                     _models.value = list
                     val current = _selectedModelId.value
-                    _selectedModelId.value = list.firstOrNull { it.id == current }?.id
+                    val nextId = list.firstOrNull { it.id == current }?.id
                         ?: list.firstOrNull { it.id == saved }?.id
                         ?: list.firstOrNull()?.id.orEmpty()
+                    _selectedModelId.value = nextId
+                    list.firstOrNull { it.id == nextId }?.let { model ->
+                        _thinkingEffort.value = resolveThinkingEffort(
+                            model,
+                            savedEffort ?: _thinkingEffort.value
+                        )
+                    }
                 }
                 .onFailure { if (reportFailure) report(it) }
         }
@@ -227,12 +296,17 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectModel(id: String) {
         _selectedModelId.value = id
+        _models.value.firstOrNull { it.id == id }?.let { model ->
+            _thinkingEffort.value = resolveThinkingEffort(model, _thinkingEffort.value)
+        }
         viewModelScope.launch { preferences.setModelId(id) }
     }
 
-    fun selectThinkingEffort(effort: ThinkingEffort) {
-        _thinkingEffort.value = effort
-        viewModelScope.launch { preferences.setThinkingEffort(effort) }
+    fun selectThinkingEffort(effort: String) {
+        val model = _models.value.firstOrNull { it.id == _selectedModelId.value }
+        val matched = model?.thinkingEfforts?.firstOrNull { it.equals(effort, ignoreCase = true) } ?: return
+        _thinkingEffort.value = matched
+        viewModelScope.launch { preferences.setThinkingEffort(matched) }
     }
 
     fun loadConnectors() {
@@ -342,6 +416,259 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun findProjectForWorkspace(workspacePath: String?, list: List<CloudProject> = _projects.value): CloudProject? {
+        val path = workspacePath?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return list.firstOrNull { it.workspace == path }
+    }
+
+    private fun resolveActiveProject(list: List<CloudProject>, preferredId: String?): CloudProject? =
+        preferredId?.let { id -> list.firstOrNull { it.id == id } } ?: list.firstOrNull()
+
+    fun refreshProjects() {
+        if (projectsJob?.isActive == true) return
+        projectsJob = viewModelScope.launch { loadProjects() }
+    }
+
+    private suspend fun loadProjects(): List<CloudProject>? {
+        val savedPreferred = _activeProjectId.value ?: preferences.activeProjectId.first()
+        val remote = runCatchingSuspend { api.projects() }.getOrNull()
+        _projectsFailed.value = remote == null
+        if (remote == null) return null
+        _projects.value = remote
+        val active = resolveActiveProject(remote, savedPreferred)
+        _activeProjectId.value = active?.id
+        if (active?.id != savedPreferred) {
+            preferences.setActiveProjectId(active?.id)
+        }
+        _chat.update { ui ->
+            val currentProject = ui.project
+            val refreshed = currentProject?.let { prev -> remote.firstOrNull { it.id == prev.id } }
+            val nextProject = when {
+                refreshed != null -> refreshed
+                ui.projectLocked || ui.rows.isNotEmpty() -> null
+                else -> active
+            }
+            ui.copy(project = nextProject)
+        }
+        return remote
+    }
+
+    fun refreshGithubAccounts(reloadRepos: Boolean = false) {
+        viewModelScope.launch {
+            _githubAccountsLoading.value = true
+            runCatchingSuspend { api.githubAccounts() }
+                .onSuccess { list ->
+                    _githubAccounts.value = list
+                    _githubAccountsLoading.value = false
+                    _githubError.value = null
+                    if (reloadRepos && list.isNotEmpty()) {
+                        loadGithubRepos(accountId = list.first().id, query = "")
+                    }
+                }
+                .onFailure { error ->
+                    _githubAccountsLoading.value = false
+                    _githubError.value = error.toApiError().message
+                }
+        }
+    }
+
+    fun connectGithub(onOpenUrl: (String) -> Unit) {
+        if (_githubConnecting.value) return
+        _githubConnecting.value = true
+        _githubError.value = null
+        viewModelScope.launch {
+            runCatchingSuspend { api.connectGithub(GithubConnectRequest("mobile")) }
+                .onSuccess { response ->
+                    _githubConnecting.value = false
+                    onOpenUrl(response.redirectUrl)
+                }
+                .onFailure { error ->
+                    _githubConnecting.value = false
+                    val message = error.toApiError().message
+                    _githubError.value = message
+                    notice(message)
+                }
+        }
+    }
+
+    fun disconnectGithub(id: String) {
+        if (_githubDisconnectingId.value != null) return
+        _githubDisconnectingId.value = id
+        _githubError.value = null
+        viewModelScope.launch {
+            runCatchingSuspend { api.disconnectGithub(id) }
+                .onSuccess {
+                    _githubDisconnectingId.value = null
+                    refreshGithubAccounts()
+                    refreshProjects()
+                }
+                .onFailure { error ->
+                    _githubDisconnectingId.value = null
+                    val message = error.toApiError().message
+                    _githubError.value = message
+                    notice(message)
+                }
+        }
+    }
+
+    fun loadGithubRepos(accountId: String? = null, query: String = "") {
+        githubReposJob?.cancel()
+        githubReposJob = viewModelScope.launch {
+            _githubReposLoading.value = true
+            _githubReposError.value = null
+            runCatchingSuspend { api.githubRepos(accountId, query.trim().ifEmpty { null }) }
+                .onSuccess { list ->
+                    _githubRepos.value = list
+                    _githubReposLoading.value = false
+                }
+                .onFailure { error ->
+                    _githubRepos.value = emptyList()
+                    _githubReposLoading.value = false
+                    _githubReposError.value = error.toApiError().message
+                }
+        }
+    }
+
+    fun clearProjectError() {
+        _projectError.value = null
+    }
+
+    private fun activateProject(project: CloudProject) {
+        _projects.update { list -> listOf(project) + list.filterNot { it.id == project.id } }
+        _projectsFailed.value = false
+        newChat(projectId = project.id)
+    }
+
+    fun openGithubProject(repoUrl: String, accountId: String, onSuccess: () -> Unit) {
+        if (_projectBusy.value) return
+        _projectBusy.value = true
+        _projectError.value = null
+        viewModelScope.launch {
+            runCatchingSuspend { api.openProject(OpenProjectRequest(repoUrl = repoUrl, accountId = accountId)) }
+                .onSuccess { project ->
+                    _projectBusy.value = false
+                    activateProject(project)
+                    onSuccess()
+                }
+                .onFailure { error ->
+                    _projectBusy.value = false
+                    _projectError.value = error.toApiError().message
+                }
+        }
+    }
+
+    fun createGithubProject(
+        accountId: String,
+        name: String,
+        description: String?,
+        private: Boolean,
+        onSuccess: () -> Unit
+    ) {
+        if (_projectBusy.value) return
+        val cleanName = name.trim()
+        if (cleanName.isEmpty()) {
+            _projectError.value = "Repository name is required."
+            return
+        }
+        _projectBusy.value = true
+        _projectError.value = null
+        viewModelScope.launch {
+            runCatchingSuspend {
+                api.createProject(
+                    CreateProjectRequest(
+                        accountId = accountId,
+                        name = cleanName,
+                        description = description?.trim()?.ifEmpty { null },
+                        private = private
+                    )
+                )
+            }
+                .onSuccess { project ->
+                    _projectBusy.value = false
+                    activateProject(project)
+                    onSuccess()
+                }
+                .onFailure { error ->
+                    _projectBusy.value = false
+                    _projectError.value = error.toApiError().message
+                }
+        }
+    }
+
+    fun selectProject(projectId: String) {
+        val target = _projects.value.firstOrNull { it.id == projectId } ?: return
+        if (_activeProjectId.value != projectId) {
+            _activeProjectId.value = projectId
+            viewModelScope.launch { preferences.setActiveProjectId(projectId) }
+        }
+        if (_chat.value.project?.id != projectId) {
+            val latestSession = _sessions.value.firstOrNull { it.workspacePath == target.workspace }
+            if (latestSession != null) {
+                openSession(latestSession.id)
+            } else {
+                newChat(projectId = projectId)
+            }
+        }
+    }
+
+    fun deleteProject(projectId: String) {
+        if (_deletingProjectId.value != null) return
+        val target = _projects.value.firstOrNull { it.id == projectId } ?: return
+        _deletingProjectId.value = projectId
+        viewModelScope.launch {
+            runCatchingSuspend { api.deleteProject(projectId) }
+                .onSuccess {
+                    _deletingProjectId.value = null
+                    val remaining = _projects.value.filterNot { it.id == projectId }
+                    _projects.value = remaining
+                    _sessions.update { list -> list.filterNot { it.workspacePath == target.workspace } }
+                    val currentProject = _chat.value.project
+                    val nextActive = if (_activeProjectId.value == projectId) remaining.firstOrNull() else resolveActiveProject(remaining, _activeProjectId.value)
+                    _activeProjectId.value = nextActive?.id
+                    preferences.setActiveProjectId(nextActive?.id)
+                    if (currentProject?.id == projectId || currentProject?.workspace == target.workspace) {
+                        newChat(projectId = nextActive?.id)
+                    }
+                }
+                .onFailure { error ->
+                    _deletingProjectId.value = null
+                    report(error)
+                    refreshProjects()
+                }
+        }
+    }
+
+    fun onOAuthRedirect(uri: Uri) {
+        if (!uri.scheme.equals("orch", ignoreCase = true)) return
+        if (!uri.host.equals("oauth", ignoreCase = true)) return
+        val route = uri.path?.trim('/') ?: ""
+        val status = uri.getQueryParameter("status")
+        when (route) {
+            "github" -> {
+                if (status == "success") {
+                    val login = uri.getQueryParameter("login")?.takeIf { it.isNotBlank() }
+                    notice(if (login != null) "Connected GitHub @$login" else "GitHub connected")
+                    _githubError.value = null
+                    refreshGithubAccounts(reloadRepos = true)
+                    refreshProjects()
+                } else {
+                    val message = uri.getQueryParameter("message")?.takeIf { it.isNotBlank() }
+                        ?: "GitHub connection was not completed."
+                    _githubError.value = message
+                    notice(message)
+                }
+            }
+            "composio" -> {
+                if (status == "success") {
+                    loadConnectors()
+                } else {
+                    pendingConnectToolkit = null
+                    notice("The connector sign-in was not completed.")
+                }
+            }
+        }
+    }
+
     fun refreshSessions() {
         viewModelScope.launch { loadSessions() }
     }
@@ -371,7 +698,9 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         refreshBudget()
         if (_models.value.isEmpty()) loadModels(reportFailure = false)
         loadConnectors()
+        refreshGithubAccounts()
         viewModelScope.launch {
+            loadProjects()
             val remote = loadSessions() ?: return@launch
             val current = _chat.value
             val running = remote.firstOrNull { it.id == current.sessionId }?.running == true
@@ -381,12 +710,19 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun newChat() {
+    fun newChat(projectId: String? = null) {
         stopTracking()
         reducer.clear()
         _attachments.value = emptyList()
         resetPaging()
-        _chat.value = ChatUi(sessionId = newSessionId())
+        val resolvedId = projectId ?: _chat.value.project?.id ?: _activeProjectId.value
+        val project = resolveActiveProject(_projects.value, resolvedId)
+        _activeProjectId.value = project?.id
+        viewModelScope.launch { preferences.setActiveProjectId(project?.id) }
+        _chat.value = ChatUi(
+            sessionId = newSessionId(),
+            project = project
+        )
     }
 
     fun openSession(id: String, force: Boolean = false) {
@@ -397,34 +733,41 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         resetPaging()
         if (!sameSession) _attachments.value = emptyList()
         val summary = _sessions.value.firstOrNull { it.id == id }
-        val initialRepo = Repo.fromWorkspacePath(summary?.workspacePath) ?: _chat.value.repo.takeIf { sameSession }
+        val initialProject = findProjectForWorkspace(summary?.workspacePath)
+            ?: _chat.value.project.takeIf { sameSession }
         reducer.setContextTokens(summary?.contextTokens ?: 0)
         _chat.value = ChatUi(
             sessionId = id,
             loading = true,
-            repo = initialRepo,
+            project = initialProject,
             contextTokens = summary?.contextTokens ?: 0
         )
         historyJob = viewModelScope.launch {
             val history = async { runCatchingSuspend { api.history(id, HISTORY_LIMIT, null) } }
             val list = async { loadSessions() }
+            val projectsList = async {
+                if (_projects.value.isEmpty() || _projectsFailed.value) loadProjects() else _projects.value
+            }
             val page = history.await().getOrElse {
                 report(it)
                 _chat.update { ui -> ui.copy(loading = false, loadFailed = true) }
                 return@launch
             }
             val remoteSummary = list.await()?.firstOrNull { it.id == id }
+            val loadedProjects = projectsList.await() ?: _projects.value
             val running = remoteSummary?.running ?: (summary?.running == true)
-            val resolvedRepo = Repo.fromWorkspacePath(remoteSummary?.workspacePath ?: summary?.workspacePath)
-                ?: _chat.value.repo
-                ?: runCatchingSuspend { api.sessionWorkspace(id) }.getOrNull()?.let { ws ->
-                    Repo(ws.workspace, ws.repoUrl)
-                }
+            val workspacePath = remoteSummary?.workspacePath ?: summary?.workspacePath
+            val resolvedProject = findProjectForWorkspace(workspacePath, loadedProjects)
+                ?: _chat.value.project
+            if (resolvedProject != null) {
+                _activeProjectId.value = resolvedProject.id
+                preferences.setActiveProjectId(resolvedProject.id)
+            }
             remoteSummary?.contextTokens?.let { reducer.setContextTokens(it) }
             reducer.load(page.records)
             earliestSeq = page.earliestSeq
             hasMore = page.hasMore
-            _chat.update { it.copy(loading = false, repo = resolvedRepo) }
+            _chat.update { it.copy(loading = false, project = resolvedProject) }
             if (running) {
                 reducer.beginFollow()
                 publishNow()
@@ -463,8 +806,12 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteSession(id: String) {
         deleting += id
+        val sessionWorkspace = _sessions.value.firstOrNull { it.id == id }?.workspacePath
+        val targetProjectId = findProjectForWorkspace(sessionWorkspace)?.id
+            ?: _chat.value.project?.id
+            ?: _activeProjectId.value
         _sessions.update { list -> list.filterNot { it.id == id } }
-        if (_chat.value.sessionId == id) newChat()
+        if (_chat.value.sessionId == id) newChat(projectId = targetProjectId)
         viewModelScope.launch {
             val result = runCatchingSuspend { api.deleteSession(id) }
             deleting -= id
@@ -473,40 +820,6 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
                 loadSessions()
             }
         }
-    }
-
-    fun connectRepo(input: String) {
-        val value = input.trim()
-        val id = _chat.value.sessionId
-        if (value.isEmpty() || _chat.value.repoLocked || _chat.value.connecting) return
-        viewModelScope.launch {
-            _chat.update { it.copy(connecting = true, repoError = null) }
-            runCatchingSuspend { api.initWorkspace(WorkspaceInit(value)) }
-                .onSuccess { workspace ->
-                    _chat.update {
-                        if (it.sessionId != id) it
-                        else it.copy(
-                            connecting = false,
-                            repo = Repo(workspace.workspace, workspace.repoUrl)
-                        )
-                    }
-                }
-                .onFailure { error ->
-                    _chat.update {
-                        if (it.sessionId != id) it
-                        else it.copy(connecting = false, repoError = error.toApiError().message)
-                    }
-                }
-        }
-    }
-
-    fun clearRepoError() {
-        _chat.update { if (it.repoError == null) it else it.copy(repoError = null) }
-    }
-
-    fun disconnectRepo() {
-        if (_chat.value.repoLocked) return
-        _chat.update { it.copy(repo = null, repoError = null) }
     }
 
     fun addAttachments(uris: List<Uri>) {
@@ -556,6 +869,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun send(text: String): Boolean {
         val ui = _chat.value
+        val project = ui.project ?: return false
         val prompt = text.trim()
         val pending = _attachments.value
         if (ui.streaming || ui.loading || !ui.canSend || (prompt.isEmpty() && pending.isEmpty())) return false
@@ -568,7 +882,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         val id = ui.sessionId
         val sources = pending.map { item -> AttachmentSource(item.name) { resolver.openInputStream(item.uri) } }
         val activeConnectors = _connectors.value.activeIds
-        val effort = if (model.supportsThinking) _thinkingEffort.value.wire else ThinkingEffort.Medium.wire
+        val effort = resolveThinkingEffort(model, _thinkingEffort.value)
         reducer.beginTurn(
             prompt,
             pending.map { UserAttachment(name = it.name, previewUri = if (it.isImage) it.uri.toString() else null) }
@@ -584,8 +898,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
                         sessionId = id,
                         prompt = prompt,
                         model = model.id,
-                        workspace = ui.repo?.workspace.orEmpty(),
-                        repoUrl = ui.repo?.repoUrl,
+                        workspace = project.workspace,
                         activeConnectors = activeConnectors,
                         thinkingEffort = effort
                     ),
@@ -707,7 +1020,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         if (_sessions.value.none { it.id == sessionId }) {
             val placeholder = SessionSummary(
                 id = sessionId,
-                workspacePath = ui.repo?.workspace,
+                workspacePath = ui.project?.workspace,
                 updatedAt = System.currentTimeMillis(),
                 running = true
             )
@@ -768,14 +1081,14 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 rows = rows,
                 streaming = reducer.streaming,
-                repoLocked = reducer.hasUserMessage,
+                projectLocked = reducer.hasUserMessage,
                 contextTokens = reducer.contextTokens
             )
         }
     }
 
     fun browseFiles(path: String = _files.value.currentPath, query: String = _files.value.query) {
-        val workspace = _chat.value.repo?.workspace
+        val workspace = _chat.value.project?.workspace
         filesJob?.cancel()
         if (workspace.isNullOrBlank()) {
             _files.value = FilesUi(currentPath = path, query = query, loading = false, error = null)
@@ -845,7 +1158,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openFile(path: String) {
-        val workspace = _chat.value.repo?.workspace ?: return
+        val workspace = _chat.value.project?.workspace ?: return
         val name = path.trimEnd('/').substringAfterLast('/')
         artifactJob?.cancel()
         _artifact.value = ArtifactState.Loading(name, path)
@@ -872,7 +1185,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
             else -> return
         }
         if (_saving.value) return
-        val workspace = _chat.value.repo?.workspace ?: return
+        val workspace = _chat.value.project?.workspace ?: return
         _saving.value = true
         viewModelScope.launch {
             val message = try {

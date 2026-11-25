@@ -30,17 +30,59 @@ fn focus_main_window(app: &tauri::AppHandle) {
     }
 }
 
-async fn handle_connector_callback(app: &tauri::AppHandle, rest: &str) {
-    let error = connector_callback_error(rest);
-    if let Some(ref err) = error {
-        sentry::capture_message(&format!("connector callback error: {err}"), sentry::Level::Warning);
+async fn handle_oauth_callback(app: &tauri::AppHandle, rest: &str) {
+    let trimmed = rest.trim_start_matches('/');
+    let route = trimmed.split('?').next().unwrap_or(trimmed).trim_end_matches('/');
+    let normalized = format!("http://localhost/{trimmed}");
+    let url = reqwest::Url::parse(&normalized).ok();
+    let param = |key: &str| -> Option<String> {
+        url.as_ref().and_then(|u| {
+            u.query_pairs()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.into_owned())
+        })
+    };
+    let status = param("status");
+
+    match route {
+        "composio" => {
+            let error = match status.as_deref() {
+                Some("success") => None,
+                Some("failed") => Some("The connector sign-in was not completed".to_string()),
+                _ => Some("Invalid connector sign-in callback".to_string()),
+            };
+            if let Some(ref err) = error {
+                sentry::capture_message(&format!("connector callback error: {err}"), sentry::Level::Warning);
+            }
+            let _ = app.emit("connector-changed", serde_json::json!({ "error": error }));
+        }
+        "github" => {
+            let message = param("message").filter(|s| !s.trim().is_empty());
+            let login = param("login").filter(|s| !s.trim().is_empty());
+            let error = match status.as_deref() {
+                Some("success") => None,
+                Some("failed") => Some(message.unwrap_or_else(|| "GitHub connection was not completed".to_string())),
+                _ => Some("Invalid GitHub sign-in callback".to_string()),
+            };
+            if let Some(ref err) = error {
+                sentry::capture_message(&format!("github callback error: {err}"), sentry::Level::Warning);
+            }
+            let _ = app.emit("github-changed", serde_json::json!({ "error": error, "login": login }));
+        }
+        _ => {
+            let _ = app.emit(
+                "connector-changed",
+                serde_json::json!({ "error": "Unknown OAuth callback route" }),
+            );
+        }
     }
-    let _ = app.emit("connector-changed", serde_json::json!({ "error": error }));
 }
 
 async fn handle_sign_in_callback(app: &tauri::AppHandle, raw_url: &str) {
     let state = app.state::<AppState>();
-    let _guard = state.sign_in_lock.lock().await;
+    let Ok(_guard) = state.sign_in_lock.acquire().await else {
+        return;
+    };
 
     if state.is_recent_auth_callback(raw_url) {
         return;
@@ -82,7 +124,7 @@ async fn handle_sign_in_callback(app: &tauri::AppHandle, raw_url: &str) {
 
 async fn handle_deep_link_url(app: &tauri::AppHandle, raw_url: &str) {
     if let Some(rest) = strip_prefix_ignore_ascii_case(raw_url, "orch://oauth/") {
-        handle_connector_callback(app, rest).await;
+        handle_oauth_callback(app, rest).await;
     } else if is_sign_in_callback_url(raw_url) {
         handle_sign_in_callback(app, raw_url).await;
     }
@@ -98,27 +140,6 @@ fn is_sign_in_callback_url(raw_url: &str) -> bool {
             .host_str()
             .is_some_and(|host| host.eq_ignore_ascii_case("auth-callback"))
         && (url.path().is_empty() || url.path() == "/")
-}
-
-const INVALID_CONNECTOR_CALLBACK: &str = "Invalid connector sign-in callback";
-
-fn connector_callback_error(rest: &str) -> Option<String> {
-    let normalized = format!("http://localhost/{}", rest.trim_start_matches('/'));
-    let Ok(url) = reqwest::Url::parse(&normalized) else {
-        return Some(INVALID_CONNECTOR_CALLBACK.to_string());
-    };
-    if url.path().trim_matches('/') != "composio" {
-        return Some(INVALID_CONNECTOR_CALLBACK.to_string());
-    }
-    let status = url
-        .query_pairs()
-        .find(|(key, _)| key == "status")
-        .map(|(_, value)| value.into_owned());
-    match status.as_deref() {
-        Some("success") => None,
-        Some("failed") => Some("The connector sign-in was not completed".to_string()),
-        _ => Some(INVALID_CONNECTOR_CALLBACK.to_string()),
-    }
 }
 
 pub fn run() {
@@ -216,10 +237,14 @@ pub fn run() {
             ipc::get_oauth_url,
             ipc::sign_out_auth,
             ipc::set_workspace,
-            ipc::init_cloud_workspace,
+            ipc::create_local_workspace,
+            ipc::activate_cloud_project,
+            ipc::list_cloud_projects,
+            ipc::open_cloud_project,
+            ipc::create_cloud_project,
+            ipc::delete_cloud_project,
+            ipc::delete_local_workspace,
             ipc::list_sessions_for_workspace,
-            ipc::list_cloud_sessions,
-            ipc::forget_workspace,
             ipc::list_models,
             ipc::get_budget,
             ipc::get_session_records,
@@ -236,6 +261,9 @@ pub fn run() {
             ipc::terminal_resize,
             ipc::terminal_close,
             ipc::list_connectors,
+            ipc::list_github_accounts,
+            ipc::get_github_connect_url,
+            ipc::disconnect_github_account,
             ipc::list_github_repos,
             ipc::get_connector_auth_url,
             ipc::disconnect_connector,

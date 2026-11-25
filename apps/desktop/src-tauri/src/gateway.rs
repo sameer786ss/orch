@@ -31,10 +31,43 @@ pub struct Budget {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CloudWorkspaceInfo {
+pub struct GithubAccountDto {
+    pub id: String,
+    pub login: String,
+    pub name: String,
+    pub avatar_url: String,
+    pub email: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepoDto {
+    pub id: String,
+    pub full_name: String,
+    pub owner: String,
+    pub name: String,
+    pub description: String,
+    pub private: bool,
+    pub url: String,
+    pub updated_at: String,
+    pub account_id: String,
+    pub account_login: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudProjectDto {
+    pub id: String,
+    pub name: String,
     pub workspace: String,
     pub repo_url: String,
     pub repo_dir: String,
+    pub github_account_id: String,
+    pub account_login: String,
+    pub is_private: bool,
+    pub account_connected: bool,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,7 +84,6 @@ pub struct CloudChatStreamReq {
     pub prompt: String,
     pub model: String,
     pub workspace: String,
-    pub repo_url: Option<String>,
     pub attachments: Vec<CloudAttachment>,
     pub active_connectors: Vec<String>,
     pub thinking_effort: String,
@@ -151,6 +183,27 @@ impl Gateway {
         Ok(check_status(resp).await?.json().await?)
     }
 
+    fn url_with_segment(base: String, segment: &str) -> AppResult<reqwest::Url> {
+        let mut url = reqwest::Url::parse(&base)?;
+        url.path_segments_mut()
+            .map_err(|_| AppError::other(format!("invalid url base: {base}")))?
+            .push(segment);
+        Ok(url)
+    }
+
+    async fn delete_void(&self, url: &str, timeout: Duration) -> AppResult<()> {
+        let token = self.require_token()?;
+        let resp = self
+            .http
+            .delete(url)
+            .bearer_auth(token.expose_secret())
+            .timeout(timeout)
+            .send()
+            .await?;
+        let _ = check_status(resp).await?;
+        Ok(())
+    }
+
     pub async fn models(&self) -> AppResult<ModelCatalog> {
         let models: Vec<ModelInfo> =
             self.get_public(config::models_url(), Duration::from_secs(20)).await?;
@@ -210,19 +263,97 @@ impl Gateway {
         Ok(resp.text)
     }
 
-    pub async fn cloud_init_workspace(&self, repo_url: &str) -> AppResult<CloudWorkspaceInfo> {
-        let url = config::cloud_url("/workspace/init");
-        self.post(&url, &json!({ "repoUrl": repo_url }), Duration::from_secs(60))
+    pub async fn github_accounts(&self) -> AppResult<Vec<GithubAccountDto>> {
+        self.get(&config::github_url("/accounts"), Duration::from_secs(20))
             .await
     }
 
-    fn cloud_files_url(sub: &str, workspace: &str, extra: &[(&str, String)]) -> String {
+    pub async fn github_connect(&self) -> AppResult<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            redirect_url: String,
+        }
+        let resp: Resp = self
+            .post(
+                &config::github_url("/connect"),
+                &json!({ "platform": "desktop" }),
+                Duration::from_secs(20),
+            )
+            .await?;
+        Ok(resp.redirect_url)
+    }
+
+    pub async fn github_disconnect(&self, account_id: &str) -> AppResult<()> {
+        let url = Self::url_with_segment(config::github_url("/accounts"), account_id)?;
+        self.delete_void(url.as_str(), Duration::from_secs(20)).await
+    }
+
+    pub async fn github_repos(
+        &self,
+        account_id: Option<&str>,
+        query: &str,
+    ) -> AppResult<Vec<GithubRepoDto>> {
+        let base = config::github_url("/repos");
+        let mut params: Vec<(&str, &str)> = Vec::new();
+        if let Some(id) = account_id.map(str::trim).filter(|s| !s.is_empty()) {
+            params.push(("accountId", id));
+        }
+        if !query.trim().is_empty() {
+            params.push(("query", query.trim()));
+        }
+        let url = reqwest::Url::parse_with_params(&base, &params)?;
+        self.get(url.as_str(), Duration::from_secs(30)).await
+    }
+
+    pub async fn cloud_list_projects(&self) -> AppResult<Vec<CloudProjectDto>> {
+        self.get(&config::cloud_url("/projects"), Duration::from_secs(20))
+            .await
+    }
+
+    pub async fn cloud_open_project(
+        &self,
+        repo_url: &str,
+        account_id: &str,
+    ) -> AppResult<CloudProjectDto> {
+        self.post(
+            &config::cloud_url("/projects"),
+            &json!({ "repoUrl": repo_url, "accountId": account_id }),
+            Duration::from_secs(30),
+        )
+        .await
+    }
+
+    pub async fn cloud_create_project(
+        &self,
+        account_id: &str,
+        name: &str,
+        description: Option<&str>,
+        private: bool,
+    ) -> AppResult<CloudProjectDto> {
+        self.post(
+            &config::cloud_url("/projects/create"),
+            &json!({
+                "accountId": account_id,
+                "name": name,
+                "description": description,
+                "private": private,
+            }),
+            Duration::from_secs(30),
+        )
+        .await
+    }
+
+    pub async fn cloud_delete_project(&self, project_id: &str) -> AppResult<()> {
+        let url = Self::url_with_segment(config::cloud_url("/projects"), project_id)?;
+        self.delete_void(url.as_str(), Duration::from_secs(60)).await
+    }
+
+    fn cloud_files_url(sub: &str, workspace: &str, extra: &[(&str, String)]) -> AppResult<String> {
         let base = config::cloud_url(&format!("/files/{sub}"));
         let mut params: Vec<(&str, String)> = vec![("workspace", workspace.to_string())];
         params.extend(extra.iter().map(|(k, v)| (*k, v.clone())));
-        reqwest::Url::parse_with_params(&base, &params)
-            .map(|u| u.to_string())
-            .unwrap_or(base)
+        Ok(reqwest::Url::parse_with_params(&base, &params)?.to_string())
     }
 
     pub async fn cloud_files_json<T: DeserializeOwned>(
@@ -231,13 +362,13 @@ impl Gateway {
         workspace: &str,
         extra: &[(&str, String)],
     ) -> AppResult<T> {
-        let url = Self::cloud_files_url(sub, workspace, extra);
+        let url = Self::cloud_files_url(sub, workspace, extra)?;
         self.get(&url, Duration::from_secs(60)).await
     }
 
     pub async fn cloud_file_bytes(&self, workspace: &str, path: &str) -> AppResult<Vec<u8>> {
         let token = self.require_token()?;
-        let url = Self::cloud_files_url("binary", workspace, &[("path", path.to_string())]);
+        let url = Self::cloud_files_url("binary", workspace, &[("path", path.to_string())])?;
         let resp = self
             .http
             .get(&url)
@@ -248,24 +379,10 @@ impl Gateway {
         Ok(check_status(resp).await?.bytes().await?.to_vec())
     }
 
-    pub async fn cloud_list_all_sessions(&self) -> AppResult<Vec<SessionSummary>> {
-        let url = config::cloud_url("/sessions");
-        self.get(&url, Duration::from_secs(20)).await
-    }
-
     pub async fn cloud_list_sessions(&self, workspace: &str) -> AppResult<Vec<SessionSummary>> {
         let base = config::cloud_url("/sessions");
-        let url = reqwest::Url::parse_with_params(&base, &[("workspace", workspace)])
-            .map(|u| u.to_string())
-            .unwrap_or(base);
-        self.get(&url, Duration::from_secs(20)).await
-    }
-
-    pub async fn cloud_composio_catalog(
-        &self,
-    ) -> AppResult<Vec<orchharness::connectors::ConnectorCatalogEntry>> {
-        let url = config::cloud_url("/composio/catalog");
-        self.get(&url, Duration::from_secs(20)).await
+        let url = reqwest::Url::parse_with_params(&base, &[("workspace", workspace)])?;
+        self.get(url.as_str(), Duration::from_secs(20)).await
     }
 
     pub async fn cloud_session_history(
@@ -274,29 +391,23 @@ impl Gateway {
         limit: usize,
         before: Option<i64>,
     ) -> AppResult<SessionRecordPage> {
-        let base = config::cloud_url(&format!("/sessions/{session_id}/history"));
-        let mut params = vec![("limit", limit.to_string())];
-        if let Some(b) = before {
-            params.push(("before", b.to_string()));
+        let mut url = Self::url_with_segment(config::cloud_url("/sessions"), session_id)?;
+        url.path_segments_mut()
+            .map_err(|_| AppError::other("invalid cloud sessions url"))?
+            .push("history");
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("limit", &limit.to_string());
+            if let Some(b) = before {
+                query.append_pair("before", &b.to_string());
+            }
         }
-        let url = reqwest::Url::parse_with_params(&base, &params)
-            .map(|u| u.to_string())
-            .unwrap_or(base);
-        self.get(&url, Duration::from_secs(30)).await
+        self.get(url.as_str(), Duration::from_secs(30)).await
     }
 
     pub async fn cloud_delete_session(&self, session_id: &str) -> AppResult<()> {
-        let token = self.require_token()?;
-        let url = config::cloud_url(&format!("/sessions/{session_id}"));
-        let resp = self
-            .http
-            .delete(&url)
-            .bearer_auth(token.expose_secret())
-            .timeout(Duration::from_secs(20))
-            .send()
-            .await?;
-        let _ = check_status(resp).await?;
-        Ok(())
+        let url = Self::url_with_segment(config::cloud_url("/sessions"), session_id)?;
+        self.delete_void(url.as_str(), Duration::from_secs(20)).await
     }
 
     pub async fn cloud_cancel_chat(&self, session_id: &str) -> AppResult<()> {

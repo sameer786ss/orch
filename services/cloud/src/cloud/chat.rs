@@ -13,7 +13,7 @@ use orchharness::connectors::ConnectorManager;
 use orchharness::events::{ChatEvent, EventSink};
 use orchharness::llm::{
     build_agent, build_client_with_http, build_user_message, parse_thinking_effort, run_chat,
-    AgentInputs, ChatRun, RunOutcome, RunParams,
+    AgentInputs, ChatRun, Effort, RunOutcome, RunParams,
 };
 use orchharness::media::{is_pdf_extension, is_raster_extension};
 use orchharness::models::{resolve_static_model, ModelInfo};
@@ -27,12 +27,12 @@ use crate::cloud::e2b::{CloudWorkspaceOps, SandboxLease};
 use crate::cloud::owned_session;
 use crate::cloud::runs::{self, LiveRun};
 use crate::cloud::store::{Acquire, Beat, CloudSessionRecord, CloudSessionStore};
-use crate::cloud::workspace::{self, CloudWorkspace, CLOUD_WORKSPACE_PREFIX};
+use crate::cloud::workspace::{self, CloudWorkspace};
 use crate::local::composio::InProcessComposioTransport;
 use crate::local::tavily::InProcessWebSearchBackend;
 use crate::local::v1internal::{self, InProcessSummarizerBackend, V1InternalHttp};
 use crate::shared::auth::VerifiedUser;
-use crate::shared::config;
+use crate::shared::config::{self, CLOUD_WORKSPACE_PREFIX};
 use crate::shared::error::{ApiError, ApiResult};
 use crate::shared::extract::{ApiJson, ApiQuery};
 use crate::shared::sse::sse_response;
@@ -56,7 +56,6 @@ pub struct CloudChatStreamReq {
     prompt: String,
     model: String,
     workspace: String,
-    repo_url: Option<String>,
     #[serde(default)]
     attachments: Vec<CloudAttachment>,
     #[serde(default)]
@@ -141,27 +140,23 @@ fn resolve_workspace(
     request: &CloudChatStreamReq,
     existing: Option<&CloudSessionRecord>,
 ) -> ApiResult<CloudWorkspace> {
-    let candidate = existing
-        .map(|record| record.repo_url.as_str())
-        .filter(|repo_url| !repo_url.is_empty())
-        .or_else(|| {
-            existing
-                .map(|record| record.workspace_path.as_str())
-                .filter(|path| path.starts_with(CLOUD_WORKSPACE_PREFIX))
-        })
-        .or_else(|| {
-            request
-                .repo_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|repo_url| !repo_url.is_empty())
-        })
-        .or_else(|| {
-            let ws = request.workspace.trim();
-            ws.starts_with(CLOUD_WORKSPACE_PREFIX).then_some(ws)
-        })
-        .ok_or_else(|| ApiError::bad_request("a cloud workspace is required"))?;
-    workspace::normalize(candidate)
+    let req_ws = request.workspace.trim();
+    match existing {
+        Some(record) => {
+            if !req_ws.is_empty() && req_ws != record.workspace_path {
+                return Err(ApiError::bad_request(
+                    "Conversation belongs to a different project workspace.",
+                ));
+            }
+            workspace::normalize(&record.workspace_path)
+        }
+        None => {
+            if !req_ws.starts_with(CLOUD_WORKSPACE_PREFIX) {
+                return Err(ApiError::bad_request("A cloud project workspace is required."));
+            }
+            workspace::normalize(req_ws)
+        }
+    }
 }
 
 async fn stage_attachments(
@@ -172,10 +167,10 @@ async fn stage_attachments(
         .iter()
         .map(|attachment| attachment.data_base64.len() / 4 * 3)
         .sum();
-    if estimated_bytes > config::MAX_ATTACHMENT_TOTAL_BYTES {
+    if estimated_bytes > config::CLOUD_MAX_ATTACHMENT_TOTAL_BYTES {
         return Err(ApiError::payload_too_large(format!(
             "Attachments exceed the {} MB limit",
-            config::MAX_ATTACHMENT_TOTAL_BYTES / MEGABYTE
+            config::CLOUD_MAX_ATTACHMENT_TOTAL_BYTES / MEGABYTE
         )));
     }
 
@@ -290,6 +285,8 @@ pub async fn stream(
     let model = resolve_static_model(&request.model)
         .map(|m| m.to_model_info())
         .ok_or_else(|| ApiError::bad_request(format!("Unsupported model: {}", request.model)))?;
+    let thinking_effort = parse_thinking_effort(&request.thinking_effort, &model)
+        .map_err(ApiError::bad_request)?;
     if request.prompt.trim().is_empty() && request.attachments.is_empty() {
         return Err(ApiError::bad_request(
             "a prompt or at least one attachment is required",
@@ -314,7 +311,16 @@ pub async fn stream(
     }
 
     let session_id = request.session_id.clone();
-    let outcome = start_turn(&state, request, &user, &workspace, &model, &run).await;
+    let outcome = start_turn(
+        &state,
+        request,
+        &user,
+        &workspace,
+        &model,
+        thinking_effort,
+        &run,
+    )
+    .await;
     if outcome.is_err() {
         run.finish();
         state
@@ -330,6 +336,7 @@ async fn start_turn(
     user: &VerifiedUser,
     workspace: &CloudWorkspace,
     model: &ModelInfo,
+    thinking_effort: Effort,
     run: &Arc<LiveRun>,
 ) -> ApiResult<Response> {
     let (record, created) = state
@@ -344,7 +351,17 @@ async fn start_turn(
         .await?;
 
     let session_id = request.session_id.clone();
-    let outcome = launch(state, request, user, workspace, model, run, &record).await;
+    let outcome = launch(
+        state,
+        request,
+        user,
+        workspace,
+        model,
+        thinking_effort,
+        run,
+        &record,
+    )
+    .await;
     if outcome.is_err()
         && created
         && let Err(error) = state
@@ -363,6 +380,7 @@ async fn launch(
     user: &VerifiedUser,
     workspace: &CloudWorkspace,
     model: &ModelInfo,
+    thinking_effort: Effort,
     run: &Arc<LiveRun>,
     record: &CloudSessionRecord,
 ) -> ApiResult<Response> {
@@ -474,8 +492,8 @@ async fn launch(
         .inspect_environment(&lease.conn, &workspace.repo_dir)
         .await;
 
-    let (connector_defs, connector_tools) = match prepared_connectors {
-        Some(c) => (c.defs, c.tools),
+    let (connectors, connector_tools) = match prepared_connectors {
+        Some(c) => (c.connectors, c.tools),
         None => (Vec::new(), Vec::new()),
     };
 
@@ -502,9 +520,9 @@ async fn launch(
         tools: &tools_ctx,
         workspace: Some(&workspace.repo_dir),
         environment_note: Some(&env_note),
-        connectors: connector_defs,
+        connectors,
         connector_tools,
-        thinking_effort: parse_thinking_effort(&request.thinking_effort),
+        thinking_effort,
         skills,
     });
 

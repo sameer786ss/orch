@@ -53,12 +53,12 @@ pub struct AppState {
     pub connector_manager: Arc<ConnectorManager>,
     current_user_id: ArcSwapOption<String>,
     sign_in: Mutex<Option<SignInAttempt>>,
-    pub sign_in_lock: Arc<tokio::sync::Mutex<()>>,
-    pub prefs_save_lock: Arc<tokio::sync::Mutex<()>>,
+    pub sign_in_lock: tokio::sync::Semaphore,
+    pub prefs_save_lock: tokio::sync::Semaphore,
     last_callback: Mutex<Option<(String, Instant)>>,
     run_finished_notify: Arc<tokio::sync::Notify>,
-    token_refresh_lock: Arc<tokio::sync::Mutex<()>>,
-    catalog_fetch_lock: Arc<tokio::sync::Mutex<()>>,
+    token_refresh_lock: tokio::sync::Semaphore,
+    catalog_fetch_lock: tokio::sync::Semaphore,
     client: Mutex<Option<ChatClient>>,
     file_cache: Cache<String, Arc<Vec<FileEntry>>>,
 }
@@ -91,12 +91,12 @@ impl AppState {
             connector_manager,
             current_user_id: ArcSwapOption::empty(),
             sign_in: Mutex::new(None),
-            sign_in_lock: Arc::new(tokio::sync::Mutex::new(())),
-            prefs_save_lock: Arc::new(tokio::sync::Mutex::new(())),
+            sign_in_lock: tokio::sync::Semaphore::new(1),
+            prefs_save_lock: tokio::sync::Semaphore::new(1),
             last_callback: Mutex::new(None),
             run_finished_notify: Arc::new(tokio::sync::Notify::new()),
-            token_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
-            catalog_fetch_lock: Arc::new(tokio::sync::Mutex::new(())),
+            token_refresh_lock: tokio::sync::Semaphore::new(1),
+            catalog_fetch_lock: tokio::sync::Semaphore::new(1),
             client: Mutex::new(None),
             file_cache,
         })
@@ -325,7 +325,11 @@ impl AppState {
         if let Some(cat) = self.cached_catalog() {
             return Ok(cat);
         }
-        let _fetch_guard = self.catalog_fetch_lock.lock().await;
+        let _fetch_guard = self
+            .catalog_fetch_lock
+            .acquire()
+            .await
+            .map_err(|e| AppError::other(e.to_string()))?;
         if let Some(cat) = self.cached_catalog() {
             return Ok(cat);
         }
@@ -357,7 +361,11 @@ impl AppState {
             return Ok(());
         }
 
-        let _guard = self.token_refresh_lock.lock().await;
+        let _guard = self
+            .token_refresh_lock
+            .acquire()
+            .await
+            .map_err(|e| AppError::other(e.to_string()))?;
         if self.access_token().is_some_and(|t| Self::token_is_fresh(t.expose_secret())) {
             return Ok(());
         }
@@ -496,8 +504,7 @@ impl AppState {
         targets
     }
 
-    pub fn cancel_runs_in_workspace(&self, workspace: &Workspace) -> Vec<String> {
-        let key = workspace.key();
+    pub fn cancel_runs_for_key(&self, key: &str) -> Vec<String> {
         self.cancel_runs_matching(|run| {
             run.workspace
                 .as_ref()

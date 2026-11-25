@@ -81,9 +81,9 @@ export default function TermsOfServicePage() {
             <li><b>Transparent Metering:</b> Usage is deducted based on standard input, output, and reasoning token consumption according to the thinking depth (Low, Medium, or High) selected for each turn.</li>
           </ul>
 
-          <h2>6. Third-Party Workspace Connectors (GitHub, Drive, Gmail, Jira, Slack)</h2>
+          <h2>6. Third-Party Integrations &amp; Connectors (GitHub, Drive, Gmail, Jira, Slack)</h2>
           <p>
-            Orch includes optional connectors that allow you to integrate your workspace with third-party platforms including GitHub, Google Drive, Gmail, Jira, and Slack. When you enable a connector:
+            Orch supports native GitHub repository OAuth and optional third-party connectors including Google Drive, Gmail, Jira, and Slack. When you link an integration:
           </p>
           <ul>
             <li>You authorize Orch to access and process data from that service solely at your direction and in accordance with our <Link href="/privacy">Privacy Policy</Link>.</li>

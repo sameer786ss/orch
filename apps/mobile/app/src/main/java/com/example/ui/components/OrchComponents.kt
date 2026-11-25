@@ -1,5 +1,9 @@
 package com.orch.app.ui.components
 
+import android.content.Context
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -55,12 +59,25 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.orch.app.ui.theme.OrchBackground
 import com.orch.app.ui.theme.OrchDimens
+
+fun openOAuthBrowser(context: Context, url: String) {
+    val colors = CustomTabColorSchemeParams.Builder()
+        .setToolbarColor(OrchBackground.toArgb())
+        .build()
+    CustomTabsIntent.Builder()
+        .setDefaultColorSchemeParams(colors)
+        .setShowTitle(true)
+        .build()
+        .launchUrl(context, Uri.parse(url))
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -375,7 +392,9 @@ fun OrchTextField(
 fun OrchBanner(
     text: String,
     modifier: Modifier = Modifier,
-    isError: Boolean = false
+    isError: Boolean = false,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -387,7 +406,7 @@ fun OrchBanner(
                 if (isError) MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
                 else MaterialTheme.colorScheme.surfaceVariant
             )
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         if (isError) {
             Icon(
@@ -400,8 +419,18 @@ fun OrchBanner(
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
         )
+        if (actionLabel != null && onAction != null) {
+            TextButton(onClick = onAction) {
+                Text(
+                    text = actionLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            }
+        }
     }
 }
 

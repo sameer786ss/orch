@@ -5,7 +5,6 @@ use std::time::Duration;
 use base64::Engine as _;
 use orchharness::backend::local_fs::LocalWorkspaceOps;
 use orchharness::backend::{SessionStore, SummarizerBackend, WebSearchBackend, WorkspaceOps};
-use orchharness::connectors::CONNECTOR_DEFS;
 use orchharness::error::AppError;
 use orchharness::events::{ChatEvent, EventSink};
 use crate::ipc_types::{DictationEvent, TerminalEvent};
@@ -18,10 +17,9 @@ use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, State};
 
 use crate::auth::{self, UserDisplay};
-use crate::cloud::{self, CloudWorkspaceInfo};
 use crate::config;
 use crate::dictation;
-use crate::gateway::{Budget, CloudAttachment, CloudChatStreamReq, ModelInfo};
+use crate::gateway::{Budget, CloudAttachment, CloudChatStreamReq, CloudProjectDto, GithubAccountDto, GithubRepoDto, ModelInfo};
 use crate::llm::{
     build_agent, build_user_message, parse_thinking_effort, run_chat, AgentInputs, AttachmentRef,
     ChatRun, GatewaySummarizer, GatewayWebSearch, RunOutcome, RunParams,
@@ -60,7 +58,7 @@ fn ensure_cloud_attachment_budget(total_bytes: usize) -> Result<(), String> {
 }
 
 fn canonical_string(path: &str) -> String {
-    if cloud::is_cloud_workspace(path) {
+    if crate::cloud::is_cloud_workspace(path) {
         return path.to_string();
     }
     dunce::canonicalize(PathBuf::from(path))
@@ -184,24 +182,8 @@ pub async fn sign_out_auth(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub async fn set_workspace(state: State<'_, AppState>, path: String) -> Result<String, String> {
     let trimmed = path.trim();
-    if cloud::is_cloud_workspace(trimmed)
-        || trimmed.starts_with("https://github.com/")
-        || trimmed.starts_with("https://gitlab.com/")
-        || trimmed.starts_with("https://bitbucket.org/")
-    {
-        state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-        let info = state
-            .gateway
-            .cloud_init_workspace(trimmed)
-            .await
-            .map_err(|e| e.to_string())?;
-        let ws = Workspace::from_cloud_info(info);
-        let key = ws.key();
-        state.set_workspace(Some(ws));
-        return Ok(key);
-    }
-
-    let resolved = dunce::canonicalize(PathBuf::from(trimmed)).map_err(|e| format!("cannot resolve path: {e}"))?;
+    let resolved = dunce::canonicalize(PathBuf::from(trimmed))
+        .map_err(|e| format!("cannot resolve path: {e}"))?;
     if !resolved.is_dir() {
         return Err(format!("not a directory: {path}"));
     }
@@ -211,18 +193,161 @@ pub async fn set_workspace(state: State<'_, AppState>, path: String) -> Result<S
 }
 
 #[tauri::command]
-pub async fn init_cloud_workspace(
+pub async fn create_local_workspace(
+    state: State<'_, AppState>,
+    parent_dir: String,
+    folder_name: String,
+    init_git: bool,
+) -> Result<String, String> {
+    let clean_name = folder_name.trim();
+    if clean_name.is_empty()
+        || clean_name == "."
+        || clean_name == ".."
+        || clean_name.contains('/')
+        || clean_name.contains('\\')
+    {
+        return Err("Enter a valid folder name without path separators.".to_string());
+    }
+    let parent = dunce::canonicalize(PathBuf::from(parent_dir.trim()))
+        .map_err(|e| format!("cannot open parent folder: {e}"))?;
+    if !parent.is_dir() {
+        return Err("Selected parent location is not a folder.".to_string());
+    }
+    let target = parent.join(clean_name);
+    if target.exists() {
+        return Err(format!("Folder '{}' already exists.", clean_name));
+    }
+    tokio::fs::create_dir(&target)
+        .await
+        .map_err(|e| format!("Could not create folder: {e}"))?;
+    let canonical = dunce::canonicalize(&target)
+        .map_err(|e| format!("cannot resolve created folder: {e}"))?;
+    if init_git {
+        let dir = canonical.clone();
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("git")
+                .arg("init")
+                .current_dir(&dir)
+                .output()
+        })
+        .await
+        .map_err(|e| format!("git init task failed: {e}"))?
+        .map_err(|e| format!("git init failed: {e}"))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if err.is_empty() {
+                "git init failed".to_string()
+            } else {
+                format!("git init failed: {err}")
+            });
+        }
+    }
+    let display = canonical.to_string_lossy().to_string();
+    state.set_workspace(Some(Workspace::Local(canonical)));
+    Ok(display)
+}
+
+#[tauri::command]
+pub async fn activate_cloud_project(
+    state: State<'_, AppState>,
+    project: CloudProjectDto,
+) -> Result<(), String> {
+    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+    state.set_workspace(Some(Workspace::from_cloud_project(project)));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_cloud_projects(state: State<'_, AppState>) -> Result<Vec<CloudProjectDto>, String> {
+    if state.current_user_id().is_none() {
+        return Ok(Vec::new());
+    }
+    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+    state
+        .gateway
+        .cloud_list_projects()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_cloud_project(
     state: State<'_, AppState>,
     repo_url: String,
-) -> Result<CloudWorkspaceInfo, String> {
+    account_id: String,
+) -> Result<CloudProjectDto, String> {
     state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-    let info = state
+    let project = state
         .gateway
-        .cloud_init_workspace(&repo_url)
+        .cloud_open_project(&repo_url, &account_id)
         .await
         .map_err(|e| e.to_string())?;
-    state.set_workspace(Some(Workspace::from_cloud_info(info.clone())));
-    Ok(info)
+    state.set_workspace(Some(Workspace::from_cloud_project(project.clone())));
+    Ok(project)
+}
+
+#[tauri::command]
+pub async fn create_cloud_project(
+    state: State<'_, AppState>,
+    account_id: String,
+    name: String,
+    description: Option<String>,
+    private: bool,
+) -> Result<CloudProjectDto, String> {
+    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+    let project = state
+        .gateway
+        .cloud_create_project(&account_id, &name, description.as_deref(), private)
+        .await
+        .map_err(|e| e.to_string())?;
+    state.set_workspace(Some(Workspace::from_cloud_project(project.clone())));
+    Ok(project)
+}
+
+#[tauri::command]
+pub async fn delete_cloud_project(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    workspace_uri: String,
+) -> Result<(), String> {
+    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+    let sessions = state.cancel_runs_for_key(&workspace_uri);
+    state.wait_for_runs(&sessions, Duration::from_secs(10)).await;
+    state
+        .gateway
+        .cloud_delete_project(&project_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if state.workspace_key().as_deref() == Some(workspace_uri.as_str()) {
+        state.set_workspace(None);
+    }
+    let _ = app.emit("sessions-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_local_workspace(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workspace_path: String,
+) -> Result<(), String> {
+    let user_id = state
+        .current_user_id()
+        .ok_or_else(|| "authentication required".to_string())?;
+    let canonical = canonical_string(&workspace_path);
+    let sessions = state.cancel_runs_for_key(&canonical);
+    state.wait_for_runs(&sessions, Duration::from_secs(10)).await;
+    state
+        .memory
+        .delete_sessions_for_workspace(&canonical, &user_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if state.workspace_key().as_deref() == Some(canonical.as_str()) {
+        state.set_workspace(None);
+    }
+    let _ = app.emit("sessions-updated", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -234,7 +359,7 @@ pub async fn list_sessions_for_workspace(
         return Ok(Vec::new());
     };
     let canonical = canonical_string(&workspace_path);
-    if cloud::is_cloud_workspace(&canonical) {
+    if crate::cloud::is_cloud_workspace(&canonical) {
         state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
         return state
             .gateway
@@ -247,52 +372,6 @@ pub async fn list_sessions_for_workspace(
         .list_sessions_for_workspace(&canonical, &user_id)
         .await
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn list_cloud_sessions(
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::persistence::SessionSummary>, String> {
-    if state.current_user_id().is_none() {
-        return Ok(Vec::new());
-    }
-    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-    state
-        .gateway
-        .cloud_list_all_sessions()
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn forget_workspace(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    workspace_path: String,
-) -> Result<(), String> {
-    let canonical = canonical_string(&workspace_path);
-    let target_workspace = if cloud::is_cloud_workspace(&canonical) {
-        state
-            .current_workspace()
-            .filter(|workspace| workspace.key() == canonical)
-            .map(|workspace| workspace.as_ref().clone())
-    } else {
-        Some(Workspace::Local(PathBuf::from(&canonical)))
-    };
-
-    let was_active_workspace = state.workspace_key().as_deref() == Some(canonical.as_str());
-
-    if let Some(target_workspace) = target_workspace.as_ref() {
-        let sessions = state.cancel_runs_in_workspace(target_workspace);
-        state.wait_for_runs(&sessions, Duration::from_secs(10)).await;
-    }
-
-    if was_active_workspace {
-        state.set_workspace(None);
-    }
-
-    let _ = app.emit("sessions-updated", ());
-    Ok(())
 }
 
 #[tauri::command]
@@ -447,7 +526,6 @@ pub async fn start_chat(
                 prompt: prompt.clone(),
                 model: model.clone(),
                 workspace: workspace_string.clone(),
-                repo_url: Some(cloud_ws.repo_url.clone()),
                 attachments: cloud_attachments,
                 active_connectors,
                 thinking_effort,
@@ -489,6 +567,14 @@ pub async fn start_chat(
         }
     };
 
+    let parsed_effort = match parse_thinking_effort(&thinking_effort, &model_info) {
+        Ok(effort) => effort,
+        Err(error) => {
+            state.finish_run(&session_id, &run_id);
+            return Err(error);
+        }
+    };
+
     let event_sink: Arc<dyn EventSink> = Arc::new(TauriEventSink {
         channel: on_event.clone(),
         app: app.clone(),
@@ -505,8 +591,8 @@ pub async fn start_chat(
         _ = cancel.cancelled() => Err("cancelled".to_string()),
         result = state.connector_manager.prepare(&active_connectors) => result.map_err(|error| error.to_string()),
     };
-    let (connector_defs, connector_tools) = match prepared {
-        Ok(c) => (c.defs, c.tools),
+    let (connectors, connector_tools) = match prepared {
+        Ok(c) => (c.connectors, c.tools),
         Err(error) => {
             state.finish_run(&session_id, &run_id);
             sentry::capture_message(&format!("connectors prepare failed: {error}"), sentry::Level::Error);
@@ -593,9 +679,9 @@ pub async fn start_chat(
         tools: &tool_context,
         workspace: Some(workspace_string.as_str()),
         environment_note: None,
-        connectors: connector_defs,
+        connectors,
         connector_tools,
-        thinking_effort: parse_thinking_effort(&thinking_effort),
+        thinking_effort: parsed_effort,
         skills,
     });
 
@@ -819,7 +905,11 @@ pub async fn set_user_pref(
     scoped: Option<bool>,
 ) -> Result<(), String> {
     use tauri_plugin_store::StoreExt;
-    let _guard = state.prefs_save_lock.lock().await;
+    let _guard = state
+        .prefs_save_lock
+        .acquire()
+        .await
+        .map_err(|e| e.to_string())?;
     let store = app.store("prefs.json").map_err(|e| e.to_string())?;
     let full_key = prefs_key(&state, &key, scoped.unwrap_or(false))?;
     store.set(full_key, serde_json::Value::String(value));
@@ -980,6 +1070,7 @@ pub struct ConnectorDto {
     pub name: String,
     pub description: String,
     pub category: String,
+    pub icon_url: Option<String>,
     pub connected: bool,
     pub tool_count: usize,
 }
@@ -990,64 +1081,77 @@ pub async fn list_connectors(state: State<'_, AppState>) -> Result<Vec<Connector
         sentry::capture_error(&e);
         e.to_string()
     })?;
-    let connected = state
-        .connector_manager
-        .connected_ids()
-        .await
-        .map_err(|e| {
-            sentry::capture_error(&e);
-            e.to_string()
-        })?;
+    let (catalog, connected) = tokio::try_join!(
+        state.connector_manager.catalog(),
+        state.connector_manager.connected_ids(),
+    )
+    .map_err(|e| {
+        sentry::capture_error(&e);
+        e.to_string()
+    })?;
 
-    // For cloud workspaces: fetch the live server catalog so connector additions
-    // are reflected without a desktop app update (same as Android/iOS).
-    if state.active_cloud_workspace().is_some() {
-        let catalog = state
-            .gateway
-            .cloud_composio_catalog()
-            .await
-            .map_err(|e| e.to_string())?;
-        return Ok(catalog
-            .into_iter()
-            .map(|entry| ConnectorDto {
-                connected: connected.contains(&entry.id.as_str()),
-                tool_count: orchharness::connectors::CONNECTOR_DEFS
-                    .iter()
-                    .find(|d| d.id == entry.id)
-                    .map(|d| d.actions.len())
-                    .unwrap_or(0),
-                id: entry.id,
-                name: entry.name,
-                description: entry.description,
-                category: entry.category,
-            })
-            .collect());
-    }
-
-    // Local sessions: use compiled-in definitions.
-    Ok(CONNECTOR_DEFS
-        .iter()
-        .map(|def| ConnectorDto {
-            id: def.id.to_string(),
-            name: def.name.to_string(),
-            description: def.description.to_string(),
-            category: def.category.to_string(),
-            connected: connected.contains(&def.id),
-            tool_count: def.actions.len(),
+    Ok(catalog
+        .into_iter()
+        .map(|entry| ConnectorDto {
+            connected: connected.iter().any(|id| id.eq_ignore_ascii_case(&entry.id)),
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            category: entry.category,
+            icon_url: entry.icon_url,
+            tool_count: entry.tool_count,
         })
         .collect())
 }
 
 #[tauri::command]
-pub async fn list_github_repos(
-    state: State<'_, AppState>,
-    query: String,
-) -> Result<Vec<crate::connectors::RepoInfo>, String> {
+pub async fn list_github_accounts(state: State<'_, AppState>) -> Result<Vec<GithubAccountDto>, String> {
+    if state.current_user_id().is_none() {
+        return Ok(Vec::new());
+    }
     state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-    state.connector_manager.github_repos(&query).await.map_err(|e| {
+    state.gateway.github_accounts().await.map_err(|e| {
         sentry::capture_error(&e);
         e.to_string()
     })
+}
+
+#[tauri::command]
+pub async fn get_github_connect_url(state: State<'_, AppState>) -> Result<String, String> {
+    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+    state.gateway.github_connect().await.map_err(|e| {
+        sentry::capture_error(&e);
+        e.to_string()
+    })
+}
+
+#[tauri::command]
+pub async fn disconnect_github_account(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<(), String> {
+    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+    state.gateway.github_disconnect(&account_id).await.map_err(|e| {
+        sentry::capture_error(&e);
+        e.to_string()
+    })
+}
+
+#[tauri::command]
+pub async fn list_github_repos(
+    state: State<'_, AppState>,
+    account_id: Option<String>,
+    query: String,
+) -> Result<Vec<GithubRepoDto>, String> {
+    state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+    state
+        .gateway
+        .github_repos(account_id.as_deref(), &query)
+        .await
+        .map_err(|e| {
+            sentry::capture_error(&e);
+            e.to_string()
+        })
 }
 
 #[tauri::command]

@@ -5,7 +5,6 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::events::{ChatEvent, EventSink, ToolDisplayInfo, TurnUsage};
-use crate::persistence::HistoryRecord;
 
 enum OpenStep {
     Reasoning { started: Instant, text: String },
@@ -14,7 +13,7 @@ enum OpenStep {
 
 struct ActiveWork {
     started: Instant,
-    items: Vec<HistoryRecord>,
+    items: Vec<ChatEvent>,
 }
 
 pub struct TurnRecorder {
@@ -22,7 +21,7 @@ pub struct TurnRecorder {
     work: Option<ActiveWork>,
     open: Option<OpenStep>,
     pending_tools: HashMap<String, usize>,
-    completed: Vec<HistoryRecord>,
+    completed: Vec<ChatEvent>,
     partial_text: String,
 }
 
@@ -56,19 +55,21 @@ impl TurnRecorder {
         match open {
             OpenStep::Reasoning { started, text } => {
                 let duration_seconds = started.elapsed().as_secs_f64().round().max(1.0) as u64;
-                self.sink
-                    .send(ChatEvent::ReasoningStop { duration_seconds });
+                self.sink.send(ChatEvent::ReasoningStop {
+                    duration_seconds,
+                    text: None,
+                });
                 if let Some(work) = &mut self.work {
-                    work.items.push(HistoryRecord::Reasoning {
-                        text,
+                    work.items.push(ChatEvent::ReasoningStop {
                         duration_seconds,
+                        text: Some(text),
                     });
                 }
             }
             OpenStep::Text { text } => {
-                self.sink.send(ChatEvent::TextStop);
+                self.sink.send(ChatEvent::TextStop { text: None });
                 if !text.is_empty() {
-                    self.completed.push(HistoryRecord::Text { text });
+                    self.completed.push(ChatEvent::TextStop { text: Some(text) });
                 }
             }
         }
@@ -80,7 +81,7 @@ impl TurnRecorder {
         };
         if !self.pending_tools.is_empty() {
             for (_, idx) in self.pending_tools.drain() {
-                if let Some(HistoryRecord::ToolCall { is_error, .. }) = active.items.get_mut(idx) {
+                if let Some(ChatEvent::ToolCall { is_error, .. }) = active.items.get_mut(idx) {
                     *is_error = true;
                 }
             }
@@ -90,7 +91,7 @@ impl TurnRecorder {
             duration_seconds,
             stopped,
         });
-        self.completed.push(HistoryRecord::Work {
+        self.completed.push(ChatEvent::WorkStop {
             duration_seconds,
             stopped,
         });
@@ -152,7 +153,7 @@ impl TurnRecorder {
         if let Some(work) = &mut self.work {
             let idx = work.items.len();
             self.pending_tools.insert(id.clone(), idx);
-            work.items.push(HistoryRecord::ToolCall {
+            work.items.push(ChatEvent::ToolCall {
                 id,
                 name,
                 arguments,
@@ -171,7 +172,7 @@ impl TurnRecorder {
         });
         if let Some(idx) = self.pending_tools.remove(&call_id) {
             if let Some(work) = &mut self.work {
-                if let Some(HistoryRecord::ToolCall {
+                if let Some(ChatEvent::ToolCall {
                     output: slot_out,
                     is_error: slot_err,
                     ..
@@ -192,7 +193,7 @@ impl TurnRecorder {
         self.partial_text.clear();
     }
 
-    pub fn drain_completed(&mut self) -> Vec<HistoryRecord> {
+    pub fn drain_completed(&mut self) -> Vec<ChatEvent> {
         std::mem::take(&mut self.completed)
     }
 
@@ -202,20 +203,17 @@ impl TurnRecorder {
         original_message_count: usize,
         ts: i64,
         context_tokens: u64,
-    ) -> Vec<HistoryRecord> {
+    ) -> Vec<ChatEvent> {
         self.close_open_step();
         self.close_work(false);
-        self.completed.push(HistoryRecord::Compaction {
-            id: id.clone(),
-            original_message_count,
-            ts,
-        });
-        self.sink.send(ChatEvent::Compacted {
+        let event = ChatEvent::Compacted {
             id,
             original_message_count,
             ts,
             context_tokens,
-        });
+        };
+        self.sink.send(event.clone());
+        self.completed.push(event);
         std::mem::take(&mut self.completed)
     }
 
@@ -223,13 +221,11 @@ impl TurnRecorder {
         &mut self,
         stopped: bool,
         failure_message: Option<&str>,
-    ) -> (Vec<HistoryRecord>, String) {
+    ) -> (Vec<ChatEvent>, String) {
         self.close_open_step();
         self.close_work(stopped);
         if let Some(message) = failure_message {
-            self.completed.push(HistoryRecord::Error {
-                message: message.to_string(),
-            });
+            self.completed.push(ChatEvent::error(message));
         }
         (
             std::mem::take(&mut self.completed),

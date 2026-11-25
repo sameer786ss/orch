@@ -54,15 +54,15 @@ export default function SecurityPage() {
 
           <h2>2. OAuth 2.0 Authorization &amp; Credential Protection</h2>
           <p>
-            When you sign in to Orch or connect an external workspace integration (GitHub, Google Drive, Gmail, Jira, or Slack), Orch never asks for raw passwords and never uses insecure embedded webviews:
+            When you sign in to Orch, connect your GitHub account(s), or link an external workspace integration (Google Drive, Gmail, Jira, or Slack), Orch never asks for raw passwords and never uses insecure embedded webviews:
           </p>
           <ul>
-            <li><b>System-Browser OAuth Code Flow:</b> Sign-in and connector consent flows always open in your default system browser with full passkey and hardware 2FA support.</li>
-            <li><b>Stateless Web Handoff Relay:</b> Once consent completes, our callback routes (<code>/auth-callback</code> and <code>/oauth/composio</code>) immediately scrub query parameters from your browser history and hand control back to Orch Desktop over the registered <code>orch://</code> application protocol.</li>
-            <li><b>OS Keychain &amp; Scoped Connector Brokerage:</b> Your account sign-in refresh token is sealed directly inside your operating system’s native encrypted credential vault (macOS Keychain or Windows Credential Locker). Optional third-party connectors are authorized through Composio under your verified user ID and can be disconnected in one click from Orch Desktop.</li>
+            <li><b>System-Browser OAuth Code Flow:</b> Sign-in, GitHub OAuth, and connector consent flows always open in your default system browser with full passkey and hardware 2FA support.</li>
+            <li><b>Stateless Web Handoff Relay:</b> Once consent completes, our callback routes (<code>/auth-callback</code>, <code>/oauth/github</code>, and <code>/oauth/composio</code>) immediately scrub query parameters from your browser history and hand control back to Orch Desktop or Mobile over the registered <code>orch://</code> application protocol.</li>
+            <li><b>OS Keychain, Encrypted Cloud Vault &amp; Scoped Connector Brokerage:</b> Your account sign-in refresh token is sealed directly inside your operating system’s native encrypted credential vault (macOS Keychain or Windows Credential Locker). GitHub OAuth credentials for cloud sandboxes are encrypted server-side under your verified user ID, and optional third-party connectors are authorized through Composio and can be disconnected in one click.</li>
           </ul>
 
-          <h2>3. Connector Scope Transparency (GitHub, Drive, Gmail, Jira, Slack)</h2>
+          <h2>3. Connector Scope Transparency (Drive, Gmail, Jira, Slack)</h2>
           <p>
             Orch only requests permissions when you explicitly choose to enable a specific connector, and limits each integration to clear engineering workflows:
           </p>

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useChatStore } from "./store";
+import { useGithubStore } from "./github";
 import { useWorkspaceStore } from "./workspace";
 
 const MIN_GAP_MS = 15_000;
@@ -12,7 +13,8 @@ export function useCrossDeviceSync() {
       if (now - last < MIN_GAP_MS) return;
       last = now;
       const workspace = useWorkspaceStore.getState();
-      void workspace.syncCloudProjects();
+      void useGithubStore.getState().refresh().catch(() => undefined);
+      void workspace.syncCloudProjects().catch(() => undefined);
       if (workspace.mode === "cloud") void useChatStore.getState().refreshSessions();
     };
     window.addEventListener("focus", refresh);

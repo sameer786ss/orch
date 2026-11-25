@@ -19,9 +19,11 @@ use serde_json::{json, Value};
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 
-use crate::cloud::store::{workspace_doc_id, CloudWorkspaceRecord};
+use crate::cloud::github::is_valid_account_id;
+use crate::cloud::store::{github_account_doc_id, workspace_doc_id};
 use crate::cloud::workspace::CloudWorkspace;
 use crate::shared::config::{self, Config};
+use crate::shared::crypto;
 use crate::shared::error::{ApiError, ApiResult};
 use crate::shared::firestore::FirestoreClient;
 use crate::shared::util::now_ms;
@@ -327,6 +329,7 @@ impl CloudCommandManager {
 struct ManagedSandbox {
     conn: Option<SandboxConn>,
     repo_ready: bool,
+    git_auth_token: String,
     active_leases: usize,
     idle_pause_task: Option<JoinHandle<()>>,
 }
@@ -407,6 +410,46 @@ impl SandboxManager {
         user_id: &str,
         workspace: &CloudWorkspace,
     ) -> ApiResult<SandboxLease> {
+        let doc_id = workspace_doc_id(user_id, &workspace.uri);
+        let mut record = self
+            .firestore
+            .get_workspace(&doc_id)
+            .await?
+            .filter(|rec| rec.user_id == user_id)
+            .ok_or_else(|| {
+                ApiError::not_found("Project not found. Open or create a GitHub project first.")
+            })?;
+        if !is_valid_account_id(&record.github_account_id) {
+            return Err(ApiError::forbidden(
+                "GitHub account is disconnected. Reconnect or re-open this project with a connected GitHub account.",
+            )
+            .with_code("GITHUB_RECONNECT_REQUIRED"));
+        }
+        let account_doc_id = github_account_doc_id(user_id, &record.github_account_id);
+        let account = self
+            .firestore
+            .get_github_account(&account_doc_id)
+            .await?
+            .filter(|acc| acc.user_id == user_id)
+            .ok_or_else(|| {
+                ApiError::forbidden(
+                    "GitHub account is disconnected. Reconnect your GitHub account to use this workspace.",
+                )
+                .with_code("GITHUB_RECONNECT_REQUIRED")
+            })?;
+        let token = crypto::open_token(
+            &self.config.github.token_key,
+            &format!("{user_id}\0{}", account.github_id),
+            &account.token_ciphertext,
+        )
+        .map_err(|_| {
+            ApiError::forbidden(format!(
+                "GitHub authorization for @{} needs to be reconnected.",
+                account.login
+            ))
+            .with_code("GITHUB_RECONNECT_REQUIRED")
+        })?;
+
         let global_permit = self
             .global_leases
             .clone()
@@ -418,7 +461,6 @@ impl SandboxManager {
             .acquire_owned()
             .await
             .map_err(|_| ApiError::unavailable("Sandbox capacity is unavailable"))?;
-        let doc_id = workspace_doc_id(user_id, &workspace.uri);
         let slot = self.slot_for(&doc_id);
         let mut guard = slot.lock().await;
 
@@ -433,46 +475,46 @@ impl SandboxManager {
             } else {
                 guard.conn = None;
                 guard.repo_ready = false;
+                guard.git_auth_token.clear();
             }
         }
 
-        if conn.is_none() {
-            if let Ok(Some(record)) = self.firestore.get_workspace(&doc_id).await {
-                if !record.sandbox_id.is_empty() {
-                    if let Some(resumed) = self.connect_sandbox(&record.sandbox_id).await? {
-                        let mut updated = record;
-                        updated.domain = resumed.domain.clone();
-                        updated.envd_access_token = resumed.access_token.clone();
-                        updated.updated_at = now_ms();
-                        let _ = self.firestore.upsert_workspace(&updated).await;
-                        conn = Some(resumed);
-                    }
-                }
+        if conn.is_none() && !record.sandbox_id.is_empty() {
+            if let Some(resumed) = self.connect_sandbox(&record.sandbox_id).await? {
+                record.domain = resumed.domain.clone();
+                record.envd_access_token = resumed.access_token.clone();
+                record.updated_at = now_ms();
+                let _ = self.firestore.upsert_workspace(&record).await;
+                conn = Some(resumed);
             }
         }
 
         if conn.is_none() {
             let created = self.create_sandbox(user_id, &workspace.uri).await?;
-            let record = CloudWorkspaceRecord {
-                doc_id: doc_id.clone(),
-                user_id: user_id.to_string(),
-                workspace_uri: workspace.uri.clone(),
-                repo_url: workspace.repo_url.clone(),
-                repo_dir: workspace.repo_dir.clone(),
-                sandbox_id: created.sandbox_id.clone(),
-                domain: created.domain.clone(),
-                envd_access_token: created.access_token.clone(),
-                updated_at: now_ms(),
-            };
+            record.sandbox_id = created.sandbox_id.clone();
+            record.domain = created.domain.clone();
+            record.envd_access_token = created.access_token.clone();
+            record.updated_at = now_ms();
             self.firestore
                 .upsert_workspace(&record)
                 .await
                 .map_err(ApiError::internal)?;
             guard.repo_ready = false;
+            guard.git_auth_token.clear();
             conn = Some(created);
         }
 
         let conn = conn.expect("sandbox connection resolved");
+        if guard.git_auth_token != token {
+            let git_name = if account.name.trim().is_empty() {
+                account.login.as_str()
+            } else {
+                account.name.as_str()
+            };
+            self.configure_git_auth(&conn, &token, git_name, &account.email)
+                .await?;
+            guard.git_auth_token = token;
+        }
         if !guard.repo_ready {
             self.ensure_repo_cloned(&conn, workspace).await?;
             guard.repo_ready = true;
@@ -491,6 +533,25 @@ impl SandboxManager {
                 _global_permit: global_permit,
             }),
         })
+    }
+
+    pub async fn destroy_workspace(&self, doc_id: &str, stored_sandbox_id: &str) -> ApiResult<()> {
+        let mut active_sandbox_id = stored_sandbox_id.to_string();
+        if let Some((_, slot)) = self.slots.remove(doc_id) {
+            let mut guard = slot.lock().await;
+            if let Some(handle) = guard.idle_pause_task.take() {
+                handle.abort();
+            }
+            if let Some(conn) = guard.conn.take() {
+                active_sandbox_id = conn.sandbox_id;
+            }
+            guard.repo_ready = false;
+            guard.git_auth_token.clear();
+        }
+        if !active_sandbox_id.is_empty() {
+            self.delete_sandbox(&active_sandbox_id).await?;
+        }
+        Ok(())
     }
 
     async fn release_lease(&self, doc_id: &str) {
@@ -524,6 +585,7 @@ impl SandboxManager {
                     }
                     guard.conn = None;
                     guard.repo_ready = false;
+                    guard.git_auth_token.clear();
                     guard.idle_pause_task = None;
                     remove_slot = Arc::strong_count(&slot) == 2;
                 }
@@ -547,9 +609,38 @@ impl SandboxManager {
                 if let Some(conn) = guard.conn.take() {
                     let _ = self.pause_sandbox(&conn.sandbox_id).await;
                     guard.repo_ready = false;
+                    guard.git_auth_token.clear();
                 }
             }
         }
+    }
+
+    async fn configure_git_auth(
+        &self,
+        conn: &SandboxConn,
+        token: &str,
+        git_name: &str,
+        git_email: &str,
+    ) -> ApiResult<()> {
+        let helper_script = "#!/bin/sh\necho username=x-access-token\nprintf 'password='\ncat /home/user/.orch-git-token\nprintf '\\n'\n";
+        self.write_bytes(conn, "/home/user/.orch-git-token", token.as_bytes())
+            .await?;
+        self.write_bytes(conn, "/home/user/.orch-git-cred", helper_script.as_bytes())
+            .await?;
+        let mut envs = HashMap::new();
+        envs.insert("GIT_AUTHOR_NAME".to_string(), git_name.to_string());
+        envs.insert("GIT_AUTHOR_EMAIL".to_string(), git_email.to_string());
+        let script = r#"chmod 600 /home/user/.orch-git-token && chmod 700 /home/user/.orch-git-cred && git config --global credential.https://github.com.helper /home/user/.orch-git-cred && git config --global user.name "$GIT_AUTHOR_NAME" && ([ -z "$GIT_AUTHOR_EMAIL" ] || git config --global user.email "$GIT_AUTHOR_EMAIL")"#;
+        let (code, _out, err) = self
+            .run_oneshot(conn, "/bin/bash", &["-c", script], None, Some(envs), 30)
+            .await?;
+        if code != 0 {
+            return Err(ApiError::bad_gateway(format!(
+                "Failed to configure GitHub credentials in sandbox: {}",
+                err.trim()
+            )));
+        }
+        Ok(())
     }
 
     async fn ensure_repo_cloned(
@@ -567,6 +658,7 @@ impl SandboxManager {
         envs.insert("REPO_DIR".to_string(), workspace.repo_dir.clone());
         envs.insert("WS_ROOT".to_string(), config::WORKSPACE_ROOT.to_string());
         envs.insert("UPLOAD_DIR".to_string(), config::UPLOAD_DIR.to_string());
+        envs.insert("GIT_TERMINAL_PROMPT".to_string(), "0".to_string());
         let script = r#"mkdir -p "$WS_ROOT" "$UPLOAD_DIR" && git clone --depth 1 "$REPO_URL" "$REPO_DIR""#;
         let (code, _out, err) = self
             .run_oneshot(conn, "/bin/bash", &["-c", script], None, Some(envs), 120)
@@ -730,6 +822,30 @@ impl SandboxManager {
             || status == StatusCode::NOT_FOUND
             || status == StatusCode::CONFLICT
         {
+            return Ok(());
+        }
+        let detail = resp.text().await.unwrap_or_default();
+        Err(ApiError::upstream_failure(
+            E2B_SERVICE,
+            status.as_u16(),
+            &detail,
+        ))
+    }
+
+    async fn delete_sandbox(&self, sandbox_id: &str) -> ApiResult<()> {
+        let resp = self
+            .http
+            .delete(format!(
+                "{}/sandboxes/{sandbox_id}",
+                config::E2B_API_BASE
+            ))
+            .header("X-API-Key", &self.config.e2b_api_key)
+            .timeout(Duration::from_secs(config::E2B_REQUEST_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| ApiError::unreachable(E2B_SERVICE, e))?;
+        let status = resp.status();
+        if status.is_success() || status == StatusCode::NOT_FOUND {
             return Ok(());
         }
         let detail = resp.text().await.unwrap_or_default();

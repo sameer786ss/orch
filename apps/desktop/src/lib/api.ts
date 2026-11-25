@@ -1,7 +1,4 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-export type ThinkingEffort = "low" | "medium" | "high";
-export const DEFAULT_THINKING_EFFORT: ThinkingEffort = "high";
-export const THINKING_EFFORTS: readonly ThinkingEffort[] = ["low", "medium", "high"] as const;
 
 export type Role = "user" | "assistant" | "system";
 
@@ -74,6 +71,7 @@ export interface ModelDto {
   maxTokens: number;
   capabilities: string[];
   badge?: string | null;
+  thinkingEfforts: string[];
 }
 
 export interface Budget {
@@ -165,14 +163,20 @@ export interface TurnUsage {
   reasoningTokens: number;
 }
 
+export type HistoryUserPart =
+  | { type: "text"; text: string }
+  | { type: "image"; mimeType: string; data?: string; uri?: string }
+  | { type: "document"; name: string; path?: string };
+
 export type ChatEvent =
+  | { type: "user"; content: HistoryUserPart[] }
   | { type: "workStart" }
   | { type: "workStop"; durationSeconds: number; stopped: boolean }
   | { type: "reasoningStart" }
   | { type: "reasoningDelta"; text: string }
-  | { type: "reasoningStop"; durationSeconds: number }
+  | { type: "reasoningStop"; durationSeconds: number; text?: string }
   | { type: "textDelta"; text: string }
-  | { type: "textStop" }
+  | { type: "textStop"; text?: string }
   | {
       type: "toolStart";
       id: string;
@@ -181,6 +185,15 @@ export type ChatEvent =
       display: ToolDisplayInfo;
     }
   | { type: "toolResult"; callId: string; isError: boolean; output: string }
+  | {
+      type: "toolCall";
+      id: string;
+      name: string;
+      arguments: Record<string, unknown>;
+      display: ToolDisplayInfo;
+      output?: string;
+      isError?: boolean;
+    }
   | { type: "fileWritten"; path: string }
   | ({ type: "usage" } & TurnUsage)
   | { type: "notice"; message: string }
@@ -198,29 +211,7 @@ export type ChatEvent =
 
 export type ChatStreamEvent = ChatEvent;
 
-export type HistoryUserPart =
-  | { type: "text"; text: string }
-  | { type: "image"; mimeType: string; data?: string; uri?: string }
-  | { type: "document"; name: string; path?: string };
-
-export type HistoryRecord =
-  | { kind: "user"; content: HistoryUserPart[] }
-  | { kind: "work"; durationSeconds: number; stopped?: boolean }
-  | { kind: "reasoning"; text: string; durationSeconds: number }
-  | {
-      kind: "toolCall";
-      id: string;
-      name: string;
-      arguments: Record<string, unknown>;
-      display: ToolDisplayInfo;
-      output?: string;
-      isError?: boolean;
-    }
-  | { kind: "text"; text: string }
-  | { kind: "compaction"; id: string; originalMessageCount: number; ts: number }
-  | { kind: "error"; message: string };
-
-export type SessionRecord = { seq: number } & HistoryRecord;
+export type SessionRecord = { seq: number } & ChatEvent;
 
 export interface SessionRecordPage {
   records: SessionRecord[];
@@ -228,10 +219,26 @@ export interface SessionRecordPage {
   earliestSeq: number | null;
 }
 
-export interface CloudWorkspaceInfo {
+export interface GithubAccountDto {
+  id: string;
+  login: string;
+  name: string;
+  avatarUrl: string;
+  email: string;
+  updatedAt: number;
+}
+
+export interface CloudProjectDto {
+  id: string;
+  name: string;
   workspace: string;
   repoUrl: string;
   repoDir: string;
+  githubAccountId: string;
+  accountLogin: string;
+  isPrivate: boolean;
+  accountConnected: boolean;
+  updatedAt: number;
 }
 
 type DictationEvent =
@@ -258,20 +265,50 @@ export function setWorkspace(path: string): Promise<string> {
   return invoke("set_workspace", { path });
 }
 
-export function initCloudWorkspace(repoUrl: string): Promise<CloudWorkspaceInfo> {
-  return invoke("init_cloud_workspace", { repoUrl });
+export function createLocalWorkspace(
+  parentDir: string,
+  folderName: string,
+  initGit: boolean
+): Promise<string> {
+  return invoke("create_local_workspace", { parentDir, folderName, initGit });
 }
 
-export function forgetWorkspace(workspacePath: string): Promise<void> {
-  return invoke("forget_workspace", { workspacePath });
+export function activateCloudProject(project: CloudProjectDto): Promise<void> {
+  return invoke("activate_cloud_project", { project });
+}
+
+export function listCloudProjects(): Promise<CloudProjectDto[]> {
+  return invoke("list_cloud_projects");
+}
+
+export function openCloudProject(repoUrl: string, accountId: string): Promise<CloudProjectDto> {
+  return invoke("open_cloud_project", { repoUrl, accountId });
+}
+
+export function createCloudProject(
+  accountId: string,
+  name: string,
+  description: string | null,
+  privateRepo: boolean
+): Promise<CloudProjectDto> {
+  return invoke("create_cloud_project", {
+    accountId,
+    name,
+    description,
+    private: privateRepo,
+  });
+}
+
+export function deleteCloudProject(projectId: string, workspaceUri: string): Promise<void> {
+  return invoke("delete_cloud_project", { projectId, workspaceUri });
+}
+
+export function deleteLocalWorkspace(workspacePath: string): Promise<void> {
+  return invoke("delete_local_workspace", { workspacePath });
 }
 
 export function listSessionsForWorkspace(workspacePath: string): Promise<SessionSummary[]> {
   return invoke("list_sessions_for_workspace", { workspacePath });
-}
-
-export function listCloudSessions(): Promise<SessionSummary[]> {
-  return invoke("list_cloud_sessions");
 }
 
 export function listModels(forceRefresh?: boolean): Promise<ModelDto[]> {
@@ -433,6 +470,7 @@ export interface ConnectorDto {
   name: string;
   description: string;
   category: string;
+  iconUrl?: string | null;
   connected: boolean;
   toolCount: number;
 }
@@ -442,13 +480,32 @@ export function listConnectors(): Promise<ConnectorDto[]> {
 }
 
 export interface GithubRepoDto {
+  id: string;
   fullName: string;
-  url: string;
+  owner: string;
+  name: string;
   description: string;
+  private: boolean;
+  url: string;
+  updatedAt: string;
+  accountId: string;
+  accountLogin: string;
 }
 
-export function listGithubRepos(query: string): Promise<GithubRepoDto[]> {
-  return invoke("list_github_repos", { query });
+export function listGithubAccounts(): Promise<GithubAccountDto[]> {
+  return invoke("list_github_accounts");
+}
+
+export function getGithubConnectUrl(): Promise<string> {
+  return invoke("get_github_connect_url");
+}
+
+export function disconnectGithubAccount(accountId: string): Promise<void> {
+  return invoke("disconnect_github_account", { accountId });
+}
+
+export function listGithubRepos(accountId: string | null, query: string): Promise<GithubRepoDto[]> {
+  return invoke("list_github_repos", { accountId, query });
 }
 
 export function getConnectorAuthUrl(connectorId: string): Promise<string> {

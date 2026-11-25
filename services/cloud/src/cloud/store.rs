@@ -9,8 +9,8 @@ use gcp_auth::TokenProvider;
 use orchharness::backend::SessionStore;
 use orchharness::error::{AppError, AppResult};
 use orchharness::persistence::{
-    HistoryRecord, HistoryUserPart, SessionRecord, SessionRecordPage, SessionSnapshot,
-    SessionSummary, TurnUsage,
+    ChatEvent, HistoryUserPart, SessionRecord, SessionRecordPage, SessionSnapshot, SessionSummary,
+    TurnUsage,
 };
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
@@ -25,6 +25,8 @@ use crate::shared::util::{fast_hash_hex, non_empty, now_ms};
 const SESSIONS: &str = "orch_cloud_sessions";
 const ENTRIES: &str = "entries";
 const WORKSPACES: &str = "orch_cloud_workspaces";
+const GITHUB_ACCOUNTS: &str = "orch_github_accounts";
+const OAUTH_STATES: &str = "orch_oauth_states";
 
 fn session_path(id: &str) -> String {
     format!("{SESSIONS}/{id}")
@@ -36,6 +38,14 @@ fn entry_path(session_id: &str, seq: i64) -> String {
 
 fn workspace_path(doc_id: &str) -> String {
     format!("{WORKSPACES}/{doc_id}")
+}
+
+fn github_account_path(doc_id: &str) -> String {
+    format!("{GITHUB_ACCOUNTS}/{doc_id}")
+}
+
+fn oauth_state_path(state_id: &str) -> String {
+    format!("{OAUTH_STATES}/{state_id}")
 }
 
 fn id_from_name(name: &str) -> &str {
@@ -59,6 +69,10 @@ pub fn workspace_doc_id(user_id: &str, workspace_uri: &str) -> String {
     fast_hash_hex(&format!("{user_id}\0{workspace_uri}"))
 }
 
+pub fn github_account_doc_id(user_id: &str, github_id: &str) -> String {
+    fast_hash_hex(&format!("{user_id}\0{github_id}"))
+}
+
 fn image_ext_for_mime(mime: &str) -> &'static str {
     match mime.trim().to_ascii_lowercase().as_str() {
         "image/jpeg" | "image/jpg" => "jpg",
@@ -72,12 +86,16 @@ fn image_ext_for_mime(mime: &str) -> &'static str {
 pub struct CloudWorkspaceRecord {
     pub doc_id: String,
     pub user_id: String,
+    pub name: String,
     pub workspace_uri: String,
     pub repo_url: String,
     pub repo_dir: String,
+    pub github_account_id: String,
+    pub is_private: bool,
     pub sandbox_id: String,
     pub domain: String,
     pub envd_access_token: String,
+    pub created_at: i64,
     pub updated_at: i64,
 }
 
@@ -86,12 +104,16 @@ impl CloudWorkspaceRecord {
         Self {
             doc_id: doc_id.to_string(),
             user_id: fields::read_string(stored, "user_id"),
+            name: fields::read_string(stored, "name"),
             workspace_uri: fields::read_string(stored, "workspace_uri"),
             repo_url: fields::read_string(stored, "repo_url"),
             repo_dir: fields::read_string(stored, "repo_dir"),
+            github_account_id: fields::read_string(stored, "github_account_id"),
+            is_private: fields::read_bool(stored, "is_private"),
             sandbox_id: fields::read_string(stored, "sandbox_id"),
             domain: fields::read_string(stored, "domain"),
             envd_access_token: fields::read_string(stored, "envd_access_token"),
+            created_at: fields::read_i64(stored, "created_at"),
             updated_at: fields::read_i64(stored, "updated_at"),
         }
     }
@@ -105,16 +127,100 @@ impl CloudWorkspaceRecord {
     pub fn to_fields(&self) -> Map<String, Value> {
         let mut map = Map::new();
         map.insert("user_id".into(), fields::string(&self.user_id));
+        map.insert("name".into(), fields::string(&self.name));
         map.insert("workspace_uri".into(), fields::string(&self.workspace_uri));
         map.insert("repo_url".into(), fields::string(&self.repo_url));
         map.insert("repo_dir".into(), fields::string(&self.repo_dir));
+        map.insert("github_account_id".into(), fields::string(&self.github_account_id));
+        map.insert("is_private".into(), fields::boolean(self.is_private));
         map.insert("sandbox_id".into(), fields::string(&self.sandbox_id));
         map.insert("domain".into(), fields::string(&self.domain));
         map.insert(
             "envd_access_token".into(),
             fields::string(&self.envd_access_token),
         );
+        map.insert("created_at".into(), fields::integer(self.created_at));
         map.insert("updated_at".into(), fields::integer(self.updated_at));
+        map
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GithubAccountRecord {
+    pub doc_id: String,
+    pub user_id: String,
+    pub github_id: String,
+    pub login: String,
+    pub name: String,
+    pub avatar_url: String,
+    pub email: String,
+    pub token_ciphertext: String,
+    pub updated_at: i64,
+}
+
+impl GithubAccountRecord {
+    fn from_fields(doc_id: &str, stored: &Value) -> Self {
+        Self {
+            doc_id: doc_id.to_string(),
+            user_id: fields::read_string(stored, "user_id"),
+            github_id: fields::read_string(stored, "github_id"),
+            login: fields::read_string(stored, "login"),
+            name: fields::read_string(stored, "name"),
+            avatar_url: fields::read_string(stored, "avatar_url"),
+            email: fields::read_string(stored, "email"),
+            token_ciphertext: fields::read_string(stored, "token_ciphertext"),
+            updated_at: fields::read_i64(stored, "updated_at"),
+        }
+    }
+
+    fn from_document(document: &Value) -> Option<Self> {
+        let name = document.get("name")?.as_str()?;
+        let stored = document.get("fields")?;
+        Some(Self::from_fields(id_from_name(name), stored))
+    }
+
+    pub fn to_fields(&self) -> Map<String, Value> {
+        let mut map = Map::new();
+        map.insert("user_id".into(), fields::string(&self.user_id));
+        map.insert("github_id".into(), fields::string(&self.github_id));
+        map.insert("login".into(), fields::string(&self.login));
+        map.insert("name".into(), fields::string(&self.name));
+        map.insert("avatar_url".into(), fields::string(&self.avatar_url));
+        map.insert("email".into(), fields::string(&self.email));
+        map.insert(
+            "token_ciphertext".into(),
+            fields::string(&self.token_ciphertext),
+        );
+        map.insert("updated_at".into(), fields::integer(self.updated_at));
+        map
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OAuthStateRecord {
+    pub state: String,
+    pub user_id: String,
+    pub platform: String,
+    pub expires_at: i64,
+}
+
+impl OAuthStateRecord {
+    fn from_document(document: &Value) -> Option<Self> {
+        let name = document.get("name")?.as_str()?;
+        let stored = document.get("fields")?;
+        Some(Self {
+            state: id_from_name(name).to_string(),
+            user_id: fields::read_string(stored, "user_id"),
+            platform: fields::read_string(stored, "platform"),
+            expires_at: fields::read_i64(stored, "expires_at"),
+        })
+    }
+
+    fn to_fields(&self) -> Map<String, Value> {
+        let mut map = Map::new();
+        map.insert("user_id".into(), fields::string(&self.user_id));
+        map.insert("platform".into(), fields::string(&self.platform));
+        map.insert("expires_at".into(), fields::integer(self.expires_at));
         map
     }
 }
@@ -281,6 +387,148 @@ impl FirestoreClient {
         .map(|_| ())
     }
 
+    pub async fn list_workspaces(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<CloudWorkspaceRecord>, String> {
+        let documents = self
+            .run_query(
+                "",
+                json!({
+                    "from": [{ "collectionId": WORKSPACES }],
+                    "where": equals_filter("user_id", user_id),
+                    "orderBy": [
+                        { "field": { "fieldPath": "updated_at" }, "direction": "DESCENDING" }
+                    ],
+                    "limit": config::SESSION_PAGE_SIZE,
+                }),
+            )
+            .await?;
+        documents
+            .iter()
+            .map(|document| {
+                CloudWorkspaceRecord::from_document(document)
+                    .ok_or_else(|| "workspace document is malformed".to_string())
+            })
+            .collect()
+    }
+
+    pub async fn delete_workspace(&self, doc_id: &str) -> Result<(), String> {
+        self.delete_document(&workspace_path(doc_id)).await
+    }
+
+    pub async fn get_github_account(
+        &self,
+        doc_id: &str,
+    ) -> Result<Option<GithubAccountRecord>, String> {
+        let Some(document) = self.get_document(&github_account_path(doc_id)).await? else {
+            return Ok(None);
+        };
+        GithubAccountRecord::from_document(&document)
+            .map(Some)
+            .ok_or_else(|| format!("github account document {doc_id} is malformed"))
+    }
+
+    pub async fn upsert_github_account(
+        &self,
+        record: &GithubAccountRecord,
+    ) -> Result<(), String> {
+        let fields = record.to_fields();
+        self.write_document(
+            &github_account_path(&record.doc_id),
+            &fields,
+            false,
+            Precondition::Unconditional,
+        )
+        .await?
+        .into_result("upsert github account")
+        .map(|_| ())
+    }
+
+    pub async fn list_github_accounts(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<GithubAccountRecord>, String> {
+        let documents = self
+            .run_query(
+                "",
+                json!({
+                    "from": [{ "collectionId": GITHUB_ACCOUNTS }],
+                    "where": equals_filter("user_id", user_id),
+                    "orderBy": [
+                        { "field": { "fieldPath": "updated_at" }, "direction": "DESCENDING" }
+                    ],
+                    "limit": 50,
+                }),
+            )
+            .await?;
+        documents
+            .iter()
+            .map(|document| {
+                GithubAccountRecord::from_document(document)
+                    .ok_or_else(|| "github account document is malformed".to_string())
+            })
+            .collect()
+    }
+
+    pub async fn delete_github_account(&self, doc_id: &str) -> Result<(), String> {
+        self.delete_document(&github_account_path(doc_id)).await
+    }
+
+    pub async fn put_oauth_state(&self, record: &OAuthStateRecord) -> Result<(), String> {
+        let fields = record.to_fields();
+        self.write_document(
+            &oauth_state_path(&record.state),
+            &fields,
+            false,
+            Precondition::Exists(false),
+        )
+        .await?
+        .into_result("store oauth state")
+        .map(|_| ())
+    }
+
+    pub async fn take_oauth_state(&self, state: &str) -> Result<Option<OAuthStateRecord>, String> {
+        let path = oauth_state_path(state);
+        let Some(document) = self.get_document(&path).await? else {
+            return Ok(None);
+        };
+        self.delete_document(&path).await?;
+        Ok(OAuthStateRecord::from_document(&document))
+    }
+
+    pub async fn list_all_session_ids_for_workspace(
+        &self,
+        user_id: &str,
+        workspace_path: &str,
+    ) -> Result<Vec<String>, String> {
+        let filter = json!({
+            "compositeFilter": {
+                "op": "AND",
+                "filters": [
+                    equals_filter("user_id", user_id),
+                    equals_filter("workspace_path", workspace_path),
+                ]
+            }
+        });
+        let documents = self
+            .run_query(
+                "",
+                json!({
+                    "from": [{ "collectionId": SESSIONS }],
+                    "where": filter,
+                    "select": { "fields": [{ "fieldPath": "__name__" }] },
+                    "limit": config::FIRESTORE_BATCH_LIMIT,
+                }),
+            )
+            .await?;
+        Ok(documents
+            .iter()
+            .filter_map(|doc| doc.get("name").and_then(Value::as_str))
+            .map(|name| id_from_name(name).to_string())
+            .collect())
+    }
+
     pub async fn get_session(&self, id: &str) -> Result<Option<CloudSessionRecord>, String> {
         let Some(document) = self.get_document(&session_path(id)).await? else {
             return Ok(None);
@@ -301,17 +549,12 @@ impl FirestoreClient {
         let now = now_ms();
         for _ in 0..2 {
             if let Some(mut record) = self.get_session(id).await? {
+                if record.workspace_path != workspace_path {
+                    return Err("session belongs to a different workspace".to_string());
+                }
                 let mut update = Map::new();
                 update.insert("updated_at".into(), fields::integer(now));
                 update.insert("model".into(), fields::string(model));
-                if record.workspace_path.is_empty() && !workspace_path.is_empty() {
-                    record.workspace_path = workspace_path.to_string();
-                    update.insert("workspace_path".into(), fields::string(workspace_path));
-                }
-                if record.repo_url.is_empty() && !repo_url.is_empty() {
-                    record.repo_url = repo_url.to_string();
-                    update.insert("repo_url".into(), fields::string(repo_url));
-                }
                 record.updated_at = now;
                 self.patch_session(id, update).await?;
                 return Ok((record, false));
@@ -498,13 +741,7 @@ impl FirestoreClient {
             }
             self.commit_chunked(deletes).await?;
         }
-        let reply = self
-            .send(Method::DELETE, &self.document_url(&session_path(id)), &[], None)
-            .await?;
-        if reply.status == StatusCode::NOT_FOUND {
-            return Ok(());
-        }
-        reply.into_result("delete session").map(|_| ())
+        self.delete_document(&session_path(id)).await
     }
 }
 
@@ -738,14 +975,14 @@ impl CloudSessionStore {
         }
     }
 
-    async fn externalize_media(&self, records: &[HistoryRecord]) -> AppResult<Vec<HistoryRecord>> {
+    async fn externalize_media(&self, records: &[ChatEvent]) -> AppResult<Vec<ChatEvent>> {
         let storage = self.storage.clone();
         stream::iter(records.iter().cloned())
             .map(|record| {
                 let storage = storage.clone();
                 async move {
                     match record {
-                        HistoryRecord::User { content } => {
+                        ChatEvent::User { content } => {
                             let next_content = stream::iter(content)
                                 .map(|part| {
                                     let storage = storage.clone();
@@ -780,7 +1017,7 @@ impl CloudSessionStore {
                                 .buffered(8)
                                 .try_collect::<Vec<_>>()
                                 .await?;
-                            Ok(HistoryRecord::User { content: next_content })
+                            Ok(ChatEvent::User { content: next_content })
                         }
                         other => Ok(other),
                     }
@@ -791,8 +1028,8 @@ impl CloudSessionStore {
             .await
     }
 
-    async fn hydrate_media(&self, record: &mut HistoryRecord) -> AppResult<()> {
-        let HistoryRecord::User { content } = record else {
+    async fn hydrate_media(&self, record: &mut ChatEvent) -> AppResult<()> {
+        let ChatEvent::User { content } = record else {
             return Ok(());
         };
         let keys: Vec<(usize, String)> = content
@@ -841,7 +1078,7 @@ impl SessionStore for CloudSessionStore {
         self.storage.write_json("conversation.json", snapshot).await
     }
 
-    async fn append_history(&self, session_id: &str, records: &[HistoryRecord]) -> AppResult<()> {
+    async fn append_history(&self, session_id: &str, records: &[ChatEvent]) -> AppResult<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -918,7 +1155,7 @@ impl SessionStore for CloudSessionStore {
                 let stored = doc.get("fields").unwrap_or(&Value::Null);
                 let seq = fields::read_i64(stored, "seq");
                 let raw = fields::read_string(stored, "record");
-                serde_json::from_str::<HistoryRecord>(&raw)
+                serde_json::from_str::<ChatEvent>(&raw)
                     .map(|record| (seq, record))
                     .map_err(|e| {
                         AppError::other(format!("corrupt session entry {session_id}/{seq}: {e}"))

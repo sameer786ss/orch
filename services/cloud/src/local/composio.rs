@@ -1,13 +1,14 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::extract::State;
 use axum::{Extension, Json};
+use futures::future::try_join_all;
 use orchharness::connector_tools::client::{
-    AccountWire, ComposioError, ComposioTransport, ExecuteWire, ToolWire,
+    AccountWire, ComposioError, ComposioTransport, ConnectorCatalogEntry, ExecuteWire, ToolWire,
 };
-use orchharness::connectors::connector_catalog;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
@@ -43,6 +44,34 @@ struct ConnectedAccount {
 #[derive(Deserialize)]
 struct ToolkitRef {
     slug: String,
+}
+
+#[derive(Deserialize, Default)]
+struct ToolkitCategory {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    slug: String,
+}
+
+#[derive(Deserialize, Default)]
+struct ToolkitMeta {
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    logo: Option<String>,
+    #[serde(default)]
+    categories: Vec<ToolkitCategory>,
+    #[serde(default)]
+    tools_count: usize,
+}
+
+#[derive(Deserialize)]
+struct ToolkitWire {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    meta: ToolkitMeta,
 }
 
 #[derive(Serialize)]
@@ -191,8 +220,69 @@ fn is_supported_slug(toolkits: &HashMap<String, String>, slug: &str) -> bool {
         })
 }
 
-pub async fn catalog() -> Json<Vec<orchharness::connectors::ConnectorCatalogEntry>> {
-    Json(connector_catalog())
+fn extract_category(wire: &ToolkitWire) -> String {
+    wire.meta
+        .categories
+        .iter()
+        .find_map(|c| {
+            let name = c.name.trim();
+            if !name.is_empty() {
+                Some(name)
+            } else {
+                let slug = c.slug.trim();
+                (!slug.is_empty()).then_some(slug)
+            }
+        })
+        .unwrap_or_default()
+        .to_string()
+}
+
+async fn load_toolkit_entry(state: &ServerState, toolkit: &str) -> ApiResult<ConnectorCatalogEntry> {
+    let path = format!("/toolkits/{toolkit}");
+    let wire: ToolkitWire = call(state, Method::GET, &path, &[], None, LIST_TIMEOUT_SECS).await?;
+    let id = toolkit.to_ascii_lowercase();
+    let name = wire.name.trim().to_string();
+    let description = wire.meta.description.unwrap_or_default().trim().to_string();
+    let category = extract_category(&wire);
+    let icon_url = wire
+        .meta
+        .logo
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    Ok(ConnectorCatalogEntry {
+        id,
+        name,
+        description,
+        category,
+        icon_url,
+        tool_count: wire.meta.tools_count,
+    })
+}
+
+async fn catalog_entries(state: &ServerState) -> ApiResult<Vec<ConnectorCatalogEntry>> {
+    let state_bg = state.clone();
+    let cached = state
+        .connector_catalog_cache
+        .try_get_with((), async move {
+            let slugs: Vec<String> = state_bg
+                .config
+                .composio
+                .auth_config_ids
+                .keys()
+                .map(|s| s.to_ascii_lowercase())
+                .collect();
+            let mut entries =
+                try_join_all(slugs.iter().map(|slug| load_toolkit_entry(&state_bg, slug))).await?;
+            entries.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok::<_, ApiError>(Arc::new(entries))
+        })
+        .await
+        .map_err(|err| Arc::try_unwrap(err).unwrap_or_else(|e| ApiError::upstream(e.status.as_u16(), e.message())))?;
+    Ok((*cached).clone())
+}
+
+pub async fn catalog(State(state): State<ServerState>) -> ApiResult<Json<Vec<ConnectorCatalogEntry>>> {
+    Ok(Json(catalog_entries(&state).await?))
 }
 
 pub async fn accounts(
@@ -234,9 +324,10 @@ pub async fn connect(
     ApiJson(request): ApiJson<ConnectRequest>,
 ) -> ApiResult<Json<Value>> {
     let composio = &state.config.composio;
+    let toolkit = request.toolkit.trim().to_ascii_lowercase();
     let auth_config_id = composio
         .auth_config_ids
-        .get(&request.toolkit)
+        .get(&toolkit)
         .ok_or_else(|| ApiError::bad_request("Unknown connector").with_code("UNKNOWN_CONNECTOR"))?;
     let link: Link = call(
         &state,
@@ -292,10 +383,35 @@ pub async fn disconnect(
 
 #[derive(Deserialize)]
 pub struct ToolsQuery {
-    slugs: String,
+    #[serde(default)]
+    toolkit: Option<String>,
+    #[serde(default)]
+    slugs: Option<String>,
 }
 
-async fn fetch_tools(state: &ServerState, slugs: &[&str]) -> ApiResult<Vec<Tool>> {
+async fn fetch_toolkit_tools(state: &ServerState, toolkit: &str) -> ApiResult<Vec<Tool>> {
+    let key = toolkit.trim().to_ascii_lowercase();
+    if !state.config.composio.auth_config_ids.contains_key(&key) {
+        return Err(ApiError::bad_request("Unknown connector").with_code("UNKNOWN_CONNECTOR"));
+    }
+    let page: Page<Tool> = call(
+        state,
+        Method::GET,
+        "/tools",
+        &[
+            ("toolkit_slug", key),
+            ("important", "true".to_string()),
+            ("toolkit_versions", "latest".to_string()),
+            ("limit", PAGE_LIMIT.to_string()),
+        ],
+        None,
+        TOOLS_TIMEOUT_SECS,
+    )
+    .await?;
+    Ok(page.items)
+}
+
+async fn fetch_tools_by_slugs(state: &ServerState, slugs: &[&str]) -> ApiResult<Vec<Tool>> {
     let toolkits = &state.config.composio.auth_config_ids;
     if slugs.is_empty()
         || slugs.len() > MAX_SLUGS
@@ -326,8 +442,14 @@ pub async fn tools(
     State(state): State<ServerState>,
     ApiQuery(query): ApiQuery<ToolsQuery>,
 ) -> ApiResult<Json<Value>> {
-    let slugs: Vec<&str> = query.slugs.split(',').filter(|slug| !slug.is_empty()).collect();
-    let items = fetch_tools(&state, &slugs).await?;
+    let items = if let Some(toolkit) = query.toolkit.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        fetch_toolkit_tools(&state, toolkit).await?
+    } else if let Some(raw_slugs) = query.slugs.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let slugs: Vec<&str> = raw_slugs.split(',').filter(|slug| !slug.is_empty()).collect();
+        fetch_tools_by_slugs(&state, &slugs).await?
+    } else {
+        return Err(ApiError::bad_request("toolkit or slugs query parameter is required").with_code("BAD_QUERY"));
+    };
     Ok(Json(json!({ "tools": items })))
 }
 
@@ -396,6 +518,17 @@ fn map_api_err(err: ApiError) -> ComposioError {
     }
 }
 
+fn map_tool_wire(t: Tool) -> ToolWire {
+    ToolWire {
+        slug: t.slug,
+        description: t.description.unwrap_or_default(),
+        version: t.version,
+        is_deprecated: t.is_deprecated,
+        tags: t.tags,
+        input_parameters: t.input_parameters,
+    }
+}
+
 #[derive(Clone)]
 pub struct InProcessComposioTransport {
     pub state: ServerState,
@@ -404,6 +537,10 @@ pub struct InProcessComposioTransport {
 
 #[async_trait]
 impl ComposioTransport for InProcessComposioTransport {
+    async fn catalog(&self) -> Result<Vec<ConnectorCatalogEntry>, ComposioError> {
+        catalog_entries(&self.state).await.map_err(map_api_err)
+    }
+
     async fn accounts(&self) -> Result<Vec<AccountWire>, ComposioError> {
         let mut query = toolkit_query(&self.state, &self.user_id);
         query.push(("statuses", "ACTIVE".to_string()));
@@ -445,19 +582,18 @@ impl ComposioTransport for InProcessComposioTransport {
         })
     }
 
-    async fn tools(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError> {
-        let items = fetch_tools(&self.state, slugs).await.map_err(map_api_err)?;
-        Ok(items
-            .into_iter()
-            .map(|t| ToolWire {
-                slug: t.slug,
-                description: t.description.unwrap_or_default(),
-                version: t.version,
-                is_deprecated: t.is_deprecated,
-                tags: t.tags,
-                input_parameters: t.input_parameters,
-            })
-            .collect())
+    async fn toolkit_tools(&self, toolkit: &str) -> Result<Vec<ToolWire>, ComposioError> {
+        let items = fetch_toolkit_tools(&self.state, toolkit)
+            .await
+            .map_err(map_api_err)?;
+        Ok(items.into_iter().map(map_tool_wire).collect())
+    }
+
+    async fn tools_by_slugs(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError> {
+        let items = fetch_tools_by_slugs(&self.state, slugs)
+            .await
+            .map_err(map_api_err)?;
+        Ok(items.into_iter().map(map_tool_wire).collect())
     }
 
     async fn execute(

@@ -29,12 +29,17 @@ function ConnectorCard({
     <article className="card">
       <div className="card-head">
         <span className="card-icon">
-          <ConnectorIcon id={connector.id} />
+          <ConnectorIcon id={connector.id} iconUrl={connector.iconUrl} />
         </span>
         <span className="row-body">
           <span className="truncate">{connector.name}</span>
           <span className="truncate">
-            {titleCase(connector.category)} · {connector.toolCount} tools
+            {[
+              connector.category ? titleCase(connector.category) : "",
+              connector.toolCount > 0 ? `${connector.toolCount} tools` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         </span>
         {connector.connected && (

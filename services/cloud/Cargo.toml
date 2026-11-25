@@ -17,6 +17,7 @@ http               = { workspace = true }
 mime_guess         = { workspace = true }
 moka               = { workspace = true }
 reqwest            = { workspace = true, features = ["multipart", "form", "query"] }
+ring               = "0.17"
 serde              = { workspace = true }
 serde_json         = { workspace = true }
 tokio              = { workspace = true }

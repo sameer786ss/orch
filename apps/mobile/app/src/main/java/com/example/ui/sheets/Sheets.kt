@@ -19,12 +19,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,18 +39,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.orch.app.R
 import com.orch.app.data.Budget
+import com.orch.app.data.GithubAccount
 import com.orch.app.data.ModelInfo
-import com.orch.app.data.ThinkingEffort
 import com.orch.app.ui.FilesUi
 import com.orch.app.ui.components.OrchActionChip
+import com.orch.app.ui.components.OrchAlertDialog
+import com.orch.app.ui.components.OrchBanner
 import com.orch.app.ui.components.OrchBottomSheet
 import com.orch.app.ui.components.OrchCard
 import com.orch.app.ui.components.OrchCenteredSpinner
@@ -243,9 +253,9 @@ fun FilesSheet(
 fun ModelSheet(
     models: List<ModelInfo>,
     selectedId: String,
-    thinkingEffort: ThinkingEffort,
+    thinkingEffort: String,
     onSelectModel: (String) -> Unit,
-    onSelectThinkingEffort: (ThinkingEffort) -> Unit,
+    onSelectThinkingEffort: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val selectedModel = models.firstOrNull { it.id == selectedId }
@@ -278,7 +288,6 @@ fun ModelSheet(
                             .heightIn(min = 56.dp)
                             .clickable {
                                 onSelectModel(model.id)
-                                if (!model.supportsThinking) onDismiss()
                             }
                             .padding(horizontal = OrchDimens.ScreenPadding, vertical = OrchDimens.CardPaddingV)
                     ) {
@@ -331,7 +340,7 @@ fun ModelSheet(
                     }
                 }
             }
-            if (selectedModel?.supportsThinking == true) {
+            if (selectedModel != null) {
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.padding(vertical = OrchDimens.ItemGap)
@@ -349,10 +358,10 @@ fun ModelSheet(
                         horizontalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        ThinkingEffort.entries.forEach { effort ->
+                        selectedModel.thinkingEfforts.forEach { effort ->
                             OrchActionChip(
-                                label = effort.label,
-                                selected = effort == thinkingEffort,
+                                label = effort.replaceFirstChar(Char::uppercase),
+                                selected = effort.equals(thinkingEffort, ignoreCase = true),
                                 onClick = { onSelectThinkingEffort(effort) },
                                 modifier = Modifier.weight(1f)
                             )
@@ -369,9 +378,17 @@ fun AccountSheet(
     name: String?,
     email: String?,
     budget: Budget?,
+    githubAccounts: List<GithubAccount>,
+    githubConnecting: Boolean,
+    githubDisconnectingId: String?,
+    githubError: String?,
+    onConnectGithub: () -> Unit,
+    onDisconnectGithub: (String) -> Unit,
     onSignOut: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var pendingDisconnect by remember { mutableStateOf<GithubAccount?>(null) }
+
     OrchBottomSheet(onDismiss = onDismiss) {
         OrchSheetHeader(
             title = "Account",
@@ -410,6 +427,107 @@ fun AccountSheet(
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            OrchCard {
+                Column(verticalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_github_logo),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "GitHub accounts",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (githubConnecting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    githubError?.let { OrchBanner(text = it, isError = true) }
+                    if (githubAccounts.isEmpty()) {
+                        Text(
+                            text = "Connect GitHub to browse or create cloud project repositories.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        githubAccounts.forEach { acc ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OrchIconBadge(
+                                    size = 32.dp,
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                                ) {
+                                    if (acc.avatarUrl.isNotBlank()) {
+                                        AsyncImage(
+                                            model = acc.avatarUrl,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(MaterialTheme.shapes.small)
+                                        )
+                                    } else {
+                                        Text(
+                                            text = acc.login.take(1).uppercase(),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "@${acc.login}",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (acc.email.isNotBlank()) {
+                                        Text(
+                                            text = acc.email,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    enabled = githubDisconnectingId == null,
+                                    onClick = { pendingDisconnect = acc }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Delete,
+                                        contentDescription = "Disconnect @${acc.login}",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    OrchSecondaryButton(
+                        text = if (githubAccounts.isEmpty()) "Connect GitHub" else "Add another account",
+                        onClick = onConnectGithub,
+                        enabled = !githubConnecting,
+                        icon = Icons.Outlined.Add,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
             if (budget != null) {
                 val ratio = if (budget.limitUsd > 0) (budget.costUsd / budget.limitUsd).toFloat().coerceIn(0f, 1f) else 0f
                 OrchCard {
@@ -451,6 +569,24 @@ fun AccountSheet(
                 onClick = onSignOut,
                 icon = Icons.AutoMirrored.Rounded.Logout,
                 modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+
+    pendingDisconnect?.let { acc ->
+        OrchAlertDialog(
+            title = "Disconnect @${acc.login}?",
+            onDismiss = { pendingDisconnect = null },
+            confirmLabel = "Disconnect",
+            onConfirm = {
+                onDisconnectGithub(acc.id)
+                pendingDisconnect = null
+            }
+        ) {
+            Text(
+                text = "Cloud projects linked to this GitHub account will require reconnecting before opening their sandbox.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

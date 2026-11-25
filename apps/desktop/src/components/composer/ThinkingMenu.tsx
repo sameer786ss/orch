@@ -5,29 +5,25 @@ import { Button } from "../ui/Button";
 import { Menu, MenuContent, MenuControl, MenuTrigger } from "../ui/Menu";
 import { Slider } from "../ui/Slider";
 
-const EFFORTS = [
-  { key: "low", label: "Low" },
-  { key: "medium", label: "Medium" },
-  { key: "high", label: "High" },
-] as const;
-
-const EFFORT_MARKS = EFFORTS.map((e) => e.label);
+const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export function ThinkingMenu() {
+  const efforts = useChatStore((s) => s.selectedModel?.thinkingEfforts ?? []);
   const effort = useChatStore((s) => s.thinkingEffort);
   const setEffort = useChatStore((s) => s.setThinkingEffort);
-  const index = Math.max(
-    0,
-    EFFORTS.findIndex((e) => e.key === effort)
-  );
-  const label = EFFORTS[index].label;
+
+  if (efforts.length === 0) return null;
+
+  const index = Math.max(0, efforts.indexOf(effort));
+  const label = titleCase(efforts[index]);
+  const marks = efforts.map(titleCase);
 
   const step = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
     const delta = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
     if (!delta) return;
     event.preventDefault();
-    setEffort(EFFORTS[Math.min(Math.max(index + delta, 0), EFFORTS.length - 1)].key);
+    setEffort(efforts[Math.min(Math.max(index + delta, 0), efforts.length - 1)]);
   };
 
   return (
@@ -48,10 +44,10 @@ export function ThinkingMenu() {
             aria-label="Thinking effort"
             aria-valuetext={label}
             min={0}
-            max={EFFORTS.length - 1}
+            max={efforts.length - 1}
             value={index}
-            marks={EFFORT_MARKS}
-            onValueChange={(next) => setEffort(EFFORTS[next].key)}
+            marks={marks}
+            onValueChange={(next) => setEffort(efforts[next])}
           />
         </MenuControl>
       </MenuContent>

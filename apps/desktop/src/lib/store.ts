@@ -2,10 +2,11 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "./api";
-import { newId, DEFAULT_THINKING_EFFORT } from "./api";
+import { newId } from "./api";
 import { useWorkspaceStore } from "./workspace";
 import { useArtifactsStore } from "./artifacts";
 import { useConnectorsStore } from "./connectors";
+import { useGithubStore } from "./github";
 import { recordsToMessages } from "./steps";
 import type {
   AttachmentRef,
@@ -130,7 +131,7 @@ const INITIAL_STATE: ChatState = {
   sessionTokens: ZERO_USAGE,
   models: [],
   selectedModel: null,
-  thinkingEffort: DEFAULT_THINKING_EFFORT,
+  thinkingEffort: "low",
   budget: null,
   error: null,
   initialized: false,
@@ -161,6 +162,9 @@ async function bindListeners() {
     listen("connector-changed", () => {
       void useConnectorsStore.getState().refresh();
     }),
+    listen<{ error?: string | null }>("github-changed", (event) => {
+      void useGithubStore.getState().finishConnect(event.payload?.error);
+    }),
   ]);
   const fns = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
@@ -177,6 +181,12 @@ async function bindListeners() {
 
 function pickModel(models: ModelDto[], key: string | null | undefined): ModelDto | null {
   return (key ? models.find((m) => m.key === key) : undefined) ?? models[0] ?? null;
+}
+
+function resolveThinkingEffort(model: ModelDto | null, preferred?: string | null): string {
+  const efforts = model?.thinkingEfforts ?? [];
+  if (preferred && efforts.includes(preferred)) return preferred;
+  return efforts[0] ?? "low";
 }
 
 const activeStreamFlushes = new Map<string, () => void>();
@@ -204,13 +214,11 @@ export const useChatStore = create(
         if (epoch !== initEpoch) return;
 
         set((s) => {
+          const selectedModel = pickModel(models, savedModel);
           s.sessions = sessions;
           s.models = models;
-          s.selectedModel = pickModel(models, savedModel);
-          s.thinkingEffort =
-            savedEffort && ["low", "medium", "high"].includes(savedEffort)
-              ? savedEffort
-              : "high";
+          s.selectedModel = selectedModel;
+          s.thinkingEffort = resolveThinkingEffort(selectedModel, savedEffort);
         });
 
         await bindListeners();
@@ -458,12 +466,17 @@ export const useChatStore = create(
     setSelectedModel: (key: string) => {
       const model = get().models.find((m) => m.key === key);
       if (!model) return;
-      set((s) => { s.selectedModel = model; });
+      const nextEffort = resolveThinkingEffort(model, get().thinkingEffort);
+      set((s) => {
+        s.selectedModel = model;
+        s.thinkingEffort = nextEffort;
+      });
       void api.setUserPref("selectedModel", key).catch(() => undefined);
     },
 
     setThinkingEffort: (effort: string) => {
-      if (!["low", "medium", "high"].includes(effort)) return;
+      const allowed = get().selectedModel?.thinkingEfforts ?? [];
+      if (!allowed.includes(effort)) return;
       set((s) => { s.thinkingEffort = effort; });
       void api.setUserPref("thinkingEffort", effort).catch(() => undefined);
     },
@@ -490,8 +503,10 @@ export const useChatStore = create(
       try {
         const models = await api.listModels();
         set((s) => {
+          const selectedModel = pickModel(models, s.selectedModel?.key);
           s.models = models;
-          s.selectedModel = pickModel(models, s.selectedModel?.key);
+          s.selectedModel = selectedModel;
+          s.thinkingEffort = resolveThinkingEffort(selectedModel, s.thinkingEffort);
         });
       } catch {
         return;

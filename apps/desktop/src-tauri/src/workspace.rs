@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::cloud::{CloudWorkspace, CloudWorkspaceInfo};
+use crate::cloud::{CloudProjectDto, CloudWorkspace};
 
 #[derive(Debug, Clone)]
 pub enum Workspace {
@@ -10,8 +10,8 @@ pub enum Workspace {
 }
 
 impl Workspace {
-    pub fn from_cloud_info(info: CloudWorkspaceInfo) -> Self {
-        Workspace::Cloud(Arc::new(CloudWorkspace::from_info(info)))
+    pub fn from_cloud_project(info: CloudProjectDto) -> Self {
+        Workspace::Cloud(Arc::new(CloudWorkspace::from_project(info)))
     }
 
     pub fn key(&self) -> String {

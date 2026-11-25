@@ -31,7 +31,7 @@ export default function Home() {
         <section>
           <h1>We research agentic harnesses, audit AI compute economics, and ship Orch.</h1>
           <p>
-            Orch is an independent engineering lab. Every benchmark ships with its harness trace, every study exposes what model pricing hides, and the <b>Orch desktop app</b> gives every developer an agentic workspace with GitHub, Drive, Gmail, Jira, and Slack connectors, Low/Medium/High thinking modes, and <b>$20/month in free compute</b> at zero cost.
+            Orch is an independent engineering lab. Every benchmark ships with its harness trace, every study exposes what model pricing hides, and the <b>Orch desktop app</b> gives every developer an agentic workspace with native GitHub repositories, Drive, Gmail, Jira, and Slack connectors, Low/Medium/High thinking modes, and <b>$20/month in free compute</b> at zero cost.
           </p>
           <menu>
             <Link href="/orch-code" data-btn="hot">Download Orch</Link>
@@ -118,7 +118,7 @@ export default function Home() {
       <dl>
         <div><dt>$20 / mo</dt><dd>free compute for every user, zero cost</dd></div>
         <div><dt>3 Modes</dt><dd>Low, Medium &amp; High test-time thinking</dd></div>
-        <div><dt>5 Connectors</dt><dd>GitHub, Drive, Gmail, Jira &amp; Slack</dd></div>
+        <div><dt>4 Connectors</dt><dd>Drive, Gmail, Jira &amp; Slack plus native GitHub</dd></div>
         <div><dt>Desktop</dt><dd>macOS (ARM64/x64) &amp; Windows</dd></div>
       </dl>
 
@@ -128,7 +128,7 @@ export default function Home() {
           <small>System-browser OAuth &amp; Composio handoffs via orch:// protocol</small>
         </header>
         <p>
-          Orch connects directly to the tools where your engineering context actually lives. Sign-in refresh tokens are sealed in your OS keychain via <code>orch://auth-callback</code>, and scoped connector completions hand back to Desktop via <code>orch://oauth/composio</code>.
+          Orch connects directly to your GitHub repositories and collaboration tools. Sign-in refresh tokens are sealed in your OS keychain via <code>orch://auth-callback</code>, GitHub OAuth returns via <code>orch://oauth/github</code>, and scoped connector completions hand back via <code>orch://oauth/composio</code>.
         </p>
         <ConnectorGrid />
       </section>

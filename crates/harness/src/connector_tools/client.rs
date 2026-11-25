@@ -30,6 +30,17 @@ impl From<ComposioError> for AppError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorCatalogEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub icon_url: Option<String>,
+    pub tool_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountWire {
     pub id: String,
     pub toolkit: String,
@@ -56,10 +67,12 @@ pub struct ExecuteWire {
 
 #[async_trait]
 pub trait ComposioTransport: Send + Sync {
+    async fn catalog(&self) -> Result<Vec<ConnectorCatalogEntry>, ComposioError>;
     async fn accounts(&self) -> Result<Vec<AccountWire>, ComposioError>;
     async fn connect(&self, toolkit: &str) -> Result<String, ComposioError>;
     async fn disconnect(&self, account_id: &str) -> Result<(), ComposioError>;
-    async fn tools(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError>;
+    async fn toolkit_tools(&self, toolkit: &str) -> Result<Vec<ToolWire>, ComposioError>;
+    async fn tools_by_slugs(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError>;
     async fn execute(
         &self,
         slug: &str,

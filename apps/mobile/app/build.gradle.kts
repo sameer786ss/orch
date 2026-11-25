@@ -13,8 +13,8 @@ android {
     applicationId = "com.orch.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1_000_003
-    versionName = System.getenv("VERSION_NAME") ?: "1.0.3"
+    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1_000_004
+    versionName = System.getenv("VERSION_NAME") ?: "1.0.4"
 
     buildConfigField("String", "ORCH_API_BASE_URL", "\"https://orchapi.duckdns.org\"")
     buildConfigField("String", "ORCH_UPDATE_REPO", "\"sameer786ss/orch\"")
@@ -62,6 +62,7 @@ dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   implementation(libs.androidx.activity.compose)
+  implementation(libs.androidx.browser)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.material3)
@@ -77,6 +78,7 @@ dependencies {
   implementation(libs.retrofit)
   implementation(libs.retrofit.converter.kotlinx.serialization)
   implementation(libs.coil.compose)
+  implementation(libs.coil.svg)
   implementation(libs.markdown.renderer)
   implementation(libs.markdown.renderer.m3)
   implementation(libs.firebase.auth)

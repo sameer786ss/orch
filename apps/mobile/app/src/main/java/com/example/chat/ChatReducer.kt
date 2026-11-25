@@ -367,13 +367,13 @@ class ChatReducer(private val idPrefix: String = "c") {
     }
 
     private fun applyRecord(record: JsonObject) {
-        when (record.str("kind")) {
+        when (record.str("type")) {
             "user" -> list += userMessage(record["content"] as? JsonArray)
-            "work" -> applyWorkRecord(record)
-            "reasoning" -> applyReasoningRecord(record)
+            "workStop" -> applyWorkRecord(record)
+            "reasoningStop" -> applyReasoningRecord(record)
             "toolCall" -> applyToolCallRecord(record)
-            "text" -> applyTextRecord(record)
-            "compaction" -> applyCompactionRecord(record)
+            "textStop" -> applyTextRecord(record)
+            "compacted" -> applyCompactionRecord(record)
             "error" -> {
                 val index = ensureAssistant()
                 list[index] = list[index].copy(error = record.str("message") ?: "The agent stopped unexpectedly.")

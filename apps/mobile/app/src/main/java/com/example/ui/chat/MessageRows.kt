@@ -103,12 +103,13 @@ import kotlin.io.encoding.Base64
 @Composable
 fun ChatRowView(
     row: ChatRow,
+    connectorIcons: Map<String, String> = emptyMap(),
     onOpenFile: (String) -> Unit,
     onLoadEarlier: () -> Unit
 ) {
     when (row) {
         is UserRow -> UserBubble(row, onOpenFile)
-        is WorkRow -> WorkBlock(row, onOpenFile)
+        is WorkRow -> WorkBlock(row, connectorIcons, onOpenFile)
         is TextRow -> ChatMarkdown(row.text, streaming = row.live)
         is PendingRow -> StatusLabel(row.label)
         is CompactionRow -> CompactionNotice(row)
@@ -246,7 +247,7 @@ private fun formatDuration(seconds: Long): String = when {
 }
 
 @Composable
-private fun WorkBlock(row: WorkRow, onOpenFile: (String) -> Unit) {
+private fun WorkBlock(row: WorkRow, connectorIcons: Map<String, String>, onOpenFile: (String) -> Unit) {
     var toggled by rememberSaveable(row.key, row.live) { mutableStateOf<Boolean?>(null) }
     val open = toggled ?: row.live
     val title = remember(row.durationSeconds, row.stopped) {
@@ -290,7 +291,7 @@ private fun WorkBlock(row: WorkRow, onOpenFile: (String) -> Unit) {
                 row.items.forEach { item ->
                     when (item) {
                         is ReasoningItem -> ThinkingBlock(item)
-                        is ToolItem -> ToolRow(item, onOpenFile)
+                        is ToolItem -> ToolRow(item, connectorIcons, onOpenFile)
                         else -> Unit
                     }
                 }
@@ -389,7 +390,7 @@ private fun ThinkingBlock(item: ReasoningItem) {
 }
 
 @Composable
-private fun ToolRow(item: ToolItem, onOpenFile: (String) -> Unit) {
+private fun ToolRow(item: ToolItem, connectorIcons: Map<String, String>, onOpenFile: (String) -> Unit) {
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     val output = item.output?.trim().orEmpty()
     val expandable = output.isNotEmpty()
@@ -409,7 +410,7 @@ private fun ToolRow(item: ToolItem, onOpenFile: (String) -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            ToolTarget(item.display, onOpenFile, Modifier.weight(1f, fill = false))
+            ToolTarget(item.display, connectorIcons, onOpenFile, Modifier.weight(1f, fill = false))
             when {
                 item.status == ToolStatus.Running -> CircularProgressIndicator(
                     modifier = Modifier.size(14.dp),
@@ -463,31 +464,52 @@ private fun ToolIcon.vector(): ImageVector = when (this) {
 }
 
 @Composable
-private fun ToolTarget(display: ToolDisplay, onOpenFile: (String) -> Unit, modifier: Modifier) {
+private fun ToolTarget(
+    display: ToolDisplay,
+    connectorIcons: Map<String, String>,
+    onOpenFile: (String) -> Unit,
+    modifier: Modifier
+) {
     val filename = display.filename
-    if (filename != null) {
+    if (display.connector == null && filename != null) {
         FileTag(display, filename, onOpenFile, modifier)
         return
     }
-    val target = display.targetText ?: return
+    val target = display.targetText
+    val connectorIconUrl = display.connector?.lowercase()?.let { connectorIcons[it] }
+    if (target == null && connectorIconUrl == null) return
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = modifier
     ) {
-        Icon(
-            imageVector = display.icon.vector(),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp)
-        )
-        Text(
-            text = target.replace(Whitespace, " "),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        if (display.connector != null) {
+            if (connectorIconUrl != null) {
+                AsyncImage(
+                    model = connectorIconUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        } else {
+            Icon(
+                imageVector = display.icon.vector(),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        if (target != null) {
+            Text(
+                text = target.replace(Whitespace, " "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 

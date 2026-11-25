@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { create } from "zustand";
-import { LuChevronRight, LuX } from "react-icons/lu";
+import { LuChevronRight } from "react-icons/lu";
 import { activeTabId, useArtifactsStore } from "../../lib/artifacts";
 import { getBasename, getDirname, IS_MAC } from "../../lib/utils";
 import { FileIcon } from "../common/FileIcon";
 import { useShell } from "../shell/shellStore";
-import { IconButton } from "../ui/Button";
-import { OverlayPresence, useOverlayStore } from "../ui/overlay";
+import { Dialog } from "../ui/Dialog";
+import { useOverlayStore } from "../ui/overlay";
 import { useFileSearch } from "./hooks/useFileSearch";
 import { ROOT, useFileTree } from "./hooks/useFileTree";
 
@@ -114,14 +113,6 @@ function FinderBody({ onDone }: { onDone: () => void }) {
       onValueChange={setValue}
       onKeyDown={onKeyDown}
     >
-      <div className="dialog-head">
-        <Dialog.Title>Files</Dialog.Title>
-        <Dialog.Close asChild>
-          <IconButton label="Close" size="sm">
-            <LuX />
-          </IconButton>
-        </Dialog.Close>
-      </div>
       <div className="dialog-search">
         <Command.Input
           className="field"
@@ -174,18 +165,14 @@ export function FileFinder() {
   useFinderShortcut();
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="scrim" />
-        <Dialog.Content
-          className="dialog finder"
-          aria-describedby={undefined}
-          onOpenAutoFocus={(e) => e.preventDefault()}
-        >
-          <OverlayPresence />
-          <FinderBody onDone={() => setOpen(false)} />
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Dialog
+      open={open}
+      onOpenChange={setOpen}
+      title="Files"
+      className="finder"
+      onOpenAutoFocus={(e) => e.preventDefault()}
+    >
+      <FinderBody onDone={() => setOpen(false)} />
+    </Dialog>
   );
 }

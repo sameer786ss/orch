@@ -2,6 +2,12 @@ use rig::completion::Usage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::persistence::HistoryUserPart;
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDisplayInfo {
@@ -57,6 +63,9 @@ impl TurnUsage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ChatEvent {
+    User {
+        content: Vec<HistoryUserPart>,
+    },
     WorkStart,
     WorkStop {
         #[serde(rename = "durationSeconds")]
@@ -70,11 +79,16 @@ pub enum ChatEvent {
     ReasoningStop {
         #[serde(rename = "durationSeconds")]
         duration_seconds: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     TextDelta {
         text: String,
     },
-    TextStop,
+    TextStop {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
     ToolStart {
         id: String,
         name: String,
@@ -87,6 +101,17 @@ pub enum ChatEvent {
         #[serde(rename = "isError")]
         is_error: bool,
         output: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: Value,
+        display: ToolDisplayInfo,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(rename = "isError")]
+        is_error: bool,
     },
     FileWritten {
         path: String,
@@ -130,10 +155,12 @@ impl ChatEvent {
     }
 
     pub fn to_sse_block(&self) -> String {
-        let value = serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({
-            "type": "error",
-            "message": "failed to serialize event"
-        }));
+        let value = serde_json::to_value(self).unwrap_or_else(|_| {
+            serde_json::json!({
+                "type": "error",
+                "message": "failed to serialize event"
+            })
+        });
         let kind = value
             .get("type")
             .and_then(Value::as_str)

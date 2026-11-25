@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use orchharness::connector_tools::client::{
-    AccountWire, ComposioError, ComposioTransport, ExecuteWire, ToolWire,
+    AccountWire, ComposioError, ComposioTransport, ConnectorCatalogEntry, ExecuteWire, ToolWire,
 };
-pub use orchharness::connectors::{ConnectorManager, RepoInfo, CONNECTOR_DEFS};
+pub use orchharness::connectors::ConnectorManager;
 use orchharness::util::truncate_chars;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -111,6 +111,14 @@ impl GatewayComposioTransport {
 
 #[async_trait]
 impl ComposioTransport for GatewayComposioTransport {
+    async fn catalog(&self) -> Result<Vec<ConnectorCatalogEntry>, ComposioError> {
+        self.send(
+            self.http.get(config::composio_url("/catalog")),
+            ACCOUNTS_TIMEOUT,
+        )
+        .await
+    }
+
     async fn accounts(&self) -> Result<Vec<AccountWire>, ComposioError> {
         let wire: AccountsWire = self
             .send(self.http.get(config::composio_url("/accounts")), ACCOUNTS_TIMEOUT)
@@ -131,25 +139,30 @@ impl ComposioTransport for GatewayComposioTransport {
     }
 
     async fn disconnect(&self, account_id: &str) -> Result<(), ComposioError> {
-        let account_param: String =
-            url::form_urlencoded::byte_serialize(account_id.as_bytes()).collect();
-        let path = format!("/accounts/{account_param}");
+        let mut url = reqwest::Url::parse(&config::composio_url("/accounts"))
+            .map_err(|e| ComposioError::Transport(e.to_string()))?;
+        url.path_segments_mut()
+            .map_err(|_| ComposioError::Transport("invalid composio accounts url".to_string()))?
+            .push(account_id);
         let _: Value = self
-            .send(
-                self.http_without_retries.delete(config::composio_url(&path)),
-                ACCOUNTS_TIMEOUT,
-            )
+            .send(self.http_without_retries.delete(url), ACCOUNTS_TIMEOUT)
             .await?;
         Ok(())
     }
 
-    async fn tools(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError> {
-        let slugs_param: String =
-            url::form_urlencoded::byte_serialize(slugs.join(",").as_bytes()).collect();
-        let path = format!("/tools?slugs={slugs_param}");
-        let wire: ToolsWire = self
-            .send(self.http.get(config::composio_url(&path)), TOOLS_TIMEOUT)
-            .await?;
+    async fn toolkit_tools(&self, toolkit: &str) -> Result<Vec<ToolWire>, ComposioError> {
+        let mut url = reqwest::Url::parse(&config::composio_url("/tools"))
+            .map_err(|e| ComposioError::Transport(e.to_string()))?;
+        url.query_pairs_mut().append_pair("toolkit", toolkit);
+        let wire: ToolsWire = self.send(self.http.get(url), TOOLS_TIMEOUT).await?;
+        Ok(wire.tools)
+    }
+
+    async fn tools_by_slugs(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError> {
+        let mut url = reqwest::Url::parse(&config::composio_url("/tools"))
+            .map_err(|e| ComposioError::Transport(e.to_string()))?;
+        url.query_pairs_mut().append_pair("slugs", &slugs.join(","));
+        let wire: ToolsWire = self.send(self.http.get(url), TOOLS_TIMEOUT).await?;
         Ok(wire.tools)
     }
 

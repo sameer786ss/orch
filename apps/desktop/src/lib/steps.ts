@@ -55,12 +55,12 @@ export function recordsToMessages(records: SessionRecord[]): ChatMessage[] {
   };
 
   for (const record of records) {
-    switch (record.kind) {
+    switch (record.type) {
       case "user":
         assistant = null;
         messages.push(userMessage(record.seq, record.content));
         break;
-      case "work":
+      case "workStop":
         ensureAssistant(record.seq).items.push({
           type: "work",
           id: `h-${record.seq}`,
@@ -69,7 +69,7 @@ export function recordsToMessages(records: SessionRecord[]): ChatMessage[] {
           stopped: record.stopped,
         });
         break;
-      case "reasoning":
+      case "reasoningStop":
         if (!record.text) break;
         ensureAssistant(record.seq).items.push({
           type: "reasoning",
@@ -91,7 +91,7 @@ export function recordsToMessages(records: SessionRecord[]): ChatMessage[] {
           status: record.isError ? "error" : "done",
         });
         break;
-      case "text":
+      case "textStop":
         if (!record.text) break;
         ensureAssistant(record.seq).items.push({
           type: "text",
@@ -99,7 +99,7 @@ export function recordsToMessages(records: SessionRecord[]): ChatMessage[] {
           text: record.text,
         });
         break;
-      case "compaction":
+      case "compacted":
         assistant = null;
         messages.push({
           id: record.id || `h-${record.seq}`,

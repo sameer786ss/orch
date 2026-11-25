@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { LuArrowUp, LuFileText, LuImage, LuMic, LuPlus, LuSquare } from "react-icons/lu";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -6,6 +6,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { getBasename } from "../../lib/utils";
 import { useChatStore } from "../../lib/store";
 import { useConnectorsStore } from "../../lib/connectors";
+import { useGithubStore } from "../../lib/github";
 import { useWorkspaceStore } from "../../lib/workspace";
 import { Attachment } from "../common/Attachment";
 import { Button, IconButton } from "../ui/Button";
@@ -34,15 +35,13 @@ export function Composer({ home }: { home: boolean }) {
   const newChat = useChatStore((s) => s.newChat);
   const usage = useChatStore((s) => s.sessionTokens);
   const refreshConnectors = useConnectorsStore((s) => s.refresh);
-  const githubConnected = useConnectorsStore((s) => s.github?.connected ?? false);
+  const connectGithub = useGithubStore((s) => s.connect);
+  const githubConnecting = useGithubStore((s) => s.connecting);
   const current = useWorkspaceStore((s) => s.current);
-  const cloud = useWorkspaceStore((s) => s.mode) === "cloud";
+  const cloud = current?.kind === "cloud";
 
-  useEffect(() => {
-    if (cloud) void refreshConnectors();
-  }, [cloud, refreshConnectors]);
-
-  const sendEnabled = !cloud || (githubConnected && Boolean(current));
+  const cloudDisconnected = current?.kind === "cloud" && !current.project.accountConnected;
+  const sendEnabled = Boolean(current) && !cloudDisconnected;
   const imagesSupported = selectedModel?.capabilities.includes("images") ?? false;
   const [notice, setNotice] = useState<string | null>(null);
   const [hasContent, setHasContent] = useState(false);
@@ -165,6 +164,16 @@ export function Composer({ home }: { home: boolean }) {
         </div>
       )}
       <div ref={rootRef} className="composer" data-recording={dictation.recording || undefined}>
+        {cloudDisconnected && (
+          <div className="alert composer-alert" role="alert">
+            <span>
+              GitHub account {current?.kind === "cloud" && current.project.accountLogin ? `@${current.project.accountLogin}` : ""} is disconnected. Reconnect it to continue in this cloud workspace.
+            </span>
+            <Button size="sm" variant="subtle" disabled={githubConnecting} onClick={() => void connectGithub()}>
+              {githubConnecting ? "Waiting…" : "Reconnect"}
+            </Button>
+          </div>
+        )}
         <Suggestions
           anchorRef={rootRef}
           trigger={suggestions.trigger}

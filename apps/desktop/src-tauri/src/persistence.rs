@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use orchharness::backend::SessionStore;
 use orchharness::error::{AppError, AppResult};
 pub use orchharness::persistence::{
-    HistoryRecord, SessionRecord, SessionRecordPage, SessionSnapshot, SessionSummary, TurnUsage,
+    ChatEvent, SessionRecord, SessionRecordPage, SessionSnapshot, SessionSummary, TurnUsage,
 };
 use orchharness::util::now_ms;
 use sqlx::sqlite::{
@@ -107,10 +107,9 @@ impl SqliteMemory {
             "INSERT INTO sessions (id, workspace_path, user_id, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?4)
              ON CONFLICT(id) DO UPDATE SET
-                 workspace_path = COALESCE(sessions.workspace_path, excluded.workspace_path),
-                 user_id = COALESCE(sessions.user_id, excluded.user_id),
+                 workspace_path = excluded.workspace_path,
                  updated_at = excluded.updated_at
-             WHERE sessions.user_id = ?3 OR sessions.user_id IS NULL",
+             WHERE sessions.user_id = ?3",
         )
         .bind(session_id)
         .bind(workspace_path)
@@ -133,7 +132,7 @@ impl SqliteMemory {
                     last_input_tokens, last_output_tokens, last_cached_tokens,
                     last_reasoning_tokens
              FROM sessions
-             WHERE workspace_path = ?1 AND (user_id = ?2 OR user_id IS NULL)
+             WHERE workspace_path = ?1 AND user_id = ?2
              ORDER BY updated_at DESC",
         )
         .bind(workspace_path)
@@ -167,6 +166,21 @@ impl SqliteMemory {
             .execute(&self.pool)
             .await
             .map_err(sql_err)?;
+
+        Ok(())
+    }
+
+    pub async fn delete_sessions_for_workspace(
+        &self,
+        workspace_path: &str,
+        user_id: &str,
+    ) -> AppResult<()> {
+        sqlx::query("DELETE FROM sessions WHERE workspace_path = ?1 AND user_id = ?2")
+        .bind(workspace_path)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(sql_err)?;
 
         Ok(())
     }
@@ -260,7 +274,7 @@ impl SessionStore for SqliteMemory {
         Ok(())
     }
 
-    async fn append_history(&self, session_id: &str, records: &[HistoryRecord]) -> AppResult<()> {
+    async fn append_history(&self, session_id: &str, records: &[ChatEvent]) -> AppResult<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -343,7 +357,7 @@ impl SessionStore for SqliteMemory {
         for row in rows {
             let seq: i64 = row.get(0);
             let raw: String = row.get(1);
-            let record: HistoryRecord = serde_json::from_str(&raw)
+            let record: ChatEvent = serde_json::from_str(&raw)
                 .map_err(|e| AppError::other(format!("invalid history record: {e}")))?;
             records.push(SessionRecord { seq, record });
         }
