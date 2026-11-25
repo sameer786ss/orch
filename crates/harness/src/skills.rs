@@ -97,10 +97,10 @@ pub async fn load_all_skills(data_dir: PathBuf) -> Arc<[Skill]> {
         }
         let mut skills: Vec<Skill> = by_name.into_values().collect();
         skills.sort_by(|a, b| a.name.cmp(&b.name));
-        skills.into()
+        Arc::<[Skill]>::from(skills)
     })
     .await
-    .unwrap_or_else(|_| Arc::new([]))
+    .unwrap_or_else(|_| Arc::<[Skill]>::from(Vec::new()))
 }
 
 pub async fn read_skill_from_dir(data_dir: PathBuf, name: &str) -> Option<String> {

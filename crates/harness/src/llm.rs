@@ -831,6 +831,8 @@ impl AgentHook for SessionHook {
 pub async fn run_chat(agent: ChatAgent, run: &ChatRun, user_message: Message) -> RunResult {
     let cancel = run.deps.cancel.clone();
     let recorder = run.deps.recorder.clone();
+    let store = &run.deps.store;
+    let session_id = &run.deps.session_id;
 
     if let Err(error) = run.persist_user_message(&user_message).await {
         tracing::error!(error = %error, "failed to persist user history");
