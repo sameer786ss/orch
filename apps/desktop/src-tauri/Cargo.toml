@@ -1,6 +1,6 @@
 [package]
 name = "orch"
-version = "1.0.5"
+version = "1.0.0"
 description = "Orch Desktop Application"
 authors = ["Orch"]
 edition.workspace = true

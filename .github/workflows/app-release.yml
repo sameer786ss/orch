@@ -1,13 +1,17 @@
-name: Release
+name: Mobile App Release (app)
 
-# Builds apps/mobile and publishes the finished APK as Orch.apk on the release app-vX.Y.Z,
-# plus updates a static app-latest.json manifest on the rolling app-latest release so the
-# mobile updater never hits GitHub REST API rate limits.
+# Builds apps/mobile from main via workflow_dispatch:
+#   gh workflow run app-release.yml -f version=1.0.6
+# Running on main ensures every release reads and updates main's Gradle cache.
+# Publishes Orch.apk on release app-vX.Y.Z and updates app-latest.json on app-latest.
 # Mobile releases are never flagged as GitHub's "latest" (that flag belongs to desktop releases).
-# Release by pushing a version tag:  git tag app-v1.0.0 && git push origin app-v1.0.0
 on:
-  push:
-    tags: ["app-v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.0.6)"
+        required: true
+        type: string
 
 concurrency:
   group: release
@@ -44,12 +48,12 @@ jobs:
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          : "${GOOGLE_SERVICES_JSON_BASE64:?Missing GOOGLE_SERVICES_JSON_BASE64 secret}"
-          : "${RELEASE_KEYSTORE_BASE64:?Missing RELEASE_KEYSTORE_BASE64 secret}"
-          # app-vMAJOR.MINOR.PATCH -> versionName MAJOR.MINOR.PATCH, versionCode MAJOR*1000000 + MINOR*1000 + PATCH.
+          # MAJOR.MINOR.PATCH -> versionCode MAJOR*1000000 + MINOR*1000 + PATCH.
           # The app's updater uses the same formula to compare versions.
-          IFS=. read -r major minor patch <<< "${GITHUB_REF_NAME#app-v}"
-          export VERSION_NAME="${GITHUB_REF_NAME#app-v}"
+          version="${{ inputs.version }}"
+          tag="app-v${version}"
+          IFS=. read -r major minor patch <<< "$version"
+          export VERSION_NAME="$version"
           export VERSION_CODE=$(( major * 1000000 + minor * 1000 + patch ))
           echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
           echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
@@ -62,9 +66,9 @@ jobs:
           {
             "versionCode": ${VERSION_CODE},
             "versionName": "${VERSION_NAME}",
-            "tag": "${GITHUB_REF_NAME}",
-            "apkUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Orch.apk",
-            "checksumUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Orch.apk.sha256",
+            "tag": "${tag}",
+            "apkUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Orch.apk",
+            "checksumUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Orch.apk.sha256",
             "sizeBytes": ${size_bytes}
           }
           EOF
@@ -73,16 +77,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="$GITHUB_REF_NAME"
-          if gh release view "$tag" > /dev/null 2>&1; then
-            gh release upload "$tag" Orch.apk Orch.apk.sha256 app-latest.json --clobber
-          else
-            gh release create "$tag" Orch.apk Orch.apk.sha256 app-latest.json \
-              --verify-tag \
-              --latest=false \
-              --title "Orch Mobile ${tag#app-v}" \
-              --notes ""
-          fi
+          version="${{ inputs.version }}"
+          tag="app-v${version}"
+          gh release create "$tag" Orch.apk Orch.apk.sha256 app-latest.json \
+            --target "$GITHUB_SHA" \
+            --latest=false \
+            --title "Orch Mobile v${version}" \
+            --notes ""
 
           # Atomically update the rolling app-latest pointer for rate-limit-free update checks.
           if gh release view app-latest > /dev/null 2>&1; then

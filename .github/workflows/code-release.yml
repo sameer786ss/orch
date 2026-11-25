@@ -1,15 +1,17 @@
-name: Build & Release
+name: Desktop Release (code)
 
-# Builds apps/desktop. Release by pushing a tag:  git tag code-v1.0.0 && git push origin code-v1.0.0
-# The tag is the version: it is stamped into tauri.conf.json, Cargo.toml and package.json.
-# One release per version (code-vX.Y.Z). Desktop releases are flagged as GitHub's "latest", so
-# releases/latest/download/<file> always serves the newest desktop installer and latest.json.
-# Windows auto-updates directly via latest.json; macOS checks latest.json and redirects users
-# to the GitHub Releases page for manual DMG replacement.
+# Builds apps/desktop from main via workflow_dispatch:
+#   gh workflow run code-release.yml -f version=1.0.6
+# Running on main ensures every release reads and updates main's build cache.
+# The version input (MAJOR.MINOR.PATCH) is stamped into tauri.conf.json, Cargo.toml
+# and package.json, and published under tag code-vX.Y.Z as GitHub's "latest" desktop release.
 on:
-  push:
-    tags: ['code-v[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.0.6)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -26,21 +28,21 @@ env:
 jobs:
   create-release:
     name: Create GitHub Release
-    if: startsWith(github.ref, 'refs/tags/code-v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          name: Orch Desktop
+          tag_name: code-v${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Orch Desktop v${{ inputs.version }}
           draft: false
           prerelease: false
           make_latest: true
 
   build-mac:
     name: Build & Publish macOS (${{ matrix.target }})
-    if: needs.create-release.result == 'success' || needs.create-release.result == 'skipped'
     runs-on: macos-latest
     needs: create-release
     defaults:
@@ -63,10 +65,9 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
-      - name: Stamp version from tag
-        if: startsWith(github.ref, 'refs/tags/code-v')
+      - name: Stamp version
         shell: bash
-        run: node ../../scripts/stamp-desktop-version.mjs "${GITHUB_REF_NAME#code-v}"
+        run: node ../../scripts/stamp-desktop-version.mjs "${{ inputs.version }}"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -79,25 +80,21 @@ jobs:
       - run: npm ci
 
       - name: Build macOS (${{ matrix.target }})
-        if: startsWith(github.ref, 'refs/tags/code-v') || github.event_name == 'workflow_dispatch'
         run: npx tauri build --target ${{ matrix.target }} -- --profile dist
 
       - name: Prepare macOS Asset
-        if: startsWith(github.ref, 'refs/tags/code-v')
         run: cp ../../target/${{ matrix.target }}/dist/bundle/dmg/*.dmg ${{ matrix.artifact }}
 
       - name: Publish macOS Asset
-        if: startsWith(github.ref, 'refs/tags/code-v')
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ github.ref_name }}
-          name: Orch Desktop
+          tag_name: code-v${{ inputs.version }}
+          name: Orch Desktop v${{ inputs.version }}
           files: apps/desktop/${{ matrix.artifact }}
 
   build-windows:
     name: Build & Publish Windows
-    if: needs.create-release.result == 'success' || needs.create-release.result == 'skipped'
     runs-on: windows-latest
     needs: create-release
     defaults:
@@ -112,10 +109,9 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
-      - name: Stamp version from tag
-        if: startsWith(github.ref, 'refs/tags/code-v')
+      - name: Stamp version
         shell: bash
-        run: node ../../scripts/stamp-desktop-version.mjs "${GITHUB_REF_NAME#code-v}"
+        run: node ../../scripts/stamp-desktop-version.mjs "${{ inputs.version }}"
 
       - name: Disable Windows Defender
         shell: powershell
@@ -130,11 +126,9 @@ jobs:
       - run: npm ci
 
       - name: Build Windows Setup Executable
-        if: startsWith(github.ref, 'refs/tags/code-v') || github.event_name == 'workflow_dispatch'
         run: npx tauri build -- --profile dist
 
       - name: Prepare Windows Asset & Updater Manifest
-        if: startsWith(github.ref, 'refs/tags/code-v')
         shell: powershell
         run: |
           $setup = (Get-Item ../../target/dist/bundle/nsis/*-setup.exe).FullName
@@ -143,8 +137,8 @@ jobs:
           $sigPath = (Get-Item ../../target/dist/bundle/nsis/*-setup.exe.sig).FullName
           $signature = (Get-Content $sigPath -Raw).Trim()
 
-          $tag = "${{ github.ref_name }}"
-          $version = $tag -replace '^code-v', ''
+          $version = "${{ inputs.version }}"
+          $tag = "code-v$version"
           $manifest = [ordered]@{
             version   = $version
             notes     = "Automated release $tag. See the GitHub release page for details."
@@ -160,12 +154,11 @@ jobs:
           [System.IO.File]::WriteAllText("$PWD\latest.json", $json)
 
       - name: Publish Windows Asset & Updater Manifest
-        if: startsWith(github.ref, 'refs/tags/code-v')
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ github.ref_name }}
-          name: Orch Desktop
+          tag_name: code-v${{ inputs.version }}
+          name: Orch Desktop v${{ inputs.version }}
           files: |
             apps/desktop/Orch-Windows-Setup.exe
             apps/desktop/latest.json
