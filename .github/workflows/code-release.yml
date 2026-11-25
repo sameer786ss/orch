@@ -31,15 +31,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: code-v${{ inputs.version }}
-          target_commitish: ${{ github.sha }}
-          name: Orch Desktop v${{ inputs.version }}
-          draft: false
-          prerelease: false
-          make_latest: true
+      - name: Create release
+        run: |
+          version="${{ inputs.version }}"
+          tag="code-v${version}"
+          if ! gh release view "$tag" > /dev/null 2>&1; then
+            gh release create "$tag" \
+              --target "$GITHUB_SHA" \
+              --latest \
+              --title "Orch Desktop v${version}" \
+              --notes ""
+          fi
 
   build-mac:
     name: Build & Publish macOS (${{ matrix.target }})
@@ -86,12 +88,7 @@ jobs:
         run: cp ../../target/${{ matrix.target }}/dist/bundle/dmg/*.dmg ${{ matrix.artifact }}
 
       - name: Publish macOS Asset
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: code-v${{ inputs.version }}
-          name: Orch Desktop v${{ inputs.version }}
-          files: apps/desktop/${{ matrix.artifact }}
+        run: gh release upload "code-v${{ inputs.version }}" "${{ matrix.artifact }}" --clobber
 
   build-windows:
     name: Build & Publish Windows
@@ -154,11 +151,4 @@ jobs:
           [System.IO.File]::WriteAllText("$PWD\latest.json", $json)
 
       - name: Publish Windows Asset & Updater Manifest
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: code-v${{ inputs.version }}
-          name: Orch Desktop v${{ inputs.version }}
-          files: |
-            apps/desktop/Orch-Windows-Setup.exe
-            apps/desktop/latest.json
+        run: gh release upload "code-v${{ inputs.version }}" Orch-Windows-Setup.exe latest.json --clobber
