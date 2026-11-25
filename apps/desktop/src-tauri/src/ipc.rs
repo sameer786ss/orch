@@ -998,6 +998,33 @@ pub async fn list_connectors(state: State<'_, AppState>) -> Result<Vec<Connector
             sentry::capture_error(&e);
             e.to_string()
         })?;
+
+    // For cloud workspaces: fetch the live server catalog so connector additions
+    // are reflected without a desktop app update (same as Android/iOS).
+    if state.active_cloud_workspace().is_some() {
+        let catalog = state
+            .gateway
+            .cloud_composio_catalog()
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(catalog
+            .into_iter()
+            .map(|entry| ConnectorDto {
+                connected: connected.contains(&entry.id.as_str()),
+                tool_count: orchharness::connectors::CONNECTOR_DEFS
+                    .iter()
+                    .find(|d| d.id == entry.id)
+                    .map(|d| d.actions.len())
+                    .unwrap_or(0),
+                id: entry.id,
+                name: entry.name,
+                description: entry.description,
+                category: entry.category,
+            })
+            .collect());
+    }
+
+    // Local sessions: use compiled-in definitions.
     Ok(CONNECTOR_DEFS
         .iter()
         .map(|def| ConnectorDto {

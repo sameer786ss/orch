@@ -207,7 +207,7 @@ fn cloud_terminal_ws_url(workspace: &str, cols: u16, rows: u16) -> AppResult<Str
     } else {
         base
     };
-    let parsed = url::Url::parse_with_params(
+    let parsed = reqwest::Url::parse_with_params(
         &ws_base,
         &[
             ("workspace", workspace.to_string()),

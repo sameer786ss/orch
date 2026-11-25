@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use axum::extract::State;
-use bytes::Bytes;
+use axum::body::Bytes;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use futures::StreamExt;
@@ -482,11 +482,42 @@ fn non_success_rig_error(err: ApiError) -> RigHttpError {
     RigHttpError::non_success_with_details(status, headers, body)
 }
 
+fn percent_decode(s: &str) -> String {
+    let s = s.replace('+', " ");
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let h1 = chars.next().unwrap_or('\0');
+            let h2 = chars.next().unwrap_or('\0');
+            let hex = format!("{h1}{h2}");
+            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                out.push(byte as char);
+            } else {
+                out.push('%');
+                out.push(h1);
+                out.push(h2);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn parse_query_pairs(uri: &http::Uri) -> HashMap<String, String> {
     uri.query()
         .map(|raw| {
-            url::form_urlencoded::parse(raw.as_bytes())
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            raw.split('&')
+                .filter_map(|pair| {
+                    let mut it = pair.splitn(2, '=');
+                    let k = it.next()?;
+                    let v = it.next().unwrap_or("");
+                    Some((
+                        percent_decode(k),
+                        percent_decode(v),
+                    ))
+                })
                 .collect()
         })
         .unwrap_or_default()

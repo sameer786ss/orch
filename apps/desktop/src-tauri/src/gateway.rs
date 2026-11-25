@@ -261,6 +261,13 @@ impl Gateway {
         self.get(&url, Duration::from_secs(20)).await
     }
 
+    pub async fn cloud_composio_catalog(
+        &self,
+    ) -> AppResult<Vec<orchharness::connectors::ConnectorCatalogEntry>> {
+        let url = config::cloud_url("/composio/catalog");
+        self.get(&url, Duration::from_secs(20)).await
+    }
+
     pub async fn cloud_session_history(
         &self,
         session_id: &str,
