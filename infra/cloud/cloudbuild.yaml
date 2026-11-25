@@ -18,5 +18,5 @@ artifacts:
       - target/x86_64-unknown-linux-musl/release/orch-cloud-harness
 timeout: 1800s
 options:
-  machineType: E2_HIGHCPU_32
+  machineType: E2_HIGHCPU_8
   logging: CLOUD_LOGGING_ONLY
