@@ -128,7 +128,7 @@ pub const FIRESTORE_BATCH_LIMIT: usize = 450;
 pub const SHUTDOWN_GRACE_SECS: u64 = 8;
 
 pub const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
-pub const LARGE_BODY_LIMIT_BYTES: usize = 25 * 1024 * 1024;
+pub const LARGE_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_ATTACHMENT_TOTAL_BYTES: usize = 18 * 1024 * 1024;
 
 pub const TITLE_PROMPT: &str = "Generate a concise, 3 to 6 word title summarizing this user prompt. Do not use quotes or punctuation.\n\nUser prompt: ";

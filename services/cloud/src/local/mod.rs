@@ -16,7 +16,10 @@ pub fn public_routes() -> Router<ServerState> {
 
 pub fn protected_routes() -> Router<ServerState> {
     Router::new()
-        .route("/vertex/{*path}", post(v1internal::generate))
+        .route(
+            "/vertex/{*path}",
+            post(v1internal::generate).layer(DefaultBodyLimit::max(config::LARGE_BODY_LIMIT_BYTES)),
+        )
         .route("/tavily", post(tavily::handle))
         .route(
             "/transcribe",

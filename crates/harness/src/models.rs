@@ -48,7 +48,7 @@ impl StaticModelInfo {
 const CAPABILITIES: &[&str] = &["tools", "streaming", "thinking", "images"];
 
 pub static VERTEX_MODELS: [StaticModelInfo; 1] = [StaticModelInfo {
-    id: "gemini-3.8-flash-high",
+    id: "gemini-4-hydrogen-sonar",
     name: "Swift",
     provider: "vertex",
     context_window: 1_000_000,
