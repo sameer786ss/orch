@@ -313,7 +313,7 @@ fun NewProjectSheet(
                         OrchPrimaryButton(
                             text = "Create & open",
                             onClick = submit,
-                            enabled = createAccountId != null && repoName.isNotBlank(),
+                            enabled = repoName.isNotBlank(),
                             loading = projectBusy,
                             icon = Icons.Outlined.Add,
                             modifier = Modifier.fillMaxWidth()

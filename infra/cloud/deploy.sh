@@ -57,7 +57,7 @@ if [ ${#FILES[@]} -gt 0 ]; then
   gcloud compute scp "${FILES[@]}" "$VM:/tmp/" --zone "$ZONE" --project "$PROJECT"
 fi
 
-echo "==> Downloading binary on the VM, installing and verifying /healthz"
+echo "==> Downloading binary on the VM and restarting orch"
 OBJECT="orch-cloud-harness%2F${BUILD_ID}%2Forch-cloud-harness"
 gcloud compute ssh "$VM" --zone "$ZONE" --project "$PROJECT" --command "
 set -euo pipefail
@@ -65,30 +65,9 @@ TOKEN=\$(curl -fsS -H 'Metadata-Flavor: Google' http://metadata.google.internal/
 [ -n \"\$TOKEN\" ] || { echo 'no metadata token'; exit 1; }
 curl -fsS --retry 5 --retry-delay 3 -H \"Authorization: Bearer \$TOKEN\" -o /tmp/orch-cloud-harness 'https://storage.googleapis.com/storage/v1/b/${BUCKET#gs://}/o/${OBJECT}?alt=media'
 [ -s /tmp/orch-cloud-harness ]
-if [ -f /opt/orch/orch-cloud-harness ]; then sudo cp -p /opt/orch/orch-cloud-harness /opt/orch/orch-cloud-harness.prev; fi
 sudo install -o root -g root -m 755 /tmp/orch-cloud-harness /opt/orch/orch-cloud-harness.new
 sudo mv /opt/orch/orch-cloud-harness.new /opt/orch/orch-cloud-harness
 if [ -f /tmp/orch.env ]; then sudo install -o root -g orch -m 640 /tmp/orch.env /etc/orch.env; fi
 rm -f /tmp/orch-cloud-harness /tmp/orch.env
 sudo systemctl restart orch
-
-HEALTHY=false
-for i in \$(seq 1 30); do
-  if curl -fsS --max-time 2 http://127.0.0.1:8080/healthz > /dev/null 2>&1; then
-    HEALTHY=true
-    break
-  fi
-  sleep 1
-done
-
-if [ \"\$HEALTHY\" != \"true\" ]; then
-  sudo journalctl -u orch -n 40 --no-pager
-  if [ -f /opt/orch/orch-cloud-harness.prev ]; then
-    echo 'health check failed; rolling back to previous binary'
-    sudo cp -p /opt/orch/orch-cloud-harness.prev /opt/orch/orch-cloud-harness
-    sudo systemctl restart orch
-  fi
-  exit 1
-fi
-echo 'orch is active and healthy'
 "

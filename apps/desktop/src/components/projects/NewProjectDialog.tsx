@@ -435,7 +435,7 @@ function CloudView({ onDone }: { onDone: () => void }) {
             </div>
           </div>
           <div className="form-actions">
-            <Button type="submit" variant="primary" size="lg" disabled={busy || !repoName.trim() || !activeAccount}>
+            <Button type="submit" variant="primary" size="lg" disabled={busy || !repoName.trim()}>
               {busy && <span className="spinner" />}
               <span>Create &amp; open</span>
             </Button>

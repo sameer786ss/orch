@@ -290,14 +290,9 @@ function Usage() {
 
 function Account() {
   const user = useAuthStore((s) => s.user);
-  const accounts = useGithubStore((s) => s.accounts);
+  const account = useGithubStore((s) => s.account);
   const openAccount = useAccountDialog((s) => s.setOpen);
-  const subtitle =
-    accounts.length === 0
-      ? user?.email ?? "Signed in"
-      : accounts.length === 1
-        ? `GitHub · @${accounts[0].login}`
-        : `GitHub · ${accounts.length} accounts`;
+  const subtitle = account ? `GitHub · @${account.login}` : user?.email ?? "Signed in";
 
   return (
     <button

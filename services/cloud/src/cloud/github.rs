@@ -445,7 +445,6 @@ pub async fn callback(
     };
 
     let record = GithubAccountRecord {
-        doc_id: saved.user_id.clone(),
         user_id: saved.user_id,
         github_id,
         login: gh_user.login.clone(),

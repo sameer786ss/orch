@@ -141,7 +141,6 @@ impl CloudWorkspaceRecord {
 
 #[derive(Debug, Clone)]
 pub struct GithubAccountRecord {
-    pub doc_id: String,
     pub user_id: String,
     pub github_id: String,
     pub login: String,
@@ -153,9 +152,8 @@ pub struct GithubAccountRecord {
 }
 
 impl GithubAccountRecord {
-    fn from_fields(doc_id: &str, stored: &Value) -> Self {
+    fn from_fields(stored: &Value) -> Self {
         Self {
-            doc_id: doc_id.to_string(),
             user_id: fields::read_string(stored, "user_id"),
             github_id: fields::read_string(stored, "github_id"),
             login: fields::read_string(stored, "login"),
@@ -168,9 +166,8 @@ impl GithubAccountRecord {
     }
 
     fn from_document(document: &Value) -> Option<Self> {
-        let name = document.get("name")?.as_str()?;
         let stored = document.get("fields")?;
-        Some(Self::from_fields(id_from_name(name), stored))
+        Some(Self::from_fields(stored))
     }
 
     pub fn to_fields(&self) -> Map<String, Value> {
