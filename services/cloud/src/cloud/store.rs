@@ -12,7 +12,7 @@ use orchharness::persistence::{
     ChatEvent, HistoryUserPart, SessionRecord, SessionRecordPage, SessionSnapshot, SessionSummary,
     TurnUsage,
 };
-use reqwest::{Method, StatusCode};
+use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Map, Value};

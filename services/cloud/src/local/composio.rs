@@ -241,7 +241,13 @@ async fn load_toolkit_entry(state: &ServerState, toolkit: &str) -> ApiResult<Con
     let wire: ToolkitWire = call(state, Method::GET, &path, &[], None, LIST_TIMEOUT_SECS).await?;
     let id = toolkit.to_ascii_lowercase();
     let name = wire.name.trim().to_string();
-    let description = wire.meta.description.unwrap_or_default().trim().to_string();
+    let description = wire
+        .meta
+        .description
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     let category = extract_category(&wire);
     let icon_url = wire
         .meta
