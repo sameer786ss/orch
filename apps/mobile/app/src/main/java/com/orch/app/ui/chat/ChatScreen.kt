@@ -264,11 +264,7 @@ private fun TopBar(
                         modifier = Modifier.size(12.dp)
                     )
                     Text(
-                        text = if (project.accountLogin.isNotBlank()) {
-                            "${project.name} · @${project.accountLogin}"
-                        } else {
-                            project.name
-                        },
+                        text = project.name,
                         style = MaterialTheme.typography.bodySmall,
                         color = if (project.accountConnected) {
                             MaterialTheme.colorScheme.onSurfaceVariant

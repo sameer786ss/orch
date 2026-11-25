@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::extract::State;
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
@@ -23,7 +21,6 @@ pub struct CloudProjectDto {
     pub workspace: String,
     pub repo_url: String,
     pub repo_dir: String,
-    pub github_account_id: String,
     pub account_login: String,
     pub is_private: bool,
     pub account_connected: bool,
@@ -34,31 +31,24 @@ pub struct CloudProjectDto {
 #[serde(rename_all = "camelCase")]
 pub struct OpenProjectRequest {
     pub repo_url: String,
-    pub account_id: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateProjectRequest {
-    pub account_id: String,
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
     pub private: bool,
 }
 
-fn to_dto(
-    record: CloudWorkspaceRecord,
-    accounts_by_id: &HashMap<String, GithubAccountRecord>,
-) -> CloudProjectDto {
-    let account = accounts_by_id.get(&record.github_account_id);
+fn to_dto(record: CloudWorkspaceRecord, account: Option<&GithubAccountRecord>) -> CloudProjectDto {
     CloudProjectDto {
         id: record.doc_id,
         name: record.name,
         workspace: record.workspace_uri,
         repo_url: record.repo_url,
         repo_dir: record.repo_dir,
-        github_account_id: record.github_account_id,
         account_login: account.map(|a| a.login.clone()).unwrap_or_default(),
         is_private: record.is_private,
         account_connected: account.is_some(),
@@ -82,7 +72,6 @@ async fn save_project(
             prev.workspace_uri = ws.uri.clone();
             prev.repo_url = ws.repo_url.clone();
             prev.repo_dir = ws.repo_dir.clone();
-            prev.github_account_id = account.record.github_id.clone();
             prev.is_private = is_private;
             prev.updated_at = now;
             prev
@@ -94,7 +83,6 @@ async fn save_project(
             workspace_uri: ws.uri.clone(),
             repo_url: ws.repo_url.clone(),
             repo_dir: ws.repo_dir.clone(),
-            github_account_id: account.record.github_id.clone(),
             is_private,
             sandbox_id: String::new(),
             domain: String::new(),
@@ -109,26 +97,20 @@ async fn save_project(
         .await
         .map_err(ApiError::internal)?;
 
-    let mut accounts_map = HashMap::new();
-    accounts_map.insert(account.record.github_id.clone(), account.record.clone());
-    Ok(to_dto(record, &accounts_map))
+    Ok(to_dto(record, Some(&account.record)))
 }
 
 pub async fn list(
     State(state): State<ServerState>,
     Extension(user): Extension<VerifiedUser>,
 ) -> ApiResult<Json<Vec<CloudProjectDto>>> {
-    let (workspaces, accounts) = tokio::try_join!(
+    let (workspaces, account) = tokio::try_join!(
         state.firestore.list_workspaces(&user.id),
-        state.firestore.list_github_accounts(&user.id),
+        state.firestore.get_github_account(&user.id),
     )?;
-    let accounts_by_id: HashMap<String, GithubAccountRecord> = accounts
-        .into_iter()
-        .map(|acc| (acc.github_id.clone(), acc))
-        .collect();
     let projects = workspaces
         .into_iter()
-        .map(|ws| to_dto(ws, &accounts_by_id))
+        .map(|ws| to_dto(ws, account.as_ref()))
         .collect();
     Ok(Json(projects))
 }
@@ -139,14 +121,8 @@ pub async fn open(
     ApiJson(request): ApiJson<OpenProjectRequest>,
 ) -> ApiResult<Json<CloudProjectDto>> {
     let requested = workspace::normalize(&request.repo_url)?;
-    let (account, verified) = github::verify_repo(
-        &state,
-        &user.id,
-        request.account_id.trim(),
-        &requested.owner,
-        &requested.repo,
-    )
-    .await?;
+    let (account, verified) =
+        github::verify_repo(&state, &user.id, &requested.owner, &requested.repo).await?;
     let canonical = workspace::normalize(&verified.full_name)?;
     let dto = save_project(&state, &user.id, &canonical, &account, verified.private).await?;
     Ok(Json(dto))
@@ -160,7 +136,6 @@ pub async fn create(
     let (account, verified) = github::create_repo(
         &state,
         &user.id,
-        request.account_id.trim(),
         &request.name,
         request.description.as_deref(),
         request.private,

@@ -3,16 +3,15 @@ use axum::http::header::ACCEPT;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::{Extension, Json};
-use futures::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::cloud::store::{github_account_doc_id, GithubAccountRecord, OAuthStateRecord};
+use crate::cloud::store::{GithubAccountRecord, OAuthStateRecord};
 use crate::shared::auth::VerifiedUser;
 use crate::shared::config;
 use crate::shared::crypto;
 use crate::shared::error::{ApiError, ApiResult};
-use crate::shared::extract::{ApiJson, ApiPath, ApiQuery};
+use crate::shared::extract::{ApiJson, ApiQuery};
 use crate::shared::util::now_ms;
 use crate::state::ServerState;
 
@@ -55,7 +54,6 @@ pub struct GithubRepoDto {
     pub private: bool,
     pub url: String,
     pub updated_at: String,
-    pub account_id: String,
     pub account_login: String,
 }
 
@@ -87,7 +85,6 @@ pub struct CallbackQuery {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReposQuery {
-    account_id: Option<String>,
     query: Option<String>,
 }
 
@@ -152,10 +149,6 @@ fn validate_platform(platform: &str) -> ApiResult<&'static str> {
     }
 }
 
-pub fn is_valid_account_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_digit())
-}
-
 fn token_aad(user_id: &str, github_id: &str) -> String {
     format!("{user_id}\0{github_id}")
 }
@@ -182,18 +175,10 @@ fn decrypt_account(
 pub async fn require_account(
     state: &ServerState,
     user_id: &str,
-    github_account_id: &str,
 ) -> ApiResult<DecryptedGithubAccount> {
-    if !is_valid_account_id(github_account_id) {
-        return Err(ApiError::forbidden(
-            "GitHub account is disconnected. Reconnect your GitHub account to use this project.",
-        )
-        .with_code("GITHUB_RECONNECT_REQUIRED"));
-    }
-    let doc_id = github_account_doc_id(user_id, github_account_id);
     let record = state
         .firestore
-        .get_github_account(&doc_id)
+        .get_github_account(user_id)
         .await?
         .filter(|acc| acc.user_id == user_id)
         .ok_or_else(|| {
@@ -460,7 +445,7 @@ pub async fn callback(
     };
 
     let record = GithubAccountRecord {
-        doc_id: github_account_doc_id(&saved.user_id, &github_id),
+        doc_id: saved.user_id.clone(),
         user_id: saved.user_id,
         github_id,
         login: gh_user.login.clone(),
@@ -493,32 +478,26 @@ pub async fn callback(
     )
 }
 
-pub async fn list_accounts(
+pub async fn get_account(
     State(state): State<ServerState>,
     Extension(user): Extension<VerifiedUser>,
-) -> ApiResult<Json<Vec<GithubAccountDto>>> {
-    let records = state.firestore.list_github_accounts(&user.id).await?;
-    Ok(Json(records.iter().map(GithubAccountDto::from).collect()))
+) -> ApiResult<Json<Option<GithubAccountDto>>> {
+    let record = state.firestore.get_github_account(&user.id).await?;
+    Ok(Json(record.as_ref().map(GithubAccountDto::from)))
 }
 
 pub async fn disconnect_account(
     State(state): State<ServerState>,
     Extension(user): Extension<VerifiedUser>,
-    ApiPath(github_id): ApiPath<String>,
 ) -> ApiResult<Json<Value>> {
-    if !is_valid_account_id(&github_id) {
-        return Err(ApiError::bad_request("Invalid GitHub account ID"));
+    let existing = state.firestore.get_github_account(&user.id).await?;
+    if existing.is_none() {
+        return Err(ApiError::not_found("GitHub account not found"));
     }
-    let doc_id = github_account_doc_id(&user.id, &github_id);
-    let existing = state.firestore.get_github_account(&doc_id).await?;
-    match existing {
-        Some(acc) if acc.user_id == user.id => {}
-        _ => return Err(ApiError::not_found("GitHub account not found")),
-    }
-    state.firestore.delete_github_account(&doc_id).await?;
+    state.firestore.delete_github_account(&user.id).await?;
     state
         .sandbox_manager
-        .invalidate_github_account(&user.id, &github_id)
+        .invalidate_github_account(&user.id)
         .await;
     Ok(Json(json!({ "ok": true })))
 }
@@ -554,7 +533,6 @@ async fn fetch_account_repos(
                 private: repo.private,
                 url: repo.html_url,
                 updated_at: repo.updated_at,
-                account_id: decrypted.record.github_id.clone(),
                 account_login: decrypted.record.login.clone(),
             });
         }
@@ -570,27 +548,8 @@ pub async fn list_repos(
     Extension(user): Extension<VerifiedUser>,
     ApiQuery(query): ApiQuery<ReposQuery>,
 ) -> ApiResult<Json<Vec<GithubRepoDto>>> {
-    let accounts = state.firestore.list_github_accounts(&user.id).await?;
-    if accounts.is_empty() {
+    let Some(account) = state.firestore.get_github_account(&user.id).await? else {
         return Ok(Json(Vec::new()));
-    }
-    let selected: Vec<GithubAccountRecord> = match query
-        .account_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        Some(target_id) => {
-            if !is_valid_account_id(target_id) {
-                return Err(ApiError::bad_request("Invalid GitHub account ID"));
-            }
-            let found = accounts
-                .into_iter()
-                .find(|a| a.github_id == target_id)
-                .ok_or_else(|| ApiError::not_found("GitHub account not found"))?;
-            vec![found]
-        }
-        None => accounts,
     };
 
     let needle = query
@@ -600,16 +559,9 @@ pub async fn list_repos(
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    let groups = try_join_all(
-        selected
-            .into_iter()
-            .map(|account| fetch_account_repos(&state, account)),
-    )
-    .await?;
-
-    let mut repos: Vec<GithubRepoDto> = groups
+    let mut repos: Vec<GithubRepoDto> = fetch_account_repos(&state, account)
+        .await?
         .into_iter()
-        .flatten()
         .filter(|repo| {
             needle.is_empty()
                 || repo.full_name.to_ascii_lowercase().contains(&needle)
@@ -623,11 +575,10 @@ pub async fn list_repos(
 pub async fn verify_repo(
     state: &ServerState,
     user_id: &str,
-    account_id: &str,
     owner: &str,
     repo: &str,
 ) -> ApiResult<(DecryptedGithubAccount, VerifiedRepo)> {
-    let account = require_account(state, user_id, account_id).await?;
+    let account = require_account(state, user_id).await?;
     let api_repo: GithubApiRepo = github_get(
         state,
         &account.token,
@@ -645,12 +596,11 @@ pub async fn verify_repo(
 pub async fn create_repo(
     state: &ServerState,
     user_id: &str,
-    account_id: &str,
     name: &str,
     description: Option<&str>,
     private: bool,
 ) -> ApiResult<(DecryptedGithubAccount, VerifiedRepo)> {
-    let account = require_account(state, user_id, account_id).await?;
+    let account = require_account(state, user_id).await?;
     let clean_name = name.trim();
     if clean_name.is_empty()
         || clean_name.len() > 100

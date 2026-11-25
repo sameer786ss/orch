@@ -53,18 +53,17 @@ interface OrchApi {
     @GET("budget")
     suspend fun budget(): Budget
 
-    @GET("github/accounts")
-    suspend fun githubAccounts(): List<GithubAccount>
+    @GET("github/account")
+    suspend fun githubAccount(): GithubAccount?
 
     @POST("github/connect")
     suspend fun connectGithub(@Body body: GithubConnectRequest = GithubConnectRequest()): GithubConnectResponse
 
-    @DELETE("github/accounts/{id}")
-    suspend fun disconnectGithub(@Path("id") id: String)
+    @DELETE("github/account")
+    suspend fun disconnectGithub()
 
     @GET("github/repos")
     suspend fun githubRepos(
-        @Query("accountId") accountId: String? = null,
         @Query("query") query: String? = null
     ): List<GithubRepo>
 

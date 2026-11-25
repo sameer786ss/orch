@@ -32,12 +32,28 @@ pub enum HistoryUserPart {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
     pub seq: i64,
     #[serde(flatten)]
     pub record: ChatEvent,
+}
+
+impl<'de> Deserialize<'de> for SessionRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut map = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        let seq_val = map
+            .remove("seq")
+            .ok_or_else(|| serde::de::Error::missing_field("seq"))?;
+        let seq = serde_json::from_value::<i64>(seq_val).map_err(serde::de::Error::custom)?;
+        let record = serde_json::from_value::<ChatEvent>(serde_json::Value::Object(map))
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self { seq, record })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

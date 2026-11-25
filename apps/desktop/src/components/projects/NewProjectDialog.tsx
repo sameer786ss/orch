@@ -3,14 +3,12 @@ import { open as pickDirDialog } from "@tauri-apps/plugin-dialog";
 import { BsGithub } from "react-icons/bs";
 import { useDebouncedCallback } from "use-debounce";
 import { create } from "zustand";
-import { LuChevronDown, LuFolder, LuFolderOpen, LuFolderPlus, LuGlobe, LuLock, LuPlus } from "react-icons/lu";
+import { LuFolder, LuFolderOpen, LuFolderPlus, LuGlobe, LuLock, LuPlus } from "react-icons/lu";
 import { errorMessage, listGithubRepos, type GithubRepoDto } from "../../lib/api";
 import { useGithubStore } from "../../lib/github";
 import { useWorkspaceStore } from "../../lib/workspace";
-import { Avatar } from "../common/Avatar";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "../ui/Menu";
 
 export type ProjectDialogMode = "mode" | "local" | "cloud";
 
@@ -28,17 +26,17 @@ export const useNewProjectDialog = create<{
     })),
 }));
 
-function useGithubReposSearch(enabled: boolean, accountId: string | null, query: string) {
+function useGithubReposSearch(enabled: boolean, query: string) {
   const [repos, setRepos] = useState<GithubRepoDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seqRef = useRef(0);
 
-  const fetchRepos = async (accId: string | null, q: string) => {
+  const fetchRepos = async (q: string) => {
     const seq = ++seqRef.current;
     setRepos(null);
     setError(null);
     try {
-      const list = await listGithubRepos(accId, q.trim());
+      const list = await listGithubRepos(q.trim());
       if (seq === seqRef.current) setRepos(list);
     } catch (e) {
       if (seq === seqRef.current) {
@@ -48,8 +46,8 @@ function useGithubReposSearch(enabled: boolean, accountId: string | null, query:
     }
   };
 
-  const debouncedFetch = useDebouncedCallback((accId: string | null, q: string) => {
-    void fetchRepos(accId, q);
+  const debouncedFetch = useDebouncedCallback((q: string) => {
+    void fetchRepos(q);
   }, 250);
 
   useEffect(() => {
@@ -59,13 +57,13 @@ function useGithubReposSearch(enabled: boolean, accountId: string | null, query:
       return;
     }
     if (query) {
-      debouncedFetch(accountId, query);
+      debouncedFetch(query);
     } else {
       debouncedFetch.cancel();
-      void fetchRepos(accountId, "");
+      void fetchRepos("");
     }
     return () => debouncedFetch.cancel();
-  }, [enabled, accountId, query, debouncedFetch]);
+  }, [enabled, query, debouncedFetch]);
 
   return { repos, error };
 }
@@ -241,11 +239,9 @@ function GithubConnectView() {
 }
 
 function CloudView({ onDone }: { onDone: () => void }) {
-  const accounts = useGithubStore((s) => s.accounts);
+  const account = useGithubStore((s) => s.account);
   const loaded = useGithubStore((s) => s.loaded);
-  const connecting = useGithubStore((s) => s.connecting);
   const githubError = useGithubStore((s) => s.error);
-  const connect = useGithubStore((s) => s.connect);
 
   const openCloudRepo = useWorkspaceStore((s) => s.openCloudRepo);
   const createCloudRepo = useWorkspaceStore((s) => s.createCloudRepo);
@@ -254,37 +250,22 @@ function CloudView({ onDone }: { onDone: () => void }) {
   const dismissError = useWorkspaceStore((s) => s.dismissError);
 
   const [tab, setTab] = useState<"existing" | "create">("existing");
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [repoName, setRepoName] = useState("");
   const [description, setDescription] = useState("");
   const [isPrivate, setIsPrivate] = useState(true);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (accounts.length === 0) {
-      setSelectedAccountId(null);
-    } else if (selectedAccountId && !accounts.some((a) => a.id === selectedAccountId)) {
-      setSelectedAccountId(accounts[0].id);
-    }
-  }, [accounts, selectedAccountId]);
-
-  const filterAccountId = tab === "create"
-    ? selectedAccountId ?? accounts[0]?.id ?? null
-    : selectedAccountId;
-  const activeAccount = accounts.find((a) => a.id === filterAccountId) ?? accounts[0] ?? null;
-
   const { repos, error: repoError } = useGithubReposSearch(
-    loaded && accounts.length > 0 && tab === "existing",
-    tab === "existing" ? filterAccountId : null,
+    loaded && account !== null && tab === "existing",
     query
   );
 
   useEffect(() => {
-    if (accounts.length > 0 && tab === "existing") {
+    if (account !== null && tab === "existing") {
       searchRef.current?.focus();
     }
-  }, [accounts.length, tab]);
+  }, [account, tab]);
 
   if (!loaded) {
     return (
@@ -294,21 +275,21 @@ function CloudView({ onDone }: { onDone: () => void }) {
     );
   }
 
-  if (accounts.length === 0) {
+  if (!account) {
     return <GithubConnectView />;
   }
 
   const openRepo = async (repo: GithubRepoDto) => {
     if (busy) return;
     dismissError();
-    if (await openCloudRepo(repo.url, repo.accountId)) onDone();
+    if (await openCloudRepo(repo.url)) onDone();
   };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (busy || !activeAccount || !repoName.trim()) return;
+    if (busy || !repoName.trim()) return;
     dismissError();
-    if (await createCloudRepo(activeAccount.id, repoName.trim(), description.trim() || null, isPrivate)) {
+    if (await createCloudRepo(repoName.trim(), description.trim() || null, isPrivate)) {
       onDone();
     }
   };
@@ -341,49 +322,7 @@ function CloudView({ onDone }: { onDone: () => void }) {
           </button>
         </div>
 
-        <Menu>
-          <MenuTrigger asChild>
-            <Button variant="subtle" size="sm" disabled={connecting}>
-              {tab === "existing" && !selectedAccountId ? (
-                <span>All accounts</span>
-              ) : (
-                <>
-                  <Avatar
-                    src={activeAccount?.avatarUrl}
-                    fallback={activeAccount?.login.slice(0, 1).toUpperCase() ?? "?"}
-                  />
-                  <span>@{activeAccount?.login}</span>
-                </>
-              )}
-              <LuChevronDown className="chevron" />
-            </Button>
-          </MenuTrigger>
-          <MenuContent align="end">
-            {tab === "existing" && accounts.length > 1 && (
-              <MenuItem
-                selected={selectedAccountId === null}
-                onSelect={() => setSelectedAccountId(null)}
-              >
-                <span className="row-label">All GitHub accounts</span>
-              </MenuItem>
-            )}
-            {accounts.map((acc) => (
-              <MenuItem
-                key={acc.id}
-                selected={(tab === "create" ? activeAccount?.id : selectedAccountId) === acc.id}
-                onSelect={() => setSelectedAccountId(acc.id)}
-              >
-                <Avatar src={acc.avatarUrl} fallback={acc.login.slice(0, 1).toUpperCase()} />
-                <span className="row-label">@{acc.login}</span>
-              </MenuItem>
-            ))}
-            <MenuSeparator />
-            <MenuItem onSelect={() => void connect()}>
-              <LuPlus />
-              <span className="row-label">Add GitHub account</span>
-            </MenuItem>
-          </MenuContent>
-        </Menu>
+        <span className="badge">@{account.login}</span>
       </div>
 
       {tab === "existing" ? (
@@ -421,7 +360,7 @@ function CloudView({ onDone }: { onDone: () => void }) {
             )}
             {repos?.map((repo) => (
               <button
-                key={`${repo.accountId}:${repo.fullName}`}
+                key={repo.fullName}
                 type="button"
                 className="row"
                 disabled={busy}
@@ -433,7 +372,6 @@ function CloudView({ onDone }: { onDone: () => void }) {
                   {repo.description && <span className="truncate">{repo.description}</span>}
                 </span>
                 <span className="repo-meta">
-                  {accounts.length > 1 && <span className="badge">@{repo.accountLogin}</span>}
                   <span className="badge">{repo.private ? "Private" : "Public"}</span>
                 </span>
               </button>

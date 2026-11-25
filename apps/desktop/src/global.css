@@ -588,6 +588,10 @@ input.toolbar-value { width: 48px; background: var(--bg); border: 1px solid var(
 .list > .alert { margin-bottom: 6px; }
 .list[data-grid] { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); align-content: start; gap: var(--s3); padding: var(--s4) max(var(--s4), calc((100% - var(--page-w)) / 2)); }
 .list[data-grid] > :is(.alert, .empty) { grid-column: 1 / -1; margin: 0; }
+.integrations-bar { height: auto; min-height: var(--bar-h); padding: var(--s2) max(var(--s4), calc((100% - var(--page-w)) / 2)); }
+.integrations-bar .tabs { flex-wrap: wrap; gap: 6px; overflow: visible; }
+.integrations-bar .tab { max-width: none; white-space: nowrap; }
+.integrations-foot { padding: 10px max(var(--s4), calc((100% - var(--page-w)) / 2)); }
 
 .card { --i: var(--icon-lg); display: flex; flex-direction: column; gap: var(--s3); min-width: 0; padding: var(--s4); border-radius: var(--r-lg); background: var(--raised); border: 1px solid var(--line); color: var(--fg-2); text-align: left; }
 .card:hover:not(:disabled) { border-color: var(--line-3); }

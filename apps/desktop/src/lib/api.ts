@@ -235,7 +235,6 @@ export interface CloudProjectDto {
   workspace: string;
   repoUrl: string;
   repoDir: string;
-  githubAccountId: string;
   accountLogin: string;
   isPrivate: boolean;
   accountConnected: boolean;
@@ -282,18 +281,16 @@ export function listCloudProjects(): Promise<CloudProjectDto[]> {
   return invoke("list_cloud_projects");
 }
 
-export function openCloudProject(repoUrl: string, accountId: string): Promise<CloudProjectDto> {
-  return invoke("open_cloud_project", { repoUrl, accountId });
+export function openCloudProject(repoUrl: string): Promise<CloudProjectDto> {
+  return invoke("open_cloud_project", { repoUrl });
 }
 
 export function createCloudProject(
-  accountId: string,
   name: string,
   description: string | null,
   privateRepo: boolean
 ): Promise<CloudProjectDto> {
   return invoke("create_cloud_project", {
-    accountId,
     name,
     description,
     private: privateRepo,
@@ -489,24 +486,23 @@ export interface GithubRepoDto {
   private: boolean;
   url: string;
   updatedAt: string;
-  accountId: string;
   accountLogin: string;
 }
 
-export function listGithubAccounts(): Promise<GithubAccountDto[]> {
-  return invoke("list_github_accounts");
+export function getGithubAccount(): Promise<GithubAccountDto | null> {
+  return invoke("get_github_account");
 }
 
 export function getGithubConnectUrl(): Promise<string> {
   return invoke("get_github_connect_url");
 }
 
-export function disconnectGithubAccount(accountId: string): Promise<void> {
-  return invoke("disconnect_github_account", { accountId });
+export function disconnectGithubAccount(): Promise<void> {
+  return invoke("disconnect_github_account");
 }
 
-export function listGithubRepos(accountId: string | null, query: string): Promise<GithubRepoDto[]> {
-  return invoke("list_github_repos", { accountId, query });
+export function listGithubRepos(query: string): Promise<GithubRepoDto[]> {
+  return invoke("list_github_repos", { query });
 }
 
 export function getConnectorAuthUrl(connectorId: string): Promise<string> {

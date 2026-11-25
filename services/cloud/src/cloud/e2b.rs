@@ -19,8 +19,7 @@ use serde_json::{json, Value};
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 
-use crate::cloud::github::is_valid_account_id;
-use crate::cloud::store::{github_account_doc_id, workspace_doc_id};
+use crate::cloud::store::workspace_doc_id;
 use crate::cloud::workspace::CloudWorkspace;
 use crate::shared::config::{self, Config};
 use crate::shared::crypto;
@@ -335,7 +334,6 @@ impl CloudCommandManager {
 struct ManagedSandbox {
     conn: Option<SandboxConn>,
     user_id: String,
-    github_account_id: String,
     repo_ready: bool,
     git_auth_token: String,
     active_leases: usize,
@@ -429,16 +427,9 @@ impl SandboxManager {
             .ok_or_else(|| {
                 ApiError::not_found("Project not found. Open or create a GitHub project first.")
             })?;
-        if !is_valid_account_id(&record.github_account_id) {
-            return Err(ApiError::forbidden(
-                "GitHub account is disconnected. Reconnect or re-open this project with a connected GitHub account.",
-            )
-            .with_code("GITHUB_RECONNECT_REQUIRED"));
-        }
-        let account_doc_id = github_account_doc_id(user_id, &record.github_account_id);
         let account = self
             .firestore
-            .get_github_account(&account_doc_id)
+            .get_github_account(user_id)
             .await?
             .filter(|acc| acc.user_id == user_id)
             .ok_or_else(|| {
@@ -532,7 +523,6 @@ impl SandboxManager {
 
         guard.conn = Some(conn.clone());
         guard.user_id = user_id.to_string();
-        guard.github_account_id = account.github_id.clone();
         guard.active_leases += 1;
 
         Ok(SandboxLease {
@@ -561,12 +551,12 @@ impl SandboxManager {
             .await;
     }
 
-    pub async fn invalidate_github_account(&self, user_id: &str, github_account_id: &str) {
+    pub async fn invalidate_github_account(&self, user_id: &str) {
         let slots: Vec<Arc<Mutex<ManagedSandbox>>> =
             self.slots.iter().map(|e| e.value().clone()).collect();
         for slot in slots {
             let mut guard = slot.lock().await;
-            if guard.user_id == user_id && guard.github_account_id == github_account_id {
+            if guard.user_id == user_id {
                 guard.git_auth_token.clear();
                 if let Some(conn) = guard.conn.clone() {
                     self.clear_git_token(&conn).await;

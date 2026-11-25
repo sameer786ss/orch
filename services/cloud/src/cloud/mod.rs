@@ -42,8 +42,7 @@ pub fn public_routes() -> Router<ServerState> {
 
 pub fn protected_routes() -> Router<ServerState> {
     Router::new()
-        .route("/github/accounts", get(github::list_accounts))
-        .route("/github/accounts/{id}", delete(github::disconnect_account))
+        .route("/github/account", get(github::get_account).delete(github::disconnect_account))
         .route("/github/connect", post(github::connect))
         .route("/github/repos", get(github::list_repos))
         .route("/cloud/projects", get(projects::list).post(projects::open))

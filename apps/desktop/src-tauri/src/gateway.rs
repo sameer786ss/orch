@@ -51,7 +51,6 @@ pub struct GithubRepoDto {
     pub private: bool,
     pub url: String,
     pub updated_at: String,
-    pub account_id: String,
     pub account_login: String,
 }
 
@@ -63,7 +62,6 @@ pub struct CloudProjectDto {
     pub workspace: String,
     pub repo_url: String,
     pub repo_dir: String,
-    pub github_account_id: String,
     pub account_login: String,
     pub is_private: bool,
     pub account_connected: bool,
@@ -261,8 +259,8 @@ impl Gateway {
         Ok(resp.text)
     }
 
-    pub async fn github_accounts(&self) -> AppResult<Vec<GithubAccountDto>> {
-        self.get(&config::github_url("/accounts"), Duration::from_secs(20))
+    pub async fn github_account(&self) -> AppResult<Option<GithubAccountDto>> {
+        self.get(&config::github_url("/account"), Duration::from_secs(20))
             .await
     }
 
@@ -282,21 +280,14 @@ impl Gateway {
         Ok(resp.redirect_url)
     }
 
-    pub async fn github_disconnect(&self, account_id: &str) -> AppResult<()> {
-        let url = Self::url_with_segment(config::github_url("/accounts"), account_id)?;
-        self.delete_void(url.as_str(), Duration::from_secs(20)).await
+    pub async fn github_disconnect(&self) -> AppResult<()> {
+        self.delete_void(&config::github_url("/account"), Duration::from_secs(20))
+            .await
     }
 
-    pub async fn github_repos(
-        &self,
-        account_id: Option<&str>,
-        query: &str,
-    ) -> AppResult<Vec<GithubRepoDto>> {
+    pub async fn github_repos(&self, query: &str) -> AppResult<Vec<GithubRepoDto>> {
         let base = config::github_url("/repos");
         let mut params: Vec<(&str, &str)> = Vec::new();
-        if let Some(id) = account_id.map(str::trim).filter(|s| !s.is_empty()) {
-            params.push(("accountId", id));
-        }
         if !query.trim().is_empty() {
             params.push(("query", query.trim()));
         }
@@ -309,14 +300,10 @@ impl Gateway {
             .await
     }
 
-    pub async fn cloud_open_project(
-        &self,
-        repo_url: &str,
-        account_id: &str,
-    ) -> AppResult<CloudProjectDto> {
+    pub async fn cloud_open_project(&self, repo_url: &str) -> AppResult<CloudProjectDto> {
         self.post(
             &config::cloud_url("/projects"),
-            &json!({ "repoUrl": repo_url, "accountId": account_id }),
+            &json!({ "repoUrl": repo_url }),
             Duration::from_secs(30),
         )
         .await
@@ -324,7 +311,6 @@ impl Gateway {
 
     pub async fn cloud_create_project(
         &self,
-        account_id: &str,
         name: &str,
         description: Option<&str>,
         private: bool,
@@ -332,7 +318,6 @@ impl Gateway {
         self.post(
             &config::cloud_url("/projects/create"),
             &json!({
-                "accountId": account_id,
                 "name": name,
                 "description": description,
                 "private": private,

@@ -154,7 +154,7 @@ export function Integrations() {
 
   return (
     <>
-      <div className="toolbar">
+      <div className="toolbar integrations-bar">
         <div className="tabs" role="tablist" aria-label="Filter integrations">
           {filters.map((f) => (
             <button
@@ -185,7 +185,7 @@ export function Integrations() {
         ))}
         {visible.length === 0 && <p className="empty">No integrations in this category</p>}
       </div>
-      <div className="foot">
+      <div className="foot integrations-foot">
         Connect your accounts, then pick which apps the agent can use in each conversation from the + menu.
       </div>
     </>

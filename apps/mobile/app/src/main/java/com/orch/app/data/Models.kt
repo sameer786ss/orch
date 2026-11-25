@@ -68,7 +68,6 @@ data class GithubRepo(
     val private: Boolean = false,
     val url: String,
     val updatedAt: String = "",
-    val accountId: String,
     val accountLogin: String
 )
 
@@ -86,7 +85,6 @@ data class CloudProject(
     val workspace: String,
     val repoUrl: String,
     val repoDir: String = "",
-    val githubAccountId: String = "",
     val accountLogin: String = "",
     val isPrivate: Boolean = false,
     val accountConnected: Boolean = true,
@@ -95,13 +93,11 @@ data class CloudProject(
 
 @Serializable
 data class OpenProjectRequest(
-    val repoUrl: String,
-    val accountId: String
+    val repoUrl: String
 )
 
 @Serializable
 data class CreateProjectRequest(
-    val accountId: String,
     val name: String,
     val description: String? = null,
     val private: Boolean = true

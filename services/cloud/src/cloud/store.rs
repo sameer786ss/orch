@@ -70,10 +70,6 @@ pub fn workspace_doc_id(user_id: &str, workspace_uri: &str) -> String {
     fast_hash_hex(&format!("{user_id}\0{workspace_uri}"))
 }
 
-pub fn github_account_doc_id(user_id: &str, github_id: &str) -> String {
-    fast_hash_hex(&format!("{user_id}\0{github_id}"))
-}
-
 fn image_ext_for_mime(mime: &str) -> &'static str {
     match mime.trim().to_ascii_lowercase().as_str() {
         "image/jpeg" | "image/jpg" => "jpg",
@@ -91,7 +87,6 @@ pub struct CloudWorkspaceRecord {
     pub workspace_uri: String,
     pub repo_url: String,
     pub repo_dir: String,
-    pub github_account_id: String,
     pub is_private: bool,
     pub sandbox_id: String,
     pub domain: String,
@@ -109,7 +104,6 @@ impl CloudWorkspaceRecord {
             workspace_uri: fields::read_string(stored, "workspace_uri"),
             repo_url: fields::read_string(stored, "repo_url"),
             repo_dir: fields::read_string(stored, "repo_dir"),
-            github_account_id: fields::read_string(stored, "github_account_id"),
             is_private: fields::read_bool(stored, "is_private"),
             sandbox_id: fields::read_string(stored, "sandbox_id"),
             domain: fields::read_string(stored, "domain"),
@@ -132,7 +126,6 @@ impl CloudWorkspaceRecord {
         map.insert("workspace_uri".into(), fields::string(&self.workspace_uri));
         map.insert("repo_url".into(), fields::string(&self.repo_url));
         map.insert("repo_dir".into(), fields::string(&self.repo_dir));
-        map.insert("github_account_id".into(), fields::string(&self.github_account_id));
         map.insert("is_private".into(), fields::boolean(self.is_private));
         map.insert("sandbox_id".into(), fields::string(&self.sandbox_id));
         map.insert("domain".into(), fields::string(&self.domain));
@@ -420,14 +413,14 @@ impl FirestoreClient {
 
     pub async fn get_github_account(
         &self,
-        doc_id: &str,
+        user_id: &str,
     ) -> Result<Option<GithubAccountRecord>, String> {
-        let Some(document) = self.get_document(&github_account_path(doc_id)).await? else {
+        let Some(document) = self.get_document(&github_account_path(user_id)).await? else {
             return Ok(None);
         };
         GithubAccountRecord::from_document(&document)
             .map(Some)
-            .ok_or_else(|| format!("github account document {doc_id} is malformed"))
+            .ok_or_else(|| format!("github account document {user_id} is malformed"))
     }
 
     pub async fn upsert_github_account(
@@ -436,7 +429,7 @@ impl FirestoreClient {
     ) -> Result<(), String> {
         let fields = record.to_fields();
         self.write_document(
-            &github_account_path(&record.doc_id),
+            &github_account_path(&record.user_id),
             &fields,
             false,
             Precondition::Unconditional,
@@ -446,34 +439,8 @@ impl FirestoreClient {
         .map(|_| ())
     }
 
-    pub async fn list_github_accounts(
-        &self,
-        user_id: &str,
-    ) -> Result<Vec<GithubAccountRecord>, String> {
-        let documents = self
-            .run_query(
-                "",
-                json!({
-                    "from": [{ "collectionId": GITHUB_ACCOUNTS }],
-                    "where": equals_filter("user_id", user_id),
-                    "orderBy": [
-                        { "field": { "fieldPath": "updated_at" }, "direction": "DESCENDING" }
-                    ],
-                    "limit": 50,
-                }),
-            )
-            .await?;
-        documents
-            .iter()
-            .map(|document| {
-                GithubAccountRecord::from_document(document)
-                    .ok_or_else(|| "github account document is malformed".to_string())
-            })
-            .collect()
-    }
-
-    pub async fn delete_github_account(&self, doc_id: &str) -> Result<(), String> {
-        self.delete_document(&github_account_path(doc_id)).await
+    pub async fn delete_github_account(&self, user_id: &str) -> Result<(), String> {
+        self.delete_document(&github_account_path(user_id)).await
     }
 
     pub async fn put_oauth_state(&self, record: &OAuthStateRecord) -> Result<(), String> {

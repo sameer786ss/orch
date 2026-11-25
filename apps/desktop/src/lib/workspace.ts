@@ -64,8 +64,8 @@ interface WorkspaceActions {
   initialize: () => Promise<void>;
   pickAndOpen: () => Promise<boolean>;
   createLocalFolder: (parentDir: string, folderName: string, initGit: boolean) => Promise<boolean>;
-  openCloudRepo: (repoUrl: string, accountId: string) => Promise<boolean>;
-  createCloudRepo: (accountId: string, name: string, description: string | null, privateRepo: boolean) => Promise<boolean>;
+  openCloudRepo: (repoUrl: string) => Promise<boolean>;
+  createCloudRepo: (name: string, description: string | null, privateRepo: boolean) => Promise<boolean>;
   switchTo: (id: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
   syncCloudProjects: () => Promise<void>;
@@ -315,11 +315,11 @@ export const useWorkspaceStore = create(
         return Boolean(result);
       },
 
-      openCloudRepo: async (repoUrl: string, accountId: string) => {
+      openCloudRepo: async (repoUrl: string) => {
         const result = await exclusive(async () => {
           const trimmed = repoUrl.trim();
           if (!trimmed) return false;
-          const dto = await openCloudProject(trimmed, accountId);
+          const dto = await openCloudProject(trimmed);
           const meta = fromCloudDto(dto);
           await commit(meta, upsert(get().all, meta));
           return true;
@@ -328,13 +328,12 @@ export const useWorkspaceStore = create(
       },
 
       createCloudRepo: async (
-        accountId: string,
         name: string,
         description: string | null,
         privateRepo: boolean
       ) => {
         const result = await exclusive(async () => {
-          const dto = await createCloudProject(accountId, name.trim(), description, privateRepo);
+          const dto = await createCloudProject(name.trim(), description, privateRepo);
           const meta = fromCloudDto(dto);
           await commit(meta, upsert(get().all, meta));
           return true;

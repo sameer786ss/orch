@@ -78,10 +78,10 @@ data class WorkspaceUi(
 
 @Immutable
 data class GithubUi(
-    val accounts: List<GithubAccount> = emptyList(),
-    val accountsLoading: Boolean = false,
+    val account: GithubAccount? = null,
+    val accountLoading: Boolean = false,
     val connecting: Boolean = false,
-    val disconnectingId: String? = null,
+    val disconnecting: Boolean = false,
     val error: String? = null,
     val repos: List<GithubRepo> = emptyList(),
     val reposLoading: Boolean = false,
@@ -447,16 +447,16 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshGithubAccounts(reloadRepos: Boolean = false) {
         viewModelScope.launch {
-            _github.update { it.copy(accountsLoading = true) }
-            runCatchingSuspend { api.githubAccounts() }
-                .onSuccess { list ->
-                    _github.update { it.copy(accounts = list, accountsLoading = false, error = null) }
-                    if (reloadRepos && list.isNotEmpty()) {
-                        loadGithubRepos(accountId = list.first().id, query = "")
+            _github.update { it.copy(accountLoading = true) }
+            runCatchingSuspend { api.githubAccount() }
+                .onSuccess { account ->
+                    _github.update { it.copy(account = account, accountLoading = false, error = null) }
+                    if (reloadRepos && account != null) {
+                        loadGithubRepos(query = "")
                     }
                 }
                 .onFailure { error ->
-                    _github.update { it.copy(accountsLoading = false, error = error.toApiError().message) }
+                    _github.update { it.copy(accountLoading = false, error = error.toApiError().message) }
                 }
         }
     }
@@ -478,29 +478,29 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun disconnectGithub(id: String) {
-        if (_github.value.disconnectingId != null) return
-        _github.update { it.copy(disconnectingId = id, error = null) }
+    fun disconnectGithub() {
+        if (_github.value.disconnecting) return
+        _github.update { it.copy(disconnecting = true, error = null) }
         viewModelScope.launch {
-            runCatchingSuspend { api.disconnectGithub(id) }
+            runCatchingSuspend { api.disconnectGithub() }
                 .onSuccess {
-                    _github.update { it.copy(disconnectingId = null) }
+                    _github.update { it.copy(disconnecting = false) }
                     refreshGithubAccounts()
                     refreshProjects()
                 }
                 .onFailure { error ->
                     val message = error.toApiError().message
-                    _github.update { it.copy(disconnectingId = null, error = message) }
+                    _github.update { it.copy(disconnecting = false, error = message) }
                     notice(message)
                 }
         }
     }
 
-    fun loadGithubRepos(accountId: String? = null, query: String = "") {
+    fun loadGithubRepos(query: String = "") {
         githubReposJob?.cancel()
         githubReposJob = viewModelScope.launch {
             _github.update { it.copy(reposLoading = true, reposError = null) }
-            runCatchingSuspend { api.githubRepos(accountId, query.trim().ifEmpty { null }) }
+            runCatchingSuspend { api.githubRepos(query.trim().ifEmpty { null }) }
                 .onSuccess { list ->
                     _github.update { it.copy(repos = list, reposLoading = false) }
                 }
@@ -530,11 +530,11 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         newChat(projectId = project.id)
     }
 
-    fun openGithubProject(repoUrl: String, accountId: String, onSuccess: () -> Unit) {
+    fun openGithubProject(repoUrl: String, onSuccess: () -> Unit) {
         if (_github.value.projectBusy) return
         _github.update { it.copy(projectBusy = true, projectError = null) }
         viewModelScope.launch {
-            runCatchingSuspend { api.openProject(OpenProjectRequest(repoUrl = repoUrl, accountId = accountId)) }
+            runCatchingSuspend { api.openProject(OpenProjectRequest(repoUrl = repoUrl)) }
                 .onSuccess { project ->
                     _github.update { it.copy(projectBusy = false) }
                     activateProject(project)
@@ -547,7 +547,6 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createGithubProject(
-        accountId: String,
         name: String,
         description: String?,
         private: Boolean,
@@ -564,7 +563,6 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
             runCatchingSuspend {
                 api.createProject(
                     CreateProjectRequest(
-                        accountId = accountId,
                         name = cleanName,
                         description = description?.trim()?.ifEmpty { null },
                         private = private
@@ -1284,7 +1282,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         private val SUPPORTED_IMAGE_MIMES = setOf("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif")
         private val SUPPORTED_IMAGE_EXTS = setOf("png", "jpg", "jpeg", "webp", "heic", "heif")
         private const val HISTORY_LIMIT = 200
-        private const val PUBLISH_INTERVAL_MS = 80L
+        private const val PUBLISH_INTERVAL_MS = 32L
         private const val CANCEL_TIMEOUT_MS = 4000L
         private const val FILE_REFRESH_DEBOUNCE_MS = 400L
         private const val MAX_RETRIES = 6

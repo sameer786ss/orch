@@ -378,16 +378,16 @@ fun AccountSheet(
     name: String?,
     email: String?,
     budget: Budget?,
-    githubAccounts: List<GithubAccount>,
+    githubAccount: GithubAccount?,
     githubConnecting: Boolean,
-    githubDisconnectingId: String?,
+    githubDisconnecting: Boolean,
     githubError: String?,
     onConnectGithub: () -> Unit,
-    onDisconnectGithub: (String) -> Unit,
+    onDisconnectGithub: () -> Unit,
     onSignOut: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var pendingDisconnect by remember { mutableStateOf<GithubAccount?>(null) }
+    var confirmDisconnect by remember { mutableStateOf(false) }
 
     OrchBottomSheet(onDismiss = onDismiss) {
         OrchSheetHeader(
@@ -441,7 +441,7 @@ fun AccountSheet(
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = "GitHub accounts",
+                            text = "GitHub",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f)
@@ -455,77 +455,75 @@ fun AccountSheet(
                         }
                     }
                     githubError?.let { OrchBanner(text = it, isError = true) }
-                    if (githubAccounts.isEmpty()) {
+                    if (githubAccount == null) {
                         Text(
                             text = "Connect GitHub to browse or create cloud project repositories.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        OrchSecondaryButton(
+                            text = "Connect GitHub",
+                            onClick = onConnectGithub,
+                            enabled = !githubConnecting,
+                            icon = Icons.Outlined.Add,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     } else {
-                        githubAccounts.forEach { acc ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.fillMaxWidth()
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OrchIconBadge(
+                                size = 32.dp,
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                             ) {
-                                OrchIconBadge(
-                                    size = 32.dp,
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                                ) {
-                                    if (acc.avatarUrl.isNotBlank()) {
-                                        AsyncImage(
-                                            model = acc.avatarUrl,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .clip(MaterialTheme.shapes.small)
-                                        )
-                                    } else {
-                                        Text(
-                                            text = acc.login.take(1).uppercase(),
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "@${acc.login}",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                if (githubAccount.avatarUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = githubAccount.avatarUrl,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(MaterialTheme.shapes.small)
                                     )
-                                    if (acc.email.isNotBlank()) {
-                                        Text(
-                                            text = acc.email,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                                IconButton(
-                                    enabled = githubDisconnectingId == null,
-                                    onClick = { pendingDisconnect = acc }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Delete,
-                                        contentDescription = "Disconnect @${acc.login}",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
+                                } else {
+                                    Text(
+                                        text = githubAccount.login.take(1).uppercase(),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                             }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "@${githubAccount.login}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                if (githubAccount.email.isNotBlank()) {
+                                    Text(
+                                        text = githubAccount.email,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            IconButton(
+                                enabled = !githubDisconnecting,
+                                onClick = { confirmDisconnect = true }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Delete,
+                                    contentDescription = "Disconnect @${githubAccount.login}",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
-                    OrchSecondaryButton(
-                        text = if (githubAccounts.isEmpty()) "Connect GitHub" else "Add another account",
-                        onClick = onConnectGithub,
-                        enabled = !githubConnecting,
-                        icon = Icons.Outlined.Add,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
             }
             if (budget != null) {
@@ -573,18 +571,18 @@ fun AccountSheet(
         }
     }
 
-    pendingDisconnect?.let { acc ->
+    if (confirmDisconnect && githubAccount != null) {
         OrchAlertDialog(
-            title = "Disconnect @${acc.login}?",
-            onDismiss = { pendingDisconnect = null },
+            title = "Disconnect @${githubAccount.login}?",
+            onDismiss = { confirmDisconnect = false },
             confirmLabel = "Disconnect",
             onConfirm = {
-                onDisconnectGithub(acc.id)
-                pendingDisconnect = null
+                onDisconnectGithub()
+                confirmDisconnect = false
             }
         ) {
             Text(
-                text = "Cloud projects linked to this GitHub account will require reconnecting before opening their sandbox.",
+                text = "Cloud projects will require reconnecting GitHub before opening their sandbox.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

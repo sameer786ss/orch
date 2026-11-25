@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -66,8 +65,8 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun NewProjectSheet(
-    accounts: List<GithubAccount>,
-    accountsLoading: Boolean,
+    account: GithubAccount?,
+    accountLoading: Boolean,
     connectingGithub: Boolean,
     repos: List<GithubRepo>,
     reposLoading: Boolean,
@@ -75,35 +74,24 @@ fun NewProjectSheet(
     projectBusy: Boolean,
     projectError: String?,
     onConnectGithub: () -> Unit,
-    onLoadRepos: (accountId: String?, query: String) -> Unit,
-    onOpenRepo: (repoUrl: String, accountId: String) -> Unit,
-    onCreateRepo: (accountId: String, name: String, description: String?, private: Boolean) -> Unit,
+    onLoadRepos: (query: String) -> Unit,
+    onOpenRepo: (repoUrl: String) -> Unit,
+    onCreateRepo: (name: String, description: String?, private: Boolean) -> Unit,
     onClearError: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var createMode by rememberSaveable { mutableStateOf(false) }
-    var selectedAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var repoName by rememberSaveable { mutableStateOf("") }
     var repoDesc by rememberSaveable { mutableStateOf("") }
     var privateRepo by rememberSaveable { mutableStateOf(true) }
 
-    LaunchedEffect(accounts) {
-        if (accounts.isEmpty()) {
-            selectedAccountId = null
-        } else if (accounts.size == 1 || (selectedAccountId != null && accounts.none { it.id == selectedAccountId })) {
-            selectedAccountId = accounts.first().id
-        }
-    }
-
-    LaunchedEffect(accounts, selectedAccountId, query, createMode) {
-        if (accounts.isNotEmpty() && !createMode) {
+    LaunchedEffect(account, query, createMode) {
+        if (account != null && !createMode) {
             delay(if (query.isEmpty()) 0L else 250L)
-            onLoadRepos(selectedAccountId, query.trim())
+            onLoadRepos(query.trim())
         }
     }
-
-    val createAccountId = selectedAccountId ?: accounts.firstOrNull()?.id
 
     OrchBottomSheet(onDismiss = onDismiss) {
         OrchSheetHeader(
@@ -113,13 +101,13 @@ fun NewProjectSheet(
         )
 
         when {
-            accountsLoading && accounts.isEmpty() -> Box(
+            accountLoading && account == null -> Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(220.dp)
             ) { OrchCenteredSpinner() }
 
-            accounts.isEmpty() -> Column(
+            account == null -> Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(OrchDimens.SectionGap),
                 modifier = Modifier
@@ -181,35 +169,6 @@ fun NewProjectSheet(
                     )
                 }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(OrchDimens.ItemGap),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                ) {
-                    if (!createMode && accounts.size > 1) {
-                        OrchActionChip(
-                            label = "All accounts",
-                            selected = selectedAccountId == null,
-                            onClick = { selectedAccountId = null }
-                        )
-                    }
-                    accounts.forEach { acc ->
-                        val active = if (createMode) createAccountId == acc.id else selectedAccountId == acc.id
-                        OrchActionChip(
-                            label = "@${acc.login}",
-                            selected = active,
-                            onClick = { selectedAccountId = acc.id }
-                        )
-                    }
-                    OrchActionChip(
-                        label = if (connectingGithub) "Waiting…" else "+ Account",
-                        enabled = !connectingGithub,
-                        onClick = onConnectGithub
-                    )
-                }
-
                 (projectError ?: reposError)?.let { err ->
                     OrchBanner(text = err, isError = true)
                 }
@@ -242,10 +201,10 @@ fun NewProjectSheet(
                                 onAction = { createMode = true }
                             )
                             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(repos, key = { "${it.accountId}:${it.fullName}" }) { repo ->
+                                items(repos, key = { it.fullName }) { repo ->
                                     OrchCard(
                                         onClick = if (!projectBusy) {
-                                            { onOpenRepo(repo.url, repo.accountId) }
+                                            { onOpenRepo(repo.url) }
                                         } else {
                                             null
                                         }
@@ -303,9 +262,8 @@ fun NewProjectSheet(
                         modifier = Modifier.verticalScroll(rememberScrollState())
                     ) {
                         val submit = {
-                            if (createAccountId != null && repoName.isNotBlank() && !projectBusy) {
+                            if (repoName.isNotBlank() && !projectBusy) {
                                 onCreateRepo(
-                                    createAccountId,
                                     repoName.trim(),
                                     repoDesc.trim().takeIf { it.isNotEmpty() },
                                     privateRepo

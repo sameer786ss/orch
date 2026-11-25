@@ -259,12 +259,11 @@ pub async fn list_cloud_projects(state: State<'_, AppState>) -> Result<Vec<Cloud
 pub async fn open_cloud_project(
     state: State<'_, AppState>,
     repo_url: String,
-    account_id: String,
 ) -> Result<CloudProjectDto, String> {
     state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
     let project = state
         .gateway
-        .cloud_open_project(&repo_url, &account_id)
+        .cloud_open_project(&repo_url)
         .await
         .map_err(|e| e.to_string())?;
     state.set_workspace(Some(Workspace::from_cloud_project(project.clone())));
@@ -274,7 +273,6 @@ pub async fn open_cloud_project(
 #[tauri::command]
 pub async fn create_cloud_project(
     state: State<'_, AppState>,
-    account_id: String,
     name: String,
     description: Option<String>,
     private: bool,
@@ -282,7 +280,7 @@ pub async fn create_cloud_project(
     state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
     let project = state
         .gateway
-        .cloud_create_project(&account_id, &name, description.as_deref(), private)
+        .cloud_create_project(&name, description.as_deref(), private)
         .await
         .map_err(|e| e.to_string())?;
     state.set_workspace(Some(Workspace::from_cloud_project(project.clone())));
@@ -1108,12 +1106,12 @@ pub async fn list_connectors(state: State<'_, AppState>) -> Result<Vec<Connector
 }
 
 #[tauri::command]
-pub async fn list_github_accounts(state: State<'_, AppState>) -> Result<Vec<GithubAccountDto>, String> {
+pub async fn get_github_account(state: State<'_, AppState>) -> Result<Option<GithubAccountDto>, String> {
     if state.current_user_id().is_none() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-    state.gateway.github_accounts().await.map_err(|e| {
+    state.gateway.github_account().await.map_err(|e| {
         sentry::capture_error(&e);
         e.to_string()
     })
@@ -1129,12 +1127,9 @@ pub async fn get_github_connect_url(state: State<'_, AppState>) -> Result<String
 }
 
 #[tauri::command]
-pub async fn disconnect_github_account(
-    state: State<'_, AppState>,
-    account_id: String,
-) -> Result<(), String> {
+pub async fn disconnect_github_account(state: State<'_, AppState>) -> Result<(), String> {
     state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-    state.gateway.github_disconnect(&account_id).await.map_err(|e| {
+    state.gateway.github_disconnect().await.map_err(|e| {
         sentry::capture_error(&e);
         e.to_string()
     })
@@ -1143,18 +1138,13 @@ pub async fn disconnect_github_account(
 #[tauri::command]
 pub async fn list_github_repos(
     state: State<'_, AppState>,
-    account_id: Option<String>,
     query: String,
 ) -> Result<Vec<GithubRepoDto>, String> {
     state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-    state
-        .gateway
-        .github_repos(account_id.as_deref(), &query)
-        .await
-        .map_err(|e| {
-            sentry::capture_error(&e);
-            e.to_string()
-        })
+    state.gateway.github_repos(&query).await.map_err(|e| {
+        sentry::capture_error(&e);
+        e.to_string()
+    })
 }
 
 #[tauri::command]

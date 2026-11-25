@@ -292,8 +292,8 @@ private fun NewProjectSheetHost(
 ) {
     val github by vm.github.collectAsStateWithLifecycle()
     NewProjectSheet(
-        accounts = github.accounts,
-        accountsLoading = github.accountsLoading,
+        account = github.account,
+        accountLoading = github.accountLoading,
         connectingGithub = github.connecting,
         repos = github.repos,
         reposLoading = github.reposLoading,
@@ -302,11 +302,11 @@ private fun NewProjectSheetHost(
         projectError = github.projectError,
         onConnectGithub = onConnectGithub,
         onLoadRepos = vm::loadGithubRepos,
-        onOpenRepo = { repoUrl, accountId ->
-            vm.openGithubProject(repoUrl, accountId, onDismiss)
+        onOpenRepo = { repoUrl ->
+            vm.openGithubProject(repoUrl, onDismiss)
         },
-        onCreateRepo = { accountId, name, description, private ->
-            vm.createGithubProject(accountId, name, description, private, onDismiss)
+        onCreateRepo = { name, description, private ->
+            vm.createGithubProject(name, description, private, onDismiss)
         },
         onClearError = vm::clearProjectError,
         onDismiss = onDismiss
@@ -366,9 +366,9 @@ private fun AccountSheetHost(
         name = userName,
         email = userEmail,
         budget = budget,
-        githubAccounts = github.accounts,
+        githubAccount = github.account,
         githubConnecting = github.connecting,
-        githubDisconnectingId = github.disconnectingId,
+        githubDisconnecting = github.disconnecting,
         githubError = github.error,
         onConnectGithub = onConnectGithub,
         onDisconnectGithub = vm::disconnectGithub,

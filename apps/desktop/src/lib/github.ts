@@ -5,17 +5,17 @@ import type { GithubAccountDto } from "./api";
 import { useWorkspaceStore } from "./workspace";
 
 interface GithubState {
-  accounts: GithubAccountDto[];
+  account: GithubAccountDto | null;
   loaded: boolean;
   connecting: boolean;
-  disconnectingId: string | null;
+  disconnecting: boolean;
   error: string | null;
 }
 
 interface GithubActions {
   refresh: () => Promise<void>;
   connect: () => Promise<void>;
-  disconnect: (accountId: string) => Promise<void>;
+  disconnect: () => Promise<void>;
   finishConnect: (error?: string | null) => Promise<void>;
   cancelConnect: () => void;
   clearError: () => void;
@@ -24,33 +24,33 @@ interface GithubActions {
 
 let refreshSeq = 0;
 let stopFocusListener: (() => void) | null = null;
-let preConnectAccountIds: Set<string> | null = null;
+let preConnectUpdatedAt: number | null = null;
 
 function detachFocusListener() {
   stopFocusListener?.();
   stopFocusListener = null;
-  preConnectAccountIds = null;
+  preConnectUpdatedAt = null;
 }
 
 export const useGithubStore = create<GithubState & GithubActions>()((set, get) => ({
-  accounts: [],
+  account: null,
   loaded: false,
   connecting: false,
-  disconnectingId: null,
+  disconnecting: false,
   error: null,
 
   refresh: async () => {
     const seq = ++refreshSeq;
     try {
-      const accounts = await api.listGithubAccounts();
+      const account = await api.getGithubAccount();
       if (seq !== refreshSeq) return;
       const connectedNewAccount =
-        preConnectAccountIds !== null && accounts.some((a) => !preConnectAccountIds!.has(a.id));
+        preConnectUpdatedAt !== null && account !== null && account.updatedAt !== preConnectUpdatedAt;
       if (connectedNewAccount) {
         detachFocusListener();
-        set({ accounts, loaded: true, connecting: false });
+        set({ account, loaded: true, connecting: false });
       } else {
-        set({ accounts, loaded: true });
+        set({ account, loaded: true });
       }
     } catch (e) {
       if (seq !== refreshSeq) return;
@@ -62,7 +62,7 @@ export const useGithubStore = create<GithubState & GithubActions>()((set, get) =
     if (get().connecting) return;
     set({ connecting: true, error: null });
     detachFocusListener();
-    preConnectAccountIds = new Set(get().accounts.map((a) => a.id));
+    preConnectUpdatedAt = get().account?.updatedAt ?? 0;
     const onFocus = () => {
       void get().refresh();
     };
@@ -77,18 +77,18 @@ export const useGithubStore = create<GithubState & GithubActions>()((set, get) =
     }
   },
 
-  disconnect: async (accountId: string) => {
-    if (get().disconnectingId) return;
-    set({ disconnectingId: accountId, error: null });
+  disconnect: async () => {
+    if (get().disconnecting) return;
+    set({ disconnecting: true, error: null });
     try {
-      await api.disconnectGithubAccount(accountId);
-      set({ disconnectingId: null });
+      await api.disconnectGithubAccount();
+      set({ disconnecting: false });
       await Promise.all([
         get().refresh(),
         useWorkspaceStore.getState().syncCloudProjects().catch(() => undefined),
       ]);
     } catch (e) {
-      set({ disconnectingId: null, error: api.errorMessage(e) });
+      set({ disconnecting: false, error: api.errorMessage(e) });
     }
   },
 
@@ -112,10 +112,10 @@ export const useGithubStore = create<GithubState & GithubActions>()((set, get) =
     detachFocusListener();
     refreshSeq += 1;
     set({
-      accounts: [],
+      account: null,
       loaded: false,
       connecting: false,
-      disconnectingId: null,
+      disconnecting: false,
       error: null,
     });
   },

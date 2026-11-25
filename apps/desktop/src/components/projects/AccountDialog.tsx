@@ -5,7 +5,6 @@ import { useAuthStore } from "../../lib/auth";
 import { useGithubStore } from "../../lib/github";
 import { useChatStore } from "../../lib/store";
 import { formatUsd } from "../../lib/utils";
-import type { GithubAccountDto } from "../../lib/api";
 import { Avatar } from "../common/Avatar";
 import { Button, IconButton } from "../ui/Button";
 import { ConfirmDialog, Dialog } from "../ui/Dialog";
@@ -21,16 +20,16 @@ export function AccountDialog() {
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
   const budget = useChatStore((s) => s.budget);
-  const accounts = useGithubStore((s) => s.accounts);
+  const account = useGithubStore((s) => s.account);
   const loaded = useGithubStore((s) => s.loaded);
   const connecting = useGithubStore((s) => s.connecting);
-  const disconnectingId = useGithubStore((s) => s.disconnectingId);
+  const disconnecting = useGithubStore((s) => s.disconnecting);
   const error = useGithubStore((s) => s.error);
   const refresh = useGithubStore((s) => s.refresh);
   const connect = useGithubStore((s) => s.connect);
   const disconnect = useGithubStore((s) => s.disconnect);
   const clearError = useGithubStore((s) => s.clearError);
-  const [confirmTarget, setConfirmTarget] = useState<GithubAccountDto | null>(null);
+  const [confirmDisconnectOpen, setConfirmDisconnectOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -40,9 +39,8 @@ export function AccountDialog() {
   }, [open, clearError, refresh]);
 
   const confirmDisconnect = async () => {
-    if (!confirmTarget) return;
-    await disconnect(confirmTarget.id);
-    setConfirmTarget(null);
+    await disconnect();
+    setConfirmDisconnectOpen(false);
   };
 
   return (
@@ -81,38 +79,38 @@ export function AccountDialog() {
 
           <div className="section-card">
             <div className="section-head">
-              <span className="section-title">GitHub accounts</span>
-              <Button variant="subtle" size="sm" disabled={connecting} onClick={() => void connect()}>
-                {connecting ? <span className="spinner" /> : <LuPlus />}
-                <span>{connecting ? "Waiting…" : accounts.length > 0 ? "Add account" : "Connect"}</span>
-              </Button>
+              <span className="section-title">GitHub</span>
+              {!account && (
+                <Button variant="subtle" size="sm" disabled={connecting} onClick={() => void connect()}>
+                  {connecting ? <span className="spinner" /> : <LuPlus />}
+                  <span>{connecting ? "Waiting…" : "Connect"}</span>
+                </Button>
+              )}
             </div>
             {error && <div className="alert">{error}</div>}
             {!loaded ? (
               <div className="empty">
                 <span className="spinner" />
               </div>
-            ) : accounts.length === 0 ? (
-              <p className="dialog-copy">No GitHub accounts connected. Connect one to open or create cloud repositories.</p>
+            ) : !account ? (
+              <p className="dialog-copy">No GitHub account connected. Connect one to open or create cloud repositories.</p>
             ) : (
               <div className="gh-list">
-                {accounts.map((acc) => (
-                  <div key={acc.id} className="gh-row">
-                    <Avatar src={acc.avatarUrl} fallback={acc.login.slice(0, 1).toUpperCase()} />
-                    <div className="gh-row-text">
-                      <span className="gh-row-login truncate">@{acc.login}</span>
-                      {acc.email && <span className="gh-row-sub truncate">{acc.email}</span>}
-                    </div>
-                    <IconButton
-                      label={`Disconnect @${acc.login}`}
-                      size="sm"
-                      disabled={disconnectingId !== null}
-                      onClick={() => setConfirmTarget(acc)}
-                    >
-                      <LuTrash2 />
-                    </IconButton>
+                <div className="gh-row">
+                  <Avatar src={account.avatarUrl} fallback={account.login.slice(0, 1).toUpperCase()} />
+                  <div className="gh-row-text">
+                    <span className="gh-row-login truncate">@{account.login}</span>
+                    {account.email && <span className="gh-row-sub truncate">{account.email}</span>}
                   </div>
-                ))}
+                  <IconButton
+                    label={`Disconnect @${account.login}`}
+                    size="sm"
+                    disabled={disconnecting}
+                    onClick={() => setConfirmDisconnectOpen(true)}
+                  >
+                    <LuTrash2 />
+                  </IconButton>
+                </div>
               </div>
             )}
           </div>
@@ -132,16 +130,16 @@ export function AccountDialog() {
       </Dialog>
 
       <ConfirmDialog
-        open={confirmTarget !== null}
-        onOpenChange={(next) => !next && setConfirmTarget(null)}
+        open={confirmDisconnectOpen}
+        onOpenChange={setConfirmDisconnectOpen}
         title="Disconnect GitHub account?"
         description={
-          confirmTarget
-            ? `Remove @${confirmTarget.login} from Orch? Cloud projects linked to this account will require reconnecting before opening their sandbox.`
+          account
+            ? `Remove @${account.login} from Orch? Cloud projects will require reconnecting GitHub before opening their sandbox.`
             : ""
         }
         confirmLabel="Disconnect"
-        pending={disconnectingId !== null}
+        pending={disconnecting}
         onConfirm={confirmDisconnect}
       />
     </>
