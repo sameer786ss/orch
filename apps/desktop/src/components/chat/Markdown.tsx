@@ -41,6 +41,15 @@ function isWorkspaceLink(href: string): boolean {
   return /\.[a-zA-Z0-9]+(?:#L\d+(?:-\d+)?)?$/.test(href);
 }
 
+function isSafeExternalHref(href: string): boolean {
+  try {
+    const parsed = new URL(href);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
 function parseWorkspaceHref(href: string): { path: string; lineRange?: string } {
   let raw = href;
   if (raw.startsWith("file://")) {
@@ -113,11 +122,12 @@ const COMPONENTS: Components = {
   code: ({ node: _node, ...props }) => <code {...props} />,
   a: ({ node: _node, href, children, ...props }) => {
     const link = href ?? "";
-    if (!link) return <a {...props}>{children}</a>;
+    if (!link) return <span {...props}>{children}</span>;
     if (isWorkspaceLink(link)) {
       const { path, lineRange } = parseWorkspaceHref(link);
       const label = nodeText(children).trim();
       if (label && looksLikePath(path)) return <FileChip path={path} name={label} lineRange={lineRange} />;
+      const openWorkspaceFile = () => useArtifactsStore.getState().openFile(path);
       return (
         <a
           {...props}
@@ -125,13 +135,23 @@ const COMPONENTS: Components = {
           tabIndex={0}
           onClick={(e) => {
             e.preventDefault();
-            useArtifactsStore.getState().openFile(path);
+            openWorkspaceFile();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              openWorkspaceFile();
+            }
           }}
         >
           {children}
         </a>
       );
     }
+    if (!isSafeExternalHref(link)) {
+      return <span>{children}</span>;
+    }
+    const openExternal = () => void openUrl(link);
     return (
       <a
         {...props}
@@ -139,7 +159,13 @@ const COMPONENTS: Components = {
         tabIndex={0}
         onClick={(e) => {
           e.preventDefault();
-          void openUrl(link);
+          openExternal();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openExternal();
+          }
         }}
       >
         {children}
@@ -165,28 +191,70 @@ const REMARK = [remarkGfm, remarkMath];
 const REHYPE = [rehypeKatex];
 
 function splitBlocks(text: string): string[] {
+  if (/^\s{0,3}\[[^\]]+\]:\s/m.test(text) || /^\s{0,3}\[\^[^\]]+\]:/m.test(text)) {
+    return [text];
+  }
+
   const blocks: string[] = [];
   let current: string[] = [];
-  let fence = false;
+  let fenceChar: string | null = null;
+  let fenceLen = 0;
+  let inMath = false;
+
   const flush = () => {
     if (current.length) blocks.push(current.join("\n"));
     current = [];
   };
 
   for (const line of text.split("\n")) {
-    if (line.startsWith("```") || line.startsWith("~~~")) {
-      if (!fence) flush();
-      fence = !fence;
+    if (fenceChar) {
       current.push(line);
-      if (!fence) flush();
+      const closeMatch = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
+      if (closeMatch && closeMatch[1][0] === fenceChar && closeMatch[1].length >= fenceLen) {
+        fenceChar = null;
+        fenceLen = 0;
+        flush();
+      }
       continue;
     }
-    if (!fence && /^#{1,6}\s/.test(line)) {
+
+    if (inMath) {
+      current.push(line);
+      if (/^\s{0,3}\$\$\s*$/.test(line)) {
+        inMath = false;
+        flush();
+      }
+      continue;
+    }
+
+    const openFence = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (openFence) {
+      flush();
+      fenceChar = openFence[1][0];
+      fenceLen = openFence[1].length;
+      current.push(line);
+      continue;
+    }
+
+    if (/^\s{0,3}\$\$/.test(line)) {
+      flush();
+      current.push(line);
+      const trimmed = line.trim();
+      if (trimmed.length > 2 && trimmed.endsWith("$$")) {
+        flush();
+      } else {
+        inMath = true;
+      }
+      continue;
+    }
+
+    if (/^#{1,6}\s/.test(line)) {
       flush();
       blocks.push(line);
       continue;
     }
-    if (!fence && line.trim() === "") {
+
+    if (line.trim() === "") {
       if (!current.length) continue;
       if (!/^\s*([-*+]|\d+[.)])\s/.test(current[0])) {
         flush();

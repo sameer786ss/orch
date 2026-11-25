@@ -1,8 +1,9 @@
 name: Release
 
-# Builds apps/mobile and publishes the finished APK as Orch.apk on the release app-vX.Y.Z.
-# The app's updater reads these releases, so the asset name must stay Orch.apk.
-# Mobile releases are never flagged as GitHub's "latest" (that flag belongs to the desktop releases).
+# Builds apps/mobile and publishes the finished APK as Orch.apk on the release app-vX.Y.Z,
+# plus updates a static app-latest.json manifest on the rolling app-latest release so the
+# mobile updater never hits GitHub REST API rate limits.
+# Mobile releases are never flagged as GitHub's "latest" (that flag belongs to desktop releases).
 # Release by pushing a version tag:  git tag app-v1.0.0 && git push origin app-v1.0.0
 on:
   push:
@@ -56,6 +57,17 @@ jobs:
           gradle :app:assembleRelease
           cp "$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)" Orch.apk
           sha256sum Orch.apk > Orch.apk.sha256
+          size_bytes=$(stat -c%s Orch.apk)
+          cat > app-latest.json <<EOF
+          {
+            "versionCode": ${VERSION_CODE},
+            "versionName": "${VERSION_NAME}",
+            "tag": "${GITHUB_REF_NAME}",
+            "apkUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Orch.apk",
+            "checksumUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Orch.apk.sha256",
+            "sizeBytes": ${size_bytes}
+          }
+          EOF
 
       - name: Publish Orch.apk
         env:
@@ -63,10 +75,22 @@ jobs:
         run: |
           tag="$GITHUB_REF_NAME"
           if gh release view "$tag" > /dev/null 2>&1; then
-            gh release delete "$tag" --yes
+            gh release upload "$tag" Orch.apk Orch.apk.sha256 app-latest.json --clobber
+          else
+            gh release create "$tag" Orch.apk Orch.apk.sha256 app-latest.json \
+              --verify-tag \
+              --latest=false \
+              --title "Orch Mobile ${tag#app-v}" \
+              --notes ""
           fi
-          gh release create "$tag" Orch.apk Orch.apk.sha256 \
-            --verify-tag \
-            --latest=false \
-            --title "Orch Mobile" \
-            --notes ""
+
+          # Atomically update the rolling app-latest pointer for rate-limit-free update checks.
+          if gh release view app-latest > /dev/null 2>&1; then
+            gh release upload app-latest app-latest.json --clobber
+          else
+            gh release create app-latest app-latest.json \
+              --target "$GITHUB_SHA" \
+              --latest=false \
+              --title "Orch Mobile Latest Manifest" \
+              --notes "Rolling updater manifest pointing to the latest mobile release."
+          fi

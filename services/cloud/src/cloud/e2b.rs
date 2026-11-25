@@ -30,6 +30,7 @@ use crate::shared::util::now_ms;
 
 const E2B_SERVICE: &str = "E2B sandbox";
 const ENVD_USER: &str = "user";
+const MAX_CONNECT_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SandboxConn {
@@ -146,6 +147,11 @@ impl ConnectFrameDecoder {
         }
         let flags = self.buf[0];
         let len = u32::from_be_bytes([self.buf[1], self.buf[2], self.buf[3], self.buf[4]]) as usize;
+        if len > MAX_CONNECT_FRAME_BYTES {
+            return Err(format!(
+                "connect frame size {len} exceeds maximum {MAX_CONNECT_FRAME_BYTES} bytes"
+            ));
+        }
         if self.buf.len() < 5 + len {
             return Ok(None);
         }
@@ -328,6 +334,8 @@ impl CloudCommandManager {
 #[derive(Default)]
 struct ManagedSandbox {
     conn: Option<SandboxConn>,
+    user_id: String,
+    github_account_id: String,
     repo_ready: bool,
     git_auth_token: String,
     active_leases: usize,
@@ -337,6 +345,7 @@ struct ManagedSandbox {
 struct LeaseInner {
     manager: SandboxManager,
     doc_id: String,
+    user_id: String,
     _permit: OwnedSemaphorePermit,
     _global_permit: OwnedSemaphorePermit,
 }
@@ -345,9 +354,10 @@ impl Drop for LeaseInner {
     fn drop(&mut self) {
         let manager = self.manager.clone();
         let doc_id = self.doc_id.clone();
+        let user_id = self.user_id.clone();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                manager.release_lease(&doc_id).await;
+                manager.release_lease(&doc_id, &user_id).await;
             });
         }
     }
@@ -450,14 +460,14 @@ impl SandboxManager {
             .with_code("GITHUB_RECONNECT_REQUIRED")
         })?;
 
-        let global_permit = self
-            .global_leases
-            .clone()
+        let permit = self
+            .user_semaphore(user_id)
             .acquire_owned()
             .await
             .map_err(|_| ApiError::unavailable("Sandbox capacity is unavailable"))?;
-        let permit = self
-            .user_semaphore(user_id)
+        let global_permit = self
+            .global_leases
+            .clone()
             .acquire_owned()
             .await
             .map_err(|_| ApiError::unavailable("Sandbox capacity is unavailable"))?;
@@ -521,6 +531,8 @@ impl SandboxManager {
         }
 
         guard.conn = Some(conn.clone());
+        guard.user_id = user_id.to_string();
+        guard.github_account_id = account.github_id.clone();
         guard.active_leases += 1;
 
         Ok(SandboxLease {
@@ -529,10 +541,38 @@ impl SandboxManager {
             _inner: Arc::new(LeaseInner {
                 manager: self.clone(),
                 doc_id,
+                user_id: user_id.to_string(),
                 _permit: permit,
                 _global_permit: global_permit,
             }),
         })
+    }
+
+    async fn clear_git_token(&self, conn: &SandboxConn) {
+        let _ = self
+            .run_oneshot(
+                conn,
+                "/bin/bash",
+                &["-c", "rm -f /home/user/.orch-git-token"],
+                None,
+                None,
+                5,
+            )
+            .await;
+    }
+
+    pub async fn invalidate_github_account(&self, user_id: &str, github_account_id: &str) {
+        let slots: Vec<Arc<Mutex<ManagedSandbox>>> =
+            self.slots.iter().map(|e| e.value().clone()).collect();
+        for slot in slots {
+            let mut guard = slot.lock().await;
+            if guard.user_id == user_id && guard.github_account_id == github_account_id {
+                guard.git_auth_token.clear();
+                if let Some(conn) = guard.conn.clone() {
+                    self.clear_git_token(&conn).await;
+                }
+            }
+        }
     }
 
     pub async fn destroy_workspace(&self, doc_id: &str, stored_sandbox_id: &str) -> ApiResult<()> {
@@ -554,7 +594,12 @@ impl SandboxManager {
         Ok(())
     }
 
-    async fn release_lease(&self, doc_id: &str) {
+    async fn release_lease(&self, doc_id: &str, user_id: &str) {
+        self.user_leases.remove_if(user_id, |_, sem| {
+            Arc::strong_count(sem) == 1
+                && sem.available_permits() == config::MAX_SANDBOX_LEASES_PER_USER
+        });
+
         let Some(slot) = self.slots.get(doc_id).map(|e| e.value().clone()) else {
             return;
         };
@@ -566,7 +611,7 @@ impl SandboxManager {
         if let Some(prev) = guard.idle_pause_task.take() {
             prev.abort();
         }
-        let Some(sandbox_id) = guard.conn.as_ref().map(|c| c.sandbox_id.clone()) else {
+        let Some(conn) = guard.conn.clone() else {
             return;
         };
         let manager = self.clone();
@@ -580,8 +625,9 @@ impl SandboxManager {
             {
                 let mut guard = slot.lock().await;
                 if guard.active_leases == 0 {
-                    if let Err(err) = manager.pause_sandbox(&sandbox_id).await {
-                        tracing::warn!(sandbox_id = %sandbox_id, error = %err.message(), "failed to pause idle E2B sandbox");
+                    manager.clear_git_token(&conn).await;
+                    if let Err(err) = manager.pause_sandbox(&conn.sandbox_id).await {
+                        tracing::warn!(sandbox_id = %conn.sandbox_id, error = %err.message(), "failed to pause idle E2B sandbox");
                     }
                     guard.conn = None;
                     guard.repo_ready = false;
@@ -599,20 +645,32 @@ impl SandboxManager {
     }
 
     pub async fn pause_all_active(&self) {
-        let keys: Vec<String> = self.slots.iter().map(|e| e.key().clone()).collect();
-        for key in keys {
-            if let Some(slot) = self.slots.get(&key).map(|e| e.value().clone()) {
-                let mut guard = slot.lock().await;
-                if let Some(handle) = guard.idle_pause_task.take() {
-                    handle.abort();
-                }
-                if let Some(conn) = guard.conn.take() {
-                    let _ = self.pause_sandbox(&conn.sandbox_id).await;
-                    guard.repo_ready = false;
-                    guard.git_auth_token.clear();
-                }
+        let slots: Vec<Arc<Mutex<ManagedSandbox>>> =
+            self.slots.iter().map(|e| e.value().clone()).collect();
+        let mut conns = Vec::new();
+        for slot in slots {
+            let mut guard = slot.lock().await;
+            if let Some(handle) = guard.idle_pause_task.take() {
+                handle.abort();
+            }
+            if let Some(conn) = guard.conn.take() {
+                guard.repo_ready = false;
+                guard.git_auth_token.clear();
+                conns.push(conn);
             }
         }
+        let mut tasks = tokio::task::JoinSet::new();
+        for conn in conns {
+            let manager = self.clone();
+            tasks.spawn(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(15), async {
+                    manager.clear_git_token(&conn).await;
+                    let _ = manager.pause_sandbox(&conn.sandbox_id).await;
+                })
+                .await;
+            });
+        }
+        while tasks.join_next().await.is_some() {}
     }
 
     async fn configure_git_auth(
@@ -678,7 +736,7 @@ impl SandboxManager {
         let mut envs = HashMap::new();
         envs.insert("REPO_DIR".to_string(), repo_dir.to_string());
         let script = r#"cd "$REPO_DIR" 2>/dev/null || exit 0; echo "Branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"; ls -1A --group-directories-first | head -n 40"#;
-        let mut environment = match self
+        match self
             .run_oneshot(conn, "/bin/bash", &["-c", script], Some(repo_dir), Some(envs), 10)
             .await
         {
@@ -691,17 +749,7 @@ impl SandboxManager {
                 "Sandbox Environment (Linux / E2B)\nUploads directory: {}",
                 config::UPLOAD_DIR
             ),
-        };
-        let rules_path = format!("{repo_dir}/AGENTS.md");
-        if let Ok((bytes, truncated)) = self.read_bytes_prefix(conn, &rules_path, 24_000).await
-            && !truncated
-            && let Ok(rules) = String::from_utf8(bytes)
-            && !rules.trim().is_empty()
-        {
-            environment.push_str("\n\nProject instructions from AGENTS.md:\n");
-            environment.push_str(orchharness::util::truncate_chars(rules.trim(), 24_000));
         }
-        environment
     }
 
     async fn create_sandbox(&self, user_id: &str, workspace_uri: &str) -> ApiResult<SandboxConn> {
@@ -1367,7 +1415,7 @@ impl WorkspaceOps for CloudWorkspaceOps {
             if entry.is_dir && hconfig::SKIP_DIRS.contains(&entry.name.as_str()) {
                 continue;
             }
-            if lines.len() >= 200 {
+            if lines.len() >= hconfig::MAX_DIR_ENTRIES {
                 lines.push("... (truncated, too many entries)".to_string());
                 break;
             }
@@ -1399,26 +1447,28 @@ impl WorkspaceOps for CloudWorkspaceOps {
         };
 
         let mut args = vec![
-            "grep".to_string(),
-            "-n".to_string(),
-            "-I".to_string(),
-            "-i".to_string(),
-            "--untracked".to_string(),
-            "-e".to_string(),
-            query.to_string(),
-            "--".to_string(),
-            search_target.to_string(),
+            "--no-heading".to_string(),
+            "--with-filename".to_string(),
+            "--line-number".to_string(),
+            "--ignore-case".to_string(),
+            "--hidden".to_string(),
+            "--color=never".to_string(),
         ];
         for skipped in hconfig::SKIP_DIRS {
-            args.push(format!(":(exclude){skipped}"));
+            args.push("--glob".to_string());
+            args.push(format!("!{skipped}/**"));
         }
+        args.push("--".to_string());
+        args.push(query.to_string());
+        args.push(search_target.to_string());
+
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let (code, stdout, stderr) = self
             .lease
             .manager
             .run_oneshot(
                 &self.lease.conn,
-                "git",
+                "rg",
                 &arg_refs,
                 Some(&self.repo_dir),
                 None,
@@ -1441,8 +1491,10 @@ impl WorkspaceOps for CloudWorkspaceOps {
                 continue;
             };
             let relative = path
+                .strip_prefix("./")
+                .unwrap_or(path)
                 .strip_prefix(&format!("{}/", self.repo_dir))
-                .unwrap_or(path);
+                .unwrap_or_else(|| path.strip_prefix("./").unwrap_or(path));
             let trimmed = text.trim();
             let shown = orchharness::util::truncate_chars(trimmed, hconfig::MAX_SEARCH_LINE_CHARS);
             let suffix = if shown.len() < trimmed.len() { " …" } else { "" };

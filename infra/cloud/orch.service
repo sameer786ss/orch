@@ -14,7 +14,7 @@ RestartSec=2
 # Allows the graceful-shutdown hook to flush active runs.
 TimeoutStopSec=30
 LimitNOFILE=65536
-MemoryMax=700M
+MemoryMax=1536M
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

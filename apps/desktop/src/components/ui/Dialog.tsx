@@ -102,7 +102,7 @@ export function ConfirmDialog({
       title={title}
       size="sm"
       showClose={!pending}
-      preventDismiss
+      preventDismiss={pending}
     >
       <div className="dialog-body">
         <p className="dialog-copy">{description}</p>

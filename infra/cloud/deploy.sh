@@ -16,13 +16,12 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/src"
-tar --exclude=target --exclude=.git --exclude=.env.yaml -C "$ROOT" -cf - Cargo.toml Cargo.lock crates/harness services/cloud | tar -xf - -C "$WORK/src"
-ruby -e '
-  src = File.read(ARGV[0])
-  out = src.sub(/\n[ \t]*"apps\/desktop\/src-tauri",?\n/, "\n")
-  abort "failed to exclude desktop workspace member" if out == src
-  File.write(ARGV[0], out)
-' "$WORK/src/Cargo.toml"
+tar --exclude=target --exclude=.git --exclude=.env.yaml -C "$ROOT" -cf - \
+  Cargo.toml Cargo.lock .cargo crates/harness services/cloud | tar -xf - -C "$WORK/src"
+
+# Strip the desktop workspace member from the staged workspace Cargo.toml cleanly.
+grep -v '"apps/desktop/src-tauri"' "$WORK/src/Cargo.toml" > "$WORK/src/Cargo.toml.tmp"
+mv "$WORK/src/Cargo.toml.tmp" "$WORK/src/Cargo.toml"
 cp "$INFRA/.gcloudignore" "$WORK/src/.gcloudignore"
 
 echo "==> Building on Cloud Build"
@@ -58,7 +57,7 @@ if [ ${#FILES[@]} -gt 0 ]; then
   gcloud compute scp "${FILES[@]}" "$VM:/tmp/" --zone "$ZONE" --project "$PROJECT"
 fi
 
-echo "==> Downloading binary on the VM, installing and restarting"
+echo "==> Downloading binary on the VM, installing and verifying /healthz"
 OBJECT="orch-cloud-harness%2F${BUILD_ID}%2Forch-cloud-harness"
 gcloud compute ssh "$VM" --zone "$ZONE" --project "$PROJECT" --command "
 set -euo pipefail
@@ -72,7 +71,24 @@ sudo mv /opt/orch/orch-cloud-harness.new /opt/orch/orch-cloud-harness
 if [ -f /tmp/orch.env ]; then sudo install -o root -g orch -m 640 /tmp/orch.env /etc/orch.env; fi
 rm -f /tmp/orch-cloud-harness /tmp/orch.env
 sudo systemctl restart orch
-sleep 3
-systemctl is-active --quiet orch || { sudo journalctl -u orch -n 30 --no-pager; echo 'deploy failed; previous binary kept at /opt/orch/orch-cloud-harness.prev'; exit 1; }
-echo 'orch is active'
+
+HEALTHY=false
+for i in \$(seq 1 30); do
+  if curl -fsS --max-time 2 http://127.0.0.1:8080/healthz > /dev/null 2>&1; then
+    HEALTHY=true
+    break
+  fi
+  sleep 1
+done
+
+if [ \"\$HEALTHY\" != \"true\" ]; then
+  sudo journalctl -u orch -n 40 --no-pager
+  if [ -f /opt/orch/orch-cloud-harness.prev ]; then
+    echo 'health check failed; rolling back to previous binary'
+    sudo cp -p /opt/orch/orch-cloud-harness.prev /opt/orch/orch-cloud-harness
+    sudo systemctl restart orch
+  fi
+  exit 1
+fi
+echo 'orch is active and healthy'
 "

@@ -3,17 +3,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy)]
 pub struct ModelRates {
     pub input_per_mtok: f64,
-    pub cached_input_per_mtok: f64,
     pub output_per_mtok: f64,
 }
 
 impl ModelRates {
-    pub fn cost_usd(self, input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> f64 {
-        let cached = cached_input_tokens.min(input_tokens);
-        let uncached = input_tokens.saturating_sub(cached);
-        (uncached as f64 * self.input_per_mtok
-            + cached as f64 * self.cached_input_per_mtok
-            + output_tokens as f64 * self.output_per_mtok)
+    /// Bills all input tokens (cached and uncached alike) at `input_per_mtok`.
+    pub fn cost_usd(self, input_tokens: u64, output_tokens: u64) -> f64 {
+        (input_tokens as f64 * self.input_per_mtok + output_tokens as f64 * self.output_per_mtok)
             / 1_000_000.0
     }
 }
@@ -88,7 +84,6 @@ pub static VERTEX_MODELS: [StaticModelInfo; 1] = [StaticModelInfo {
     thinking_efforts: THINKING_EFFORTS,
     rates: ModelRates {
         input_per_mtok: 5.0,
-        cached_input_per_mtok: 0.5,
         output_per_mtok: 15.0,
     },
 }];

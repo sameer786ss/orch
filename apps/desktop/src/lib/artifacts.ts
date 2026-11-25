@@ -15,9 +15,9 @@ export type ArtifactKind = "file" | "browser" | "terminal" | DocumentArtifactKin
 function resolveArtifactKind(path: string): ArtifactKind {
   const ext = getExt(path);
   if (ext === "pdf") return "pdf";
-  if (ext === "docx" || ext === "doc") return "docx";
-  if (ext === "xlsx" || ext === "xls" || ext === "ods" || ext === "csv") return "xlsx";
-  if (ext === "pptx" || ext === "ppt") return "pptx";
+  if (ext === "docx") return "docx";
+  if (ext === "xlsx" || ext === "csv") return "xlsx";
+  if (ext === "pptx") return "pptx";
   return "file";
 }
 

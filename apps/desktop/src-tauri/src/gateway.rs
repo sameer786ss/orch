@@ -114,9 +114,7 @@ impl ModelCatalog {
     }
 
     pub fn resolve(&self, key: &str) -> Option<&ModelInfo> {
-        self.entries
-            .get(key)
-            .or_else(|| self.entries.values().find(|v| v.id == key))
+        self.entries.get(key)
     }
 
     pub fn list(&self) -> Vec<(String, ModelInfo)> {
@@ -461,9 +459,8 @@ impl Gateway {
                 ("sessionId", session_id.to_string()),
                 ("lastEventId", last_event_id.to_string()),
             ],
-        )
-        .map(|u| u.to_string())
-        .unwrap_or(base);
+        )?
+        .to_string();
         let resp = self
             .streaming_http
             .get(&url)

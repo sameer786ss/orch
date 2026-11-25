@@ -45,6 +45,8 @@ const SCHEMA: &str = "
  DROP TABLE IF EXISTS work_runs;
 ";
 
+const SCHEMA_VERSION: i64 = 2;
+
 const POOL_SIZE: u32 = 6;
 
 #[derive(Clone)]
@@ -72,25 +74,35 @@ impl SqliteMemory {
             .await
             .map_err(sql_err)?;
 
-        pool.execute(SCHEMA).await.map_err(sql_err)?;
-        let columns = sqlx::query("PRAGMA table_info(sessions)")
-            .fetch_all(&pool)
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool)
             .await
-            .map_err(sql_err)?
-            .into_iter()
-            .map(|row| row.get::<String, _>("name"))
-            .collect::<std::collections::HashSet<_>>();
-        for (column, ddl) in [
-            ("last_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
-            ("last_output_tokens", "INTEGER NOT NULL DEFAULT 0"),
-            ("last_cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
-            ("last_reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"),
-        ] {
-            if !columns.contains(column) {
-                pool.execute(format!("ALTER TABLE sessions ADD COLUMN {column} {ddl}").as_str())
-                    .await
-                    .map_err(sql_err)?;
+            .map_err(sql_err)?;
+
+        if version < SCHEMA_VERSION {
+            pool.execute(SCHEMA).await.map_err(sql_err)?;
+            let columns = sqlx::query("PRAGMA table_info(sessions)")
+                .fetch_all(&pool)
+                .await
+                .map_err(sql_err)?
+                .into_iter()
+                .map(|row| row.get::<String, _>("name"))
+                .collect::<std::collections::HashSet<_>>();
+            for (column, ddl) in [
+                ("last_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                ("last_output_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                ("last_cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                ("last_reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"),
+            ] {
+                if !columns.contains(column) {
+                    pool.execute(format!("ALTER TABLE sessions ADD COLUMN {column} {ddl}").as_str())
+                        .await
+                        .map_err(sql_err)?;
+                }
             }
+            pool.execute(format!("PRAGMA user_version = {SCHEMA_VERSION}").as_str())
+                .await
+                .map_err(sql_err)?;
         }
 
         Ok(Self { pool })

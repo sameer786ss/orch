@@ -27,8 +27,16 @@ use crate::shared::error::ApiError;
 use crate::shared::{auth, budget};
 use crate::state::ServerState;
 
+async fn healthz() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({ "ok": true }))
+}
+
 fn api_routes(state: &ServerState) -> Router<ServerState> {
-    let public = local::public_routes().merge(cloud::public_routes());
+    let public = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(healthz))
+        .merge(local::public_routes())
+        .merge(cloud::public_routes());
     let protected = cloud::protected_routes()
         .merge(local::protected_routes())
         .route("/budget", get(budget::handle))

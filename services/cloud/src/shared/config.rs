@@ -144,6 +144,7 @@ pub const UTILITY_MODEL: &str = "gemini-3.5-flash-lite";
 pub const GROQ_TRANSCRIBE_MODEL: &str = "whisper-large-v3";
 pub const VERTEX_USER_AGENT: &str = "antigravity/2.28.2 darwin/arm64";
 
+pub const DEFAULT_BUDGET_LIMIT_USD: f64 = 20.0;
 pub const BUDGET_CACHE_TTL_SECS: u64 = 30;
 pub const BUDGET_WRITE_ATTEMPTS: u32 = 3;
 
@@ -156,7 +157,7 @@ pub const UPSTREAM_OPEN_TIMEOUT_SECS: u64 = 60;
 pub const FIRESTORE_TIMEOUT_SECS: u64 = 15;
 pub const FIRESTORE_RETRY_ATTEMPTS: u32 = 2;
 pub const FIRESTORE_BATCH_LIMIT: usize = 450;
-pub const SHUTDOWN_GRACE_SECS: u64 = 8;
+pub const SHUTDOWN_GRACE_SECS: u64 = 25;
 
 pub const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 pub const LARGE_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;

@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
 
     build: {
       target: "esnext",
-      sourcemap: "hidden",
+      sourcemap: false,
       minify: "esbuild",
       cssMinify: true,
       rollupOptions: {
@@ -60,7 +60,7 @@ export default defineConfig(({ mode }) => {
             if (pkgName === "pptxviewjs") {
               return "vendor-pptx";
             }
-            if (pkgName === "xlsx") {
+            if (pkgName === "exceljs") {
               return "vendor-xlsx";
             }
             if (pkgName === "react-markdown" || pkgName === "remark-gfm") {

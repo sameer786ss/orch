@@ -154,19 +154,38 @@ impl ChatEvent {
         }
     }
 
+    pub fn event_name(&self) -> &'static str {
+        match self {
+            Self::User { .. } => "user",
+            Self::WorkStart => "workStart",
+            Self::WorkStop { .. } => "workStop",
+            Self::ReasoningStart => "reasoningStart",
+            Self::ReasoningDelta { .. } => "reasoningDelta",
+            Self::ReasoningStop { .. } => "reasoningStop",
+            Self::TextDelta { .. } => "textDelta",
+            Self::TextStop { .. } => "textStop",
+            Self::ToolStart { .. } => "toolStart",
+            Self::ToolResult { .. } => "toolResult",
+            Self::ToolCall { .. } => "toolCall",
+            Self::FileWritten { .. } => "fileWritten",
+            Self::Usage(_) => "usage",
+            Self::Notice { .. } => "notice",
+            Self::Compacted { .. } => "compacted",
+            Self::Resync => "resync",
+            Self::Cancelled => "cancelled",
+            Self::Error { .. } => "error",
+            Self::Done => "done",
+        }
+    }
+
     pub fn to_sse_block(&self) -> String {
-        let value = serde_json::to_value(self).unwrap_or_else(|_| {
-            serde_json::json!({
-                "type": "error",
-                "message": "failed to serialize event"
-            })
-        });
-        let kind = value
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("error");
-        let data = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
-        format!("event: {kind}\ndata: {data}\n\n")
+        match serde_json::to_string(self) {
+            Ok(data) => format!("event: {}\ndata: {data}\n\n", self.event_name()),
+            Err(_) => {
+                "event: error\ndata: {\"type\":\"error\",\"message\":\"failed to serialize event\"}\n\n"
+                    .to_string()
+            }
+        }
     }
 
     pub fn is_done(&self) -> bool {

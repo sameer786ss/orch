@@ -1,19 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { LuArrowLeft, LuArrowRight, LuExternalLink, LuRotateCw, LuX } from "react-icons/lu";
+import { LuArrowLeft, LuArrowRight, LuExternalLink, LuRotateCw } from "react-icons/lu";
 import { Webview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import * as api from "../../lib/api";
 import { DEFAULT_BROWSER_URL } from "../../lib/artifacts";
-import { IS_MAC } from "../../lib/utils";
 import { IconButton } from "../ui/Button";
 import { useOverlayStore } from "../ui/overlay";
 
 const OFFSCREEN = -100000;
-const LOAD_TIMEOUT_MS = 3000;
-const MAC_SAFARI_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15";
 
 function normalizeUrl(input: string): string {
   const value = input.trim();
@@ -31,7 +27,6 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
   const [committed, setCommitted] = useState(startUrl);
   const [focused, setFocused] = useState(false);
   const [ready, setReady] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const hostRef = useRef<HTMLDivElement>(null);
@@ -44,7 +39,6 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
   const firstUrl = useRef(startUrl);
   const initialLoaded = useRef(false);
   const lastPropUrl = useRef(startUrl);
-  const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -60,7 +54,6 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
       y: OFFSCREEN,
       width: 1,
       height: 1,
-      userAgent: IS_MAC ? MAC_SAFARI_UA : undefined,
     });
     const close = () => void webview.close().catch(() => api.webviewClose(webviewLabel).catch(() => {}));
 
@@ -78,7 +71,6 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
     void webview.once("tauri://created", () => {
       if (disposed) return close();
       setReady(true);
-      setLoading(false);
       sync();
     });
     void webview.once("tauri://error", (event) => !disposed && setError(String(event.payload)));
@@ -107,7 +99,6 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
     return () => {
       disposed = true;
       if (raf) cancelAnimationFrame(raf);
-      if (loadTimer.current) clearTimeout(loadTimer.current);
       setReady(false);
       intersection.disconnect();
       resize.disconnect();
@@ -123,21 +114,11 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
     syncRef.current();
   }, [overlayOpen]);
 
-  const startLoading = useCallback(() => {
-    setLoading(true);
-    if (loadTimer.current) clearTimeout(loadTimer.current);
-    loadTimer.current = setTimeout(() => setLoading(false), LOAD_TIMEOUT_MS);
+  const navigate = useCallback((next: string) => {
+    setInput(next);
+    setCommitted(next);
+    setError(null);
   }, []);
-
-  const navigate = useCallback(
-    (next: string) => {
-      setInput(next);
-      setCommitted(next);
-      setError(null);
-      startLoading();
-    },
-    [startLoading]
-  );
 
   useEffect(() => {
     const next = normalizeUrl(initialUrl ?? DEFAULT_BROWSER_URL);
@@ -154,23 +135,15 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
     }
     api.webviewNavigate(label, committed).catch((e) => {
       setError(api.errorMessage(e));
-      setLoading(false);
     });
   }, [committed, ready, label]);
 
   const history = (action: api.HistoryAction) => {
     if (!ready) return;
-    startLoading();
+    setError(null);
     api.webviewHistory(label, action).catch((e) => {
       setError(api.errorMessage(e));
-      setLoading(false);
     });
-  };
-
-  const stop = () => {
-    if (loadTimer.current) clearTimeout(loadTimer.current);
-    setLoading(false);
-    if (ready && label) void api.webviewHistory(label, "stop").catch(() => {});
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -192,8 +165,8 @@ export function BrowserView({ initialUrl, active }: { initialUrl?: string; activ
         <IconButton label="Forward" size="sm" disabled={!ready} onClick={() => history("forward")}>
           <LuArrowRight />
         </IconButton>
-        <IconButton label={loading ? "Stop" : "Reload"} size="sm" disabled={!ready} onClick={() => (loading ? stop() : history("reload"))}>
-          {loading ? <LuX /> : <LuRotateCw />}
+        <IconButton label="Reload" size="sm" disabled={!ready} onClick={() => history("reload")}>
+          <LuRotateCw />
         </IconButton>
         <div className="address">
           {!focused && <img src="/chrome.svg" alt="" />}

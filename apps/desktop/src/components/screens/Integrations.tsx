@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { listen } from "@tauri-apps/api/event";
 import { LuX } from "react-icons/lu";
 import { disconnectConnector, errorMessage, getConnectorAuthUrl, type ConnectorDto } from "../../lib/api";
 import { useConnectorsStore } from "../../lib/connectors";
@@ -72,19 +71,8 @@ export function Integrations() {
   const [filter, setFilter] = useState("all");
 
   useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
     void refresh();
-    void listen<{ error: string | null }>("connector-changed", (event) => {
-      if (event.payload.error) setError(event.payload.error);
-      void refresh();
-      setPending(null);
-    }).then((stop) => (disposed ? stop() : (unlisten = stop)));
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [refresh, setError]);
+  }, [refresh]);
 
   useEffect(() => {
     if (pending?.kind !== "connect") return;
@@ -103,8 +91,10 @@ export function Integrations() {
   }, [pending, refresh]);
 
   useEffect(() => {
-    if (pending?.kind === "connect" && connectors.some((c) => c.id === pending.id && c.connected)) setPending(null);
-  }, [connectors, pending]);
+    if (pending?.kind === "connect" && (error || connectors.some((c) => c.id === pending.id && c.connected))) {
+      setPending(null);
+    }
+  }, [connectors, error, pending]);
 
   const connect = useCallback(
     async (id: string) => {

@@ -141,6 +141,7 @@ fn capture_loop(
     let (mut prod, mut cons) = rb.split();
     let samples_clone = samples.clone();
     let rec_collector = recording.clone();
+    let stop_signal_collector = stop_signal.clone();
     let collector_thread = std::thread::spawn(move || {
         let mut collector = Vec::with_capacity(65536);
         'collect: while rec_collector.load(Ordering::SeqCst) || !cons.is_empty() {
@@ -149,6 +150,8 @@ fn capture_loop(
                 had_samples = true;
                 if collector.len() >= max_samples {
                     rec_collector.store(false, Ordering::SeqCst);
+                    *stop_signal_collector.0.lock() = true;
+                    stop_signal_collector.1.notify_all();
                     break 'collect;
                 }
                 collector.push(sample);
@@ -307,9 +310,9 @@ async fn transcribe_when_stopped(
     let _ = channel.send(event);
 }
 
-fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
+fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> AppResult<Vec<i16>> {
     if from_rate == to_rate || samples.is_empty() {
-        return samples.to_vec();
+        return Ok(samples.to_vec());
     }
 
     let f32_samples: Vec<f32> = samples.iter().map(|&s| s as f32 / 32768.0).collect();
@@ -322,16 +325,14 @@ fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
         window: WindowFunction::Hann,
     };
 
-    let mut resampler = match SincFixedIn::<f32>::new(
+    let mut resampler = SincFixedIn::<f32>::new(
         to_rate as f64 / from_rate as f64,
         2.0,
         params,
         chunk_size,
         1,
-    ) {
-        Ok(r) => r,
-        Err(_) => return samples.to_vec(),
-    };
+    )
+    .map_err(|e| AppError::Other(format!("audio resampler init failed: {e}")))?;
 
     let estimated_out = (samples.len() as f64 * to_rate as f64 / from_rate as f64) as usize;
     let mut output: Vec<i16> = Vec::with_capacity(estimated_out);
@@ -348,16 +349,17 @@ fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
         };
         pos += needed;
 
-        if let Ok(resampled) = resampler.process(&[&chunk], None) {
-            if let Some(ch) = resampled.first() {
-                for &s in ch {
-                    output.push((s.clamp(-1.0, 1.0) * 32767.0).round() as i16);
-                }
+        let resampled = resampler
+            .process(&[&chunk], None)
+            .map_err(|e| AppError::Other(format!("audio resample failed: {e}")))?;
+        if let Some(ch) = resampled.first() {
+            for &s in ch {
+                output.push((s.clamp(-1.0, 1.0) * 32767.0).round() as i16);
             }
         }
     }
 
-    output
+    Ok(output)
 }
 
 async fn transcribe(gateway: &Gateway, samples: &[i16], sample_rate: u32) -> AppResult<String> {
@@ -365,7 +367,7 @@ async fn transcribe(gateway: &Gateway, samples: &[i16], sample_rate: u32) -> App
     let input = samples.to_vec();
     let (b64, format) = tokio::task::spawn_blocking(move || -> AppResult<(String, &'static str)> {
         let (samples, sample_rate) = if sample_rate > target {
-            (resample(&input, sample_rate, target), target)
+            (resample(&input, sample_rate, target)?, target)
         } else {
             (input, sample_rate)
         };

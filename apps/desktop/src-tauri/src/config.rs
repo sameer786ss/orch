@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 pub use orchharness::config::{
     compaction_trigger_tokens, is_cloud_workspace, CLOUD_MAX_ATTACHMENT_TOTAL_BYTES,
@@ -8,9 +8,11 @@ pub use orchharness::config::{
 pub const CLOUD_FILE_LIST_LIMIT: usize = 2_000;
 pub const CLOUD_STREAM_IDLE_TIMEOUT_SECS: u64 = 60;
 
+pub const LATEST_RELEASE_URL: &str =
+    "https://github.com/sameer786ss/orch/releases/latest/download/latest.json";
+
 pub fn gcp_functions_url() -> &'static str {
-    static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| {
+    static URL: LazyLock<String> = LazyLock::new(|| {
         std::env::var("GCP_FUNCTIONS_URL")
             .ok()
             .map(|s| s.trim().trim_end_matches('/').to_string())
@@ -20,17 +22,13 @@ pub fn gcp_functions_url() -> &'static str {
                     .map(|s| s.trim().trim_end_matches('/').to_string())
                     .filter(|s| !s.is_empty())
             })
-            .unwrap_or_else(|| {
-                let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-                format!("http://127.0.0.1:{port}")
-            })
-    })
-    .as_str()
+            .unwrap_or_default()
+    });
+    URL.as_str()
 }
 
 pub fn firebase_api_key() -> &'static str {
-    static KEY: OnceLock<String> = OnceLock::new();
-    KEY.get_or_init(|| {
+    static KEY: LazyLock<String> = LazyLock::new(|| {
         std::env::var("FIREBASE_API_KEY")
             .ok()
             .map(|s| s.trim().to_string())
@@ -41,13 +39,12 @@ pub fn firebase_api_key() -> &'static str {
                     .filter(|s| !s.is_empty())
             })
             .unwrap_or_default()
-    })
-    .as_str()
+    });
+    KEY.as_str()
 }
 
 pub fn sentry_dsn() -> &'static str {
-    static DSN: OnceLock<String> = OnceLock::new();
-    DSN.get_or_init(|| {
+    static DSN: LazyLock<String> = LazyLock::new(|| {
         std::env::var("SENTRY_DSN")
             .ok()
             .map(|s| s.trim().to_string())
@@ -58,8 +55,8 @@ pub fn sentry_dsn() -> &'static str {
                     .filter(|s| !s.is_empty())
                     .unwrap_or_default()
             })
-    })
-    .as_str()
+    });
+    DSN.as_str()
 }
 
 pub const AUTH_REDIRECT_URL: &str = "https://orch.live/auth-callback";
@@ -69,39 +66,33 @@ pub fn inference_base_url() -> String {
 }
 
 pub fn models_url() -> &'static str {
-    static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| format!("{}/models", gcp_functions_url()))
-        .as_str()
+    static URL: LazyLock<String> = LazyLock::new(|| format!("{}/models", gcp_functions_url()));
+    URL.as_str()
 }
 
 pub fn title_url() -> &'static str {
-    static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| format!("{}/title", gcp_functions_url()))
-        .as_str()
+    static URL: LazyLock<String> = LazyLock::new(|| format!("{}/title", gcp_functions_url()));
+    URL.as_str()
 }
 
 pub fn summarize_url() -> &'static str {
-    static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| format!("{}/summarize", gcp_functions_url()))
-        .as_str()
+    static URL: LazyLock<String> = LazyLock::new(|| format!("{}/summarize", gcp_functions_url()));
+    URL.as_str()
 }
 
 pub fn budget_url() -> &'static str {
-    static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| format!("{}/budget", gcp_functions_url()))
-        .as_str()
+    static URL: LazyLock<String> = LazyLock::new(|| format!("{}/budget", gcp_functions_url()));
+    URL.as_str()
 }
 
 pub fn transcribe_url() -> &'static str {
-    static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| format!("{}/transcribe", gcp_functions_url()))
-        .as_str()
+    static URL: LazyLock<String> = LazyLock::new(|| format!("{}/transcribe", gcp_functions_url()));
+    URL.as_str()
 }
 
 pub fn tavily_url() -> &'static str {
-    static URL: OnceLock<String> = OnceLock::new();
-    URL.get_or_init(|| format!("{}/tavily", gcp_functions_url()))
-        .as_str()
+    static URL: LazyLock<String> = LazyLock::new(|| format!("{}/tavily", gcp_functions_url()));
+    URL.as_str()
 }
 
 pub fn composio_url(path: &str) -> String {
@@ -116,7 +107,6 @@ pub fn cloud_url(path: &str) -> String {
     format!("{}/cloud{}", gcp_functions_url(), path)
 }
 
-pub const MODEL_CATALOG_REFRESH_INTERVAL_SECS: u64 = 300;
 pub const TOKEN_REFRESH_CHECK_INTERVAL_SECS: u64 = 60;
 pub const TOKEN_REFRESH_SKEW_SECS: i64 = 600;
 pub const SIGN_IN_WINDOW_SECS: u64 = 600;

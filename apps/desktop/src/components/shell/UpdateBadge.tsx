@@ -1,4 +1,4 @@
-import { LuRotateCw, LuTriangleAlert } from "react-icons/lu";
+import { LuDownload, LuRotateCw, LuTriangleAlert } from "react-icons/lu";
 import { useUpdaterStore } from "../../lib/updater";
 import { Button } from "../ui/Button";
 import { Tooltip } from "../ui/Tooltip";
@@ -30,6 +30,17 @@ export function UpdateBadge() {
         <Button size="sm" variant="subtle" onClick={() => void apply()}>
           <LuRotateCw />
           <span>Restart to update</span>
+        </Button>
+      </Tooltip>
+    );
+  }
+
+  if (status === "manualAvailable") {
+    return (
+      <Tooltip content={`v${version} is available. Download the latest release.`} side="bottom">
+        <Button size="sm" variant="subtle" onClick={() => void apply()}>
+          <LuDownload />
+          <span>Update v{version}</span>
         </Button>
       </Tooltip>
     );

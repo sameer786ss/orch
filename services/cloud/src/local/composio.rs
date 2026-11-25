@@ -25,7 +25,6 @@ const LIST_TIMEOUT_SECS: u64 = 20;
 const TOOLS_TIMEOUT_SECS: u64 = 30;
 const EXECUTE_TIMEOUT_SECS: u64 = 120;
 const PAGE_LIMIT: &str = "100";
-const MAX_SLUGS: usize = 100;
 
 #[derive(Deserialize)]
 struct Page<T> {
@@ -285,14 +284,14 @@ pub async fn catalog(State(state): State<ServerState>) -> ApiResult<Json<Vec<Con
     Ok(Json(catalog_entries(&state).await?))
 }
 
-pub async fn accounts(
-    State(state): State<ServerState>,
-    Extension(user): Extension<VerifiedUser>,
-) -> ApiResult<Json<Value>> {
-    let mut query = toolkit_query(&state, &user.id);
+async fn fetch_active_accounts(
+    state: &ServerState,
+    user_id: &str,
+) -> ApiResult<Vec<ConnectedAccount>> {
+    let mut query = toolkit_query(state, user_id);
     query.push(("statuses", "ACTIVE".to_string()));
     let page: Page<ConnectedAccount> = call(
-        &state,
+        state,
         Method::GET,
         "/connected_accounts",
         &query,
@@ -300,10 +299,20 @@ pub async fn accounts(
         LIST_TIMEOUT_SECS,
     )
     .await?;
-    let accounts: Vec<AccountOut> = page
+    Ok(page
         .items
         .into_iter()
         .filter(|account| !account.is_disabled)
+        .collect())
+}
+
+pub async fn accounts(
+    State(state): State<ServerState>,
+    Extension(user): Extension<VerifiedUser>,
+) -> ApiResult<Json<Value>> {
+    let accounts: Vec<AccountOut> = fetch_active_accounts(&state, &user.id)
+        .await?
+        .into_iter()
         .map(|account| AccountOut {
             id: account.id,
             toolkit: account.toolkit.slug,
@@ -316,6 +325,22 @@ pub async fn accounts(
 #[derive(Deserialize)]
 pub struct ConnectRequest {
     toolkit: String,
+    #[serde(default)]
+    platform: Option<String>,
+}
+
+fn callback_url_for_platform(base: &str, platform: Option<&str>) -> String {
+    let Some(plat) = platform.map(str::trim).filter(|p| p.eq_ignore_ascii_case("mobile")) else {
+        return base.to_string();
+    };
+    match reqwest::Url::parse(base) {
+        Ok(mut url) => {
+            url.query_pairs_mut()
+                .append_pair("platform", &plat.to_ascii_lowercase());
+            url.to_string()
+        }
+        Err(_) => base.to_string(),
+    }
 }
 
 pub async fn connect(
@@ -329,6 +354,7 @@ pub async fn connect(
         .auth_config_ids
         .get(&toolkit)
         .ok_or_else(|| ApiError::bad_request("Unknown connector").with_code("UNKNOWN_CONNECTOR"))?;
+    let callback_url = callback_url_for_platform(&composio.callback_url, request.platform.as_deref());
     let link: Link = call(
         &state,
         Method::POST,
@@ -337,7 +363,7 @@ pub async fn connect(
         Some(json!({
             "auth_config_id": auth_config_id,
             "user_id": user.id,
-            "callback_url": composio.callback_url,
+            "callback_url": callback_url,
         })),
         LIST_TIMEOUT_SECS,
     )
@@ -385,8 +411,6 @@ pub async fn disconnect(
 pub struct ToolsQuery {
     #[serde(default)]
     toolkit: Option<String>,
-    #[serde(default)]
-    slugs: Option<String>,
 }
 
 async fn fetch_toolkit_tools(state: &ServerState, toolkit: &str) -> ApiResult<Vec<Tool>> {
@@ -411,45 +435,19 @@ async fn fetch_toolkit_tools(state: &ServerState, toolkit: &str) -> ApiResult<Ve
     Ok(page.items)
 }
 
-async fn fetch_tools_by_slugs(state: &ServerState, slugs: &[&str]) -> ApiResult<Vec<Tool>> {
-    let toolkits = &state.config.composio.auth_config_ids;
-    if slugs.is_empty()
-        || slugs.len() > MAX_SLUGS
-        || !slugs.iter().all(|slug| is_supported_slug(toolkits, slug))
-    {
-        return Err(
-            ApiError::bad_request("slugs must list 1 to 100 supported tool slugs")
-                .with_code("BAD_SLUGS"),
-        );
-    }
-    let page: Page<Tool> = call(
-        state,
-        Method::GET,
-        "/tools",
-        &[
-            ("tool_slugs", slugs.join(",")),
-            ("toolkit_versions", "latest".to_string()),
-            ("limit", PAGE_LIMIT.to_string()),
-        ],
-        None,
-        TOOLS_TIMEOUT_SECS,
-    )
-    .await?;
-    Ok(page.items)
-}
-
 pub async fn tools(
     State(state): State<ServerState>,
     ApiQuery(query): ApiQuery<ToolsQuery>,
 ) -> ApiResult<Json<Value>> {
-    let items = if let Some(toolkit) = query.toolkit.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        fetch_toolkit_tools(&state, toolkit).await?
-    } else if let Some(raw_slugs) = query.slugs.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        let slugs: Vec<&str> = raw_slugs.split(',').filter(|slug| !slug.is_empty()).collect();
-        fetch_tools_by_slugs(&state, &slugs).await?
-    } else {
-        return Err(ApiError::bad_request("toolkit or slugs query parameter is required").with_code("BAD_QUERY"));
-    };
+    let toolkit = query
+        .toolkit
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            ApiError::bad_request("toolkit query parameter is required").with_code("BAD_QUERY")
+        })?;
+    let items = fetch_toolkit_tools(&state, toolkit).await?;
     Ok(Json(json!({ "tools": items })))
 }
 
@@ -542,22 +540,11 @@ impl ComposioTransport for InProcessComposioTransport {
     }
 
     async fn accounts(&self) -> Result<Vec<AccountWire>, ComposioError> {
-        let mut query = toolkit_query(&self.state, &self.user_id);
-        query.push(("statuses", "ACTIVE".to_string()));
-        let page: Page<ConnectedAccount> = call(
-            &self.state,
-            Method::GET,
-            "/connected_accounts",
-            &query,
-            None,
-            LIST_TIMEOUT_SECS,
-        )
-        .await
-        .map_err(map_api_err)?;
-        Ok(page
-            .items
+        let items = fetch_active_accounts(&self.state, &self.user_id)
+            .await
+            .map_err(map_api_err)?;
+        Ok(items
             .into_iter()
-            .filter(|account| !account.is_disabled)
             .map(|account| AccountWire {
                 id: account.id,
                 toolkit: account.toolkit.slug,
@@ -570,7 +557,7 @@ impl ComposioTransport for InProcessComposioTransport {
         Err(ComposioError::Rejected {
             status: 400,
             code: Some("LOCAL_ONLY".to_string()),
-            message: "Connector linking must be performed from the desktop client.".to_string(),
+            message: "Connector linking must be performed from the client.".to_string(),
         })
     }
 
@@ -578,19 +565,12 @@ impl ComposioTransport for InProcessComposioTransport {
         Err(ComposioError::Rejected {
             status: 400,
             code: Some("LOCAL_ONLY".to_string()),
-            message: "Connector unlinking must be performed from the desktop client.".to_string(),
+            message: "Connector unlinking must be performed from the client.".to_string(),
         })
     }
 
     async fn toolkit_tools(&self, toolkit: &str) -> Result<Vec<ToolWire>, ComposioError> {
         let items = fetch_toolkit_tools(&self.state, toolkit)
-            .await
-            .map_err(map_api_err)?;
-        Ok(items.into_iter().map(map_tool_wire).collect())
-    }
-
-    async fn tools_by_slugs(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError> {
-        let items = fetch_tools_by_slugs(&self.state, slugs)
             .await
             .map_err(map_api_err)?;
         Ok(items.into_iter().map(map_tool_wire).collect())

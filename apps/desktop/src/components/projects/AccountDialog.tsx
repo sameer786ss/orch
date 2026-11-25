@@ -75,6 +75,7 @@ export function AccountDialog() {
                   }}
                 />
               </div>
+              {budget.resetsOn && <span className="usage-reset">Resets {budget.resetsOn}</span>}
             </div>
           )}
 

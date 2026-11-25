@@ -44,7 +44,7 @@ struct FailureWire {
 #[derive(Clone)]
 pub struct GatewayComposioTransport {
     http: reqwest_middleware::ClientWithMiddleware,
-    http_without_retries: reqwest_middleware::ClientWithMiddleware,
+    http_without_retries: reqwest::Client,
     token: TokenHandle,
 }
 
@@ -52,10 +52,7 @@ impl GatewayComposioTransport {
     pub fn new(token: TokenHandle) -> Self {
         Self {
             http: orchharness::util::retry_http_client(),
-            http_without_retries: reqwest_middleware::ClientBuilder::new(
-                orchharness::util::http_client(),
-            )
-            .build(),
+            http_without_retries: orchharness::util::http_client(),
             token,
         }
     }
@@ -68,17 +65,9 @@ impl GatewayComposioTransport {
             .ok_or(ComposioError::NoToken)
     }
 
-    async fn send<T: for<'de> Deserialize<'de>>(
-        &self,
-        request: reqwest_middleware::RequestBuilder,
-        timeout: Duration,
+    async fn decode_response<T: for<'de> Deserialize<'de>>(
+        response: reqwest::Response,
     ) -> Result<T, ComposioError> {
-        let response = request
-            .bearer_auth(self.bearer()?.expose_secret().to_string())
-            .timeout(timeout)
-            .send()
-            .await
-            .map_err(|e| ComposioError::Transport(e.to_string()))?;
         let status = response.status();
         let body = response
             .text()
@@ -107,12 +96,40 @@ impl GatewayComposioTransport {
         serde_json::from_str(&body)
             .map_err(|e| ComposioError::Malformed(format!("{e}: {}", truncate_chars(&body, 200))))
     }
+
+    async fn send_retry<T: for<'de> Deserialize<'de>>(
+        &self,
+        request: reqwest_middleware::RequestBuilder,
+        timeout: Duration,
+    ) -> Result<T, ComposioError> {
+        let response = request
+            .bearer_auth(self.bearer()?.expose_secret().to_string())
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| ComposioError::Transport(e.to_string()))?;
+        Self::decode_response(response).await
+    }
+
+    async fn send_once<T: for<'de> Deserialize<'de>>(
+        &self,
+        request: reqwest::RequestBuilder,
+        timeout: Duration,
+    ) -> Result<T, ComposioError> {
+        let response = request
+            .bearer_auth(self.bearer()?.expose_secret().to_string())
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| ComposioError::Transport(e.to_string()))?;
+        Self::decode_response(response).await
+    }
 }
 
 #[async_trait]
 impl ComposioTransport for GatewayComposioTransport {
     async fn catalog(&self) -> Result<Vec<ConnectorCatalogEntry>, ComposioError> {
-        self.send(
+        self.send_retry(
             self.http.get(config::composio_url("/catalog")),
             ACCOUNTS_TIMEOUT,
         )
@@ -121,17 +138,17 @@ impl ComposioTransport for GatewayComposioTransport {
 
     async fn accounts(&self) -> Result<Vec<AccountWire>, ComposioError> {
         let wire: AccountsWire = self
-            .send(self.http.get(config::composio_url("/accounts")), ACCOUNTS_TIMEOUT)
+            .send_retry(self.http.get(config::composio_url("/accounts")), ACCOUNTS_TIMEOUT)
             .await?;
         Ok(wire.accounts)
     }
 
     async fn connect(&self, toolkit: &str) -> Result<String, ComposioError> {
         let wire: ConnectWire = self
-            .send(
+            .send_once(
                 self.http_without_retries
                     .post(config::composio_url("/connect"))
-                    .json(&json!({ "toolkit": toolkit })),
+                    .json(&json!({ "toolkit": toolkit, "platform": "desktop" })),
                 CONNECT_TIMEOUT,
             )
             .await?;
@@ -145,7 +162,7 @@ impl ComposioTransport for GatewayComposioTransport {
             .map_err(|_| ComposioError::Transport("invalid composio accounts url".to_string()))?
             .push(account_id);
         let _: Value = self
-            .send(self.http_without_retries.delete(url), ACCOUNTS_TIMEOUT)
+            .send_once(self.http_without_retries.delete(url), ACCOUNTS_TIMEOUT)
             .await?;
         Ok(())
     }
@@ -154,15 +171,7 @@ impl ComposioTransport for GatewayComposioTransport {
         let mut url = reqwest::Url::parse(&config::composio_url("/tools"))
             .map_err(|e| ComposioError::Transport(e.to_string()))?;
         url.query_pairs_mut().append_pair("toolkit", toolkit);
-        let wire: ToolsWire = self.send(self.http.get(url), TOOLS_TIMEOUT).await?;
-        Ok(wire.tools)
-    }
-
-    async fn tools_by_slugs(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError> {
-        let mut url = reqwest::Url::parse(&config::composio_url("/tools"))
-            .map_err(|e| ComposioError::Transport(e.to_string()))?;
-        url.query_pairs_mut().append_pair("slugs", &slugs.join(","));
-        let wire: ToolsWire = self.send(self.http.get(url), TOOLS_TIMEOUT).await?;
+        let wire: ToolsWire = self.send_retry(self.http.get(url), TOOLS_TIMEOUT).await?;
         Ok(wire.tools)
     }
 
@@ -172,7 +181,7 @@ impl ComposioTransport for GatewayComposioTransport {
         version: &str,
         arguments: Value,
     ) -> Result<ExecuteWire, ComposioError> {
-        self.send(
+        self.send_once(
             self.http_without_retries
                 .post(config::composio_url("/execute"))
                 .json(&json!({ "slug": slug, "version": version, "arguments": arguments })),

@@ -43,6 +43,8 @@ function mergeAdjacentAssistantMessages(messages: ChatMessage[]): ChatMessage[] 
     const previous = merged[merged.length - 1];
     if (previous?.role === "assistant" && message.role === "assistant") {
       previous.items.push(...message.items);
+      if (message.error) previous.error = message.error;
+      if (message.notice) previous.notice = message.notice;
       continue;
     }
     merged.push({ ...message, items: [...message.items] });
@@ -156,10 +158,8 @@ async function bindListeners() {
     listen("sessions-updated", () => {
       void useChatStore.getState().refreshSessions();
     }),
-    listen("models-updated", () => {
-      void useChatStore.getState().refreshModels();
-    }),
-    listen("connector-changed", () => {
+    listen<{ error?: string | null }>("connector-changed", (event) => {
+      if (event.payload?.error) useConnectorsStore.getState().setError(event.payload.error);
       void useConnectorsStore.getState().refresh();
     }),
     listen<{ error?: string | null }>("github-changed", (event) => {
@@ -386,7 +386,7 @@ export const useChatStore = create(
         s.messages.push({
           id: userMsgId,
           role: "user",
-          items: [{ type: "text", id: newId(), text }],
+          items: text ? [{ type: "text", id: newId(), text }] : [],
           attachments: attachments.map((a) => ({
             name: a.name,
             isImage: a.isImage,
@@ -418,21 +418,23 @@ export const useChatStore = create(
 
     resumeRun: async (id: string) => {
       if (get().streaming || get().currentSessionId !== id) return;
-      const assistantMsgId = newId();
+      let assistantMsgId = newId();
       set((s) => {
         s.error = null;
         s.streaming = true;
         s.streamingSessionId = id;
-        while (s.messages.length > 0 && s.messages[s.messages.length - 1].role !== "user") {
-          s.messages.pop();
+        const last = s.messages[s.messages.length - 1];
+        if (last?.role === "assistant" && last.streaming) {
+          assistantMsgId = last.id;
+        } else {
+          s.messages.push({
+            id: assistantMsgId,
+            role: "assistant",
+            items: [],
+            attachments: [],
+            streaming: true,
+          });
         }
-        s.messages.push({
-          id: assistantMsgId,
-          role: "assistant",
-          items: [],
-          attachments: [],
-          streaming: true,
-        });
       });
       await streamRun(id, null, assistantMsgId, (onEvent) => api.resumeChat(id, onEvent));
     },
@@ -685,6 +687,9 @@ async function streamRun(
             for (let i = m.items.length - 1; i >= 0; i--) {
               const item = m.items[i];
               if (item.type === "reasoning" && item.active) {
+                if (event.text && !item.text.trim()) {
+                  item.text = event.text;
+                }
                 if (!item.text.trim()) {
                   m.items.splice(i, 1);
                 } else {
@@ -702,6 +707,14 @@ async function streamRun(
           break;
         case "textStop":
           syncFlush();
+          if (event.text) {
+            patch((m) => {
+              const last = m.items[m.items.length - 1];
+              if (last?.type === "text" && last.text.trim()) return;
+              if (last?.type === "text") last.text = event.text!;
+              else m.items.push({ type: "text", id: newId(), text: event.text! });
+            });
+          }
           break;
         case "toolStart":
           syncFlush();

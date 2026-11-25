@@ -38,7 +38,6 @@ export function Composer({ home }: { home: boolean }) {
   const connectGithub = useGithubStore((s) => s.connect);
   const githubConnecting = useGithubStore((s) => s.connecting);
   const current = useWorkspaceStore((s) => s.current);
-  const cloud = current?.kind === "cloud";
 
   const cloudDisconnected = current?.kind === "cloud" && !current.project.accountConnected;
   const sendEnabled = Boolean(current) && !cloudDisconnected;
@@ -88,8 +87,11 @@ export function Composer({ home }: { home: boolean }) {
         if (s.isOpen && s.handleKeyDown(event)) return true;
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
-          if (d.recording) void d.stopDictation();
-          void sendRef.current();
+          if (d.recording) {
+            void d.stopDictation().then(() => sendRef.current());
+          } else {
+            void sendRef.current();
+          }
           return true;
         }
         return false;

@@ -5,6 +5,10 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+kotlin {
+  jvmToolchain(17)
+}
+
 android {
   namespace = "com.orch.app"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -45,8 +49,8 @@ android {
     }
   }
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
   }
   buildFeatures {
     compose = true
@@ -66,7 +70,7 @@ dependencies {
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.material3)
-  implementation(libs.androidx.compose.material.icons.extended)
+  implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -79,7 +83,7 @@ dependencies {
   implementation(libs.retrofit.converter.kotlinx.serialization)
   implementation(libs.coil.compose)
   implementation(libs.coil.svg)
-  implementation(libs.markdown.renderer)
+  implementation(libs.coil.network.okhttp)
   implementation(libs.markdown.renderer.m3)
   implementation(libs.firebase.auth)
   implementation(libs.androidx.credentials)

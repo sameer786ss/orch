@@ -4,7 +4,8 @@ name: Build & Release
 # The tag is the version: it is stamped into tauri.conf.json, Cargo.toml and package.json.
 # One release per version (code-vX.Y.Z). Desktop releases are flagged as GitHub's "latest", so
 # releases/latest/download/<file> always serves the newest desktop installer and latest.json.
-# The desktop updater and the website download links use that fixed URL.
+# Windows auto-updates directly via latest.json; macOS checks latest.json and redirects users
+# to the GitHub Releases page for manual DMG replacement.
 on:
   push:
     tags: ['code-v[0-9]+.[0-9]+.[0-9]+']
@@ -17,7 +18,6 @@ env:
   NODE_OPTIONS: "--max-old-space-size=8192"
   GCP_FUNCTIONS_URL: ${{ secrets.GCP_FUNCTIONS_URL }}
   FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
-  FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -29,7 +29,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/code-v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -40,7 +40,7 @@ jobs:
 
   build-mac:
     name: Build & Publish macOS (${{ matrix.target }})
-    if: ${{ !cancelled() }}
+    if: needs.create-release.result == 'success' || needs.create-release.result == 'skipped'
     runs-on: macos-latest
     needs: create-release
     defaults:
@@ -55,43 +55,36 @@ jobs:
           - target: x86_64-apple-darwin
             artifact: Orch-macOS-x64.dmg
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
 
       - name: Stamp version from tag
         if: startsWith(github.ref, 'refs/tags/code-v')
         shell: bash
-        run: |
-          export VERSION="${GITHUB_REF_NAME#code-v}"
-          node - <<'EOF'
-          const fs = require("fs");
-          const v = process.env.VERSION;
-          const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
-          conf.version = v;
-          fs.writeFileSync("src-tauri/tauri.conf.json", JSON.stringify(conf, null, 2) + "\n");
-          const cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
-          fs.writeFileSync("src-tauri/Cargo.toml", cargo.replace(/^version = ".*"$/m, `version = "${v}"`));
-          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-          pkg.version = v;
-          fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-          EOF
+        run: node ../../scripts/stamp-desktop-version.mjs "${GITHUB_REF_NAME#code-v}"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - uses: actions/setup-node@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          node-version: 22
+          workspaces: ". -> target"
 
       - run: npm ci
 
       - name: Build macOS (${{ matrix.target }})
         if: startsWith(github.ref, 'refs/tags/code-v') || github.event_name == 'workflow_dispatch'
-        run: npx tauri build --target ${{ matrix.target }}
+        run: npx tauri build --target ${{ matrix.target }} -- --profile dist
 
       - name: Prepare macOS Asset
         if: startsWith(github.ref, 'refs/tags/code-v')
-        run: cp ../../target/${{ matrix.target }}/release/bundle/dmg/*.dmg ${{ matrix.artifact }}
+        run: cp ../../target/${{ matrix.target }}/dist/bundle/dmg/*.dmg ${{ matrix.artifact }}
 
       - name: Publish macOS Asset
         if: startsWith(github.ref, 'refs/tags/code-v')
@@ -104,32 +97,25 @@ jobs:
 
   build-windows:
     name: Build & Publish Windows
-    if: ${{ !cancelled() }}
+    if: needs.create-release.result == 'success' || needs.create-release.result == 'skipped'
     runs-on: windows-latest
     needs: create-release
     defaults:
       run:
         working-directory: apps/desktop
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
 
       - name: Stamp version from tag
         if: startsWith(github.ref, 'refs/tags/code-v')
         shell: bash
-        run: |
-          export VERSION="${GITHUB_REF_NAME#code-v}"
-          node - <<'EOF'
-          const fs = require("fs");
-          const v = process.env.VERSION;
-          const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
-          conf.version = v;
-          fs.writeFileSync("src-tauri/tauri.conf.json", JSON.stringify(conf, null, 2) + "\n");
-          const cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
-          fs.writeFileSync("src-tauri/Cargo.toml", cargo.replace(/^version = ".*"$/m, `version = "${v}"`));
-          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-          pkg.version = v;
-          fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-          EOF
+        run: node ../../scripts/stamp-desktop-version.mjs "${GITHUB_REF_NAME#code-v}"
 
       - name: Disable Windows Defender
         shell: powershell
@@ -137,24 +123,24 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-node@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          node-version: 22
+          workspaces: ". -> target"
 
       - run: npm ci
 
       - name: Build Windows Setup Executable
         if: startsWith(github.ref, 'refs/tags/code-v') || github.event_name == 'workflow_dispatch'
-        run: npx tauri build
+        run: npx tauri build -- --profile dist
 
       - name: Prepare Windows Asset & Updater Manifest
         if: startsWith(github.ref, 'refs/tags/code-v')
         shell: powershell
         run: |
-          $setup = (Get-Item ../../target/release/bundle/nsis/*-setup.exe).FullName
+          $setup = (Get-Item ../../target/dist/bundle/nsis/*-setup.exe).FullName
           Copy-Item $setup -Destination Orch-Windows-Setup.exe
 
-          $sigPath = (Get-Item ../../target/release/bundle/nsis/*-setup.exe.sig).FullName
+          $sigPath = (Get-Item ../../target/dist/bundle/nsis/*-setup.exe.sig).FullName
           $signature = (Get-Content $sigPath -Raw).Trim()
 
           $tag = "${{ github.ref_name }}"

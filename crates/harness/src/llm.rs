@@ -1,6 +1,5 @@
 use std::collections::HashSet;
-use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -134,11 +133,17 @@ pub struct AgentInputs<'a> {
     pub skills: Arc<[crate::skills::Skill]>,
 }
 
-pub fn build_agent(inputs: AgentInputs<'_>) -> ChatAgent {
+pub async fn build_agent(inputs: AgentInputs<'_>) -> ChatAgent {
+    let workspace_rules = if inputs.workspace.is_some() {
+        load_workspace_rules(inputs.tools.ops.as_ref()).await
+    } else {
+        None
+    };
     let preamble = build_preamble(
         &inputs.skills,
         inputs.workspace,
         inputs.environment_note,
+        workspace_rules.as_deref(),
         &inputs.connectors,
     );
     let ctx = inputs.tools;
@@ -232,21 +237,33 @@ const ROLE: &str = r#"You are the user's autonomous software engineer inside an 
 - For a user question, give the direct answer first, then enough evidence to make the reasoning checkable. For implementation, summarize the result rather than dumping internal reasoning.
 - Be clear and economical. Use familiar words, short paragraphs, and lists only when they make the result easier to scan. Avoid generic praise, canned transitions, and claims of certainty unsupported by evidence."#;
 
-fn workspace_rules(workspace: &str) -> Option<String> {
-    let root = Path::new(workspace);
-    [root.join("AGENTS.md"), root.join(".orch/AGENTS.md")]
-        .into_iter()
-        .find_map(|path| {
-            let raw = std::fs::read_to_string(path).ok()?;
-            let rules = raw.trim();
-            (!rules.is_empty()).then(|| truncate_chars(rules, 24_000).to_string())
-        })
+const MAX_WORKSPACE_RULES_BYTES: u64 = 256 * 1024;
+const MAX_WORKSPACE_RULES_CHARS: usize = 24_000;
+
+pub async fn load_workspace_rules(ops: &dyn WorkspaceOps) -> Option<String> {
+    for candidate in ["AGENTS.md", ".orch/AGENTS.md"] {
+        let Ok(resolved) = ops.resolve_in_workspace(candidate) else {
+            continue;
+        };
+        let Ok(bytes) = ops.read_bytes(&resolved, Some(MAX_WORKSPACE_RULES_BYTES)).await else {
+            continue;
+        };
+        let Ok(raw) = String::from_utf8(bytes) else {
+            continue;
+        };
+        let rules = raw.trim();
+        if !rules.is_empty() {
+            return Some(truncate_chars(rules, MAX_WORKSPACE_RULES_CHARS).to_string());
+        }
+    }
+    None
 }
 
 pub fn build_preamble(
     skills: &[crate::skills::Skill],
     workspace: Option<&str>,
     environment_note: Option<&str>,
+    workspace_rules: Option<&str>,
     connectors: &[ConnectorCatalogEntry],
 ) -> String {
     let mut sections: Vec<Section> = Vec::new();
@@ -290,11 +307,9 @@ The skill content gives you a proven sequence of steps, tool calls, and checks â
         environment.push('\n');
         environment.push_str(note);
     }
-    if let Some(path) = workspace {
-        if let Some(rules) = workspace_rules(path) {
-            environment.push_str("\n\nProject instructions from AGENTS.md:\n");
-            environment.push_str(&rules);
-        }
+    if let Some(rules) = workspace_rules.map(str::trim).filter(|s| !s.is_empty()) {
+        environment.push_str("\n\nProject instructions from AGENTS.md:\n");
+        environment.push_str(rules);
     }
     sections.push(Section::new("environment", environment));
 
@@ -483,6 +498,7 @@ fn request_text(history: &[Arc<Message>]) -> String {
 pub struct ChatRun {
     pub shared: Arc<Mutex<RunSession>>,
     pub deps: Arc<RunDeps>,
+    user_persisted: std::sync::atomic::AtomicBool,
 }
 
 impl ChatRun {
@@ -518,7 +534,27 @@ impl ChatRun {
             prompt_mirrored: false,
             dirty: false,
         }));
-        Ok(Self { shared, deps })
+        Ok(Self {
+            shared,
+            deps,
+            user_persisted: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    pub async fn persist_user_message(&self, user_message: &Message) -> AppResult<()> {
+        if self
+            .user_persisted
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Ok(());
+        }
+        if let Some(record) = session::user_history_record(user_message) {
+            self.deps
+                .store
+                .append_history(&self.deps.session_id, &[record])
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn history(&self) -> Vec<Message> {
@@ -793,15 +829,11 @@ impl AgentHook for SessionHook {
 }
 
 pub async fn run_chat(agent: ChatAgent, run: &ChatRun, user_message: Message) -> RunResult {
-    let store = run.deps.store.clone();
-    let session_id = run.deps.session_id.clone();
     let cancel = run.deps.cancel.clone();
     let recorder = run.deps.recorder.clone();
 
-    if let Some(record) = session::user_history_record(&user_message) {
-        if let Err(error) = store.append_history(&session_id, &[record]).await {
-            tracing::error!(error = %error, "failed to persist user history");
-        }
+    if let Err(error) = run.persist_user_message(&user_message).await {
+        tracing::error!(error = %error, "failed to persist user history");
     }
 
     let history = run.history().await;
@@ -953,11 +985,11 @@ pub fn is_mention_context_part(text: &str) -> bool {
 }
 
 fn mention_regex() -> &'static regex::Regex {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| {
+    static RE: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"(?:^|[\s(])(?:@\[(?P<bracket>[^\]]+)\](?:(?P<brange>#L\d+(?:-\d+)?))?|@(?P<plain>[^\s@,;:!?#)]+)(?:(?P<prange>#L\d+(?:-\d+)?))?)")
             .expect("mention regex is a valid pattern")
-    })
+    });
+    &RE
 }
 
 pub async fn collect_mentioned_paths(
@@ -1100,8 +1132,16 @@ pub async fn build_user_message(
     let mut targets: Vec<AttachmentTarget> = Vec::new();
 
     for (idx, attachment) in attachments.iter().enumerate() {
-        if let Some(ref b64) = attachment.data_base64 {
-            match base64::engine::general_purpose::STANDARD.decode(b64) {
+        let inline_bytes = if let Some(ref raw) = attachment.raw_bytes {
+            Some(Ok(raw.clone()))
+        } else {
+            attachment
+                .data_base64
+                .as_deref()
+                .map(|b64| base64::engine::general_purpose::STANDARD.decode(b64))
+        };
+        if let Some(result) = inline_bytes {
+            match result {
                 Ok(bytes) => {
                     let ext = crate::util::lowercase_extension_str(&attachment.name);
                     let opt_path = (!attachment.path.trim().is_empty())
@@ -1125,7 +1165,7 @@ pub async fn build_user_message(
     let workspace_targets = join_all(
         attachments
             .iter()
-            .filter(|attachment| attachment.data_base64.is_none())
+            .filter(|attachment| attachment.raw_bytes.is_none() && attachment.data_base64.is_none())
             .map(|attachment| async move {
                 let name = attachment.name.clone();
                 let resolved = match ops.resolve_in_workspace(&attachment.path) {

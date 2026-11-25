@@ -518,9 +518,9 @@ export function NewProjectDialog() {
   useEffect(() => {
     if (open) {
       dismissWorkspaceError();
-      void refreshAccounts();
+      if (mode !== "local") void refreshAccounts();
     }
-  }, [open, dismissWorkspaceError, refreshAccounts]);
+  }, [open, mode, dismissWorkspaceError, refreshAccounts]);
 
   const title =
     mode === "mode"

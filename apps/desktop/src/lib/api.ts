@@ -79,6 +79,7 @@ export interface Budget {
   limitUsd: number;
   remaining: number;
   period: string;
+  resetsOn: string;
   allowed: boolean;
 }
 
@@ -517,6 +518,16 @@ export function disconnectConnector(connectorId: string): Promise<void> {
 }
 
 export type DocumentArtifactKind = "pdf" | "docx" | "xlsx" | "pptx";
+
+export interface LatestReleaseInfo {
+  version: string;
+  notes?: string | null;
+  pubDate?: string | null;
+}
+
+export function checkLatestRelease(): Promise<LatestReleaseInfo> {
+  return invoke("check_latest_release");
+}
 
 export function reportError(message: string): Promise<void> {
   return invoke("report_error", { message });

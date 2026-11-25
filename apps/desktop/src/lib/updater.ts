@@ -1,12 +1,39 @@
 import { create } from "zustand";
+import { getVersion } from "@tauri-apps/api/app";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import * as api from "./api";
+import { IS_MAC } from "./utils";
+
+const RELEASES_LATEST_URL = "https://github.com/sameer786ss/orch/releases/latest";
+
+function parseSemver(version: string): number[] {
+  return version
+    .trim()
+    .replace(/^v/i, "")
+    .split("-")[0]
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function isNewerVersion(candidate: string, current: string): boolean {
+  const a = parseSemver(candidate);
+  const b = parseSemver(current);
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av !== bv) return av > bv;
+  }
+  return false;
+}
 
 type UpdateStatus =
   | "idle"
   | "checking"
   | "none"
+  | "manualAvailable"
   | "downloading"
   | "readyToRestart"
   | "installing"
@@ -40,6 +67,21 @@ export const useUpdaterStore = create<UpdaterStore>((set, get) => ({
       return;
     }
     set({ status: "checking", error: null, percent: 0, pendingUpdate: null });
+
+    if (IS_MAC) {
+      try {
+        const [currentVersion, latest] = await Promise.all([getVersion(), api.checkLatestRelease()]);
+        const cleanVersion = latest.version.trim().replace(/^v/i, "");
+        if (cleanVersion && isNewerVersion(cleanVersion, currentVersion)) {
+          set({ status: "manualAvailable", version: cleanVersion });
+        } else {
+          set({ status: "none" });
+        }
+      } catch (e) {
+        set({ status: "failed", error: api.errorMessage(e) });
+      }
+      return;
+    }
 
     let update: Update | null = null;
     try {
@@ -84,6 +126,14 @@ export const useUpdaterStore = create<UpdaterStore>((set, get) => ({
 
   apply: async () => {
     const { status, pendingUpdate } = get();
+    if (status === "manualAvailable") {
+      try {
+        await openUrl(RELEASES_LATEST_URL);
+      } catch (e) {
+        set({ error: api.errorMessage(e) });
+      }
+      return;
+    }
     if (status !== "readyToRestart" || !pendingUpdate) return;
     set({ status: "installing", error: null });
     try {

@@ -100,7 +100,12 @@ function fromCloudDto(dto: CloudProjectDto): CloudWorkspaceMeta {
 
 function parseLocalList(raw: string | null): LocalWorkspaceMeta[] {
   if (!raw) return [];
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
   if (!Array.isArray(parsed)) return [];
   const out: LocalWorkspaceMeta[] = [];
   for (const item of parsed) {
@@ -393,6 +398,7 @@ export const useWorkspaceStore = create(
         const cloudDtos = await listCloudProjects();
         if (get().status !== "ready") return;
         const cloudList = cloudDtos.map(fromCloudDto);
+        let removedCurrent = false;
         set((s) => {
           const localList = s.all.filter((w): w is LocalWorkspaceMeta => w.kind === "computer");
           const merged = mergeAll(localList, cloudList);
@@ -404,9 +410,14 @@ export const useWorkspaceStore = create(
             } else {
               s.current = null;
               s.status = "needs_pick";
+              removedCurrent = true;
             }
           }
         });
+        if (removedCurrent) {
+          clearImageCache();
+          void setUserPref(PREF_LAST_WORKSPACE, "", true).catch(() => undefined);
+        }
       },
 
       dismissError: () => {

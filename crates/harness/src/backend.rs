@@ -245,7 +245,7 @@ impl CommandRegistry {
         Some(CommandTaskStatus {
             task_id: g.task_id.clone(),
             command: g.command.clone(),
-            status: g.status.clone(),
+            status: g.status,
             exit_code: g.exit_code,
             stdout: g.stdout.as_string(),
             stderr: g.stderr.as_string(),
@@ -428,7 +428,7 @@ pub fn display_relative_str(root: &str, path: &str) -> String {
 pub mod local_fs {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, OnceLock};
+    use std::sync::{Arc, LazyLock};
     use std::time::Duration;
 
     use async_trait::async_trait;
@@ -469,7 +469,7 @@ pub mod local_fs {
                     if entry.depth() == 0 {
                         return true;
                     }
-                    if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    if !entry.file_type().is_some_and(|t| t.is_dir()) {
                         return true;
                     }
                     let name = entry.file_name().to_string_lossy();
@@ -533,10 +533,9 @@ pub mod local_fs {
         pub use crate::util::display_relative;
 
         pub fn file_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
-            static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
-                OnceLock::new();
-            let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-            let mut guard = locks.lock();
+            static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+                LazyLock::new(|| Mutex::new(HashMap::new()));
+            let mut guard = LOCKS.lock();
             guard.retain(|_, lock| Arc::strong_count(lock) > 1);
             guard
                 .entry(path.to_path_buf())
@@ -555,16 +554,16 @@ pub mod local_fs {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt;
-                    if let Some(meta) = existing.as_ref() {
-                        if meta.nlink() > 1 {
-                            let mut file = std::fs::OpenOptions::new()
-                                .write(true)
-                                .truncate(true)
-                                .open(&target)?;
-                            file.write_all(&bytes)?;
-                            file.sync_all()?;
-                            return Ok(());
-                        }
+                    if let Some(meta) = existing.as_ref()
+                        && meta.nlink() > 1
+                    {
+                        let mut file = std::fs::OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .open(&target)?;
+                        file.write_all(&bytes)?;
+                        file.sync_all()?;
+                        return Ok(());
                     }
                 }
 
@@ -853,14 +852,17 @@ pub mod local_fs {
         async fn read_bytes(&self, abs_path: &str, max_bytes: Option<u64>) -> AppResult<Vec<u8>> {
             let path = fs_util::resolve_in_workspace(&self.require_root()?, abs_path)?;
             let meta = tokio::fs::metadata(&path).await?;
-            if let Some(limit) = max_bytes {
-                if meta.len() > limit {
-                    return Err(AppError::other(format!(
-                        "file too large ({} bytes, limit {} bytes): {abs_path}",
-                        meta.len(),
-                        limit
-                    )));
-                }
+            if !meta.is_file() {
+                return Err(AppError::other(format!("not a file: {abs_path}")));
+            }
+            if let Some(limit) = max_bytes
+                && meta.len() > limit
+            {
+                return Err(AppError::other(format!(
+                    "file too large ({} bytes, limit {} bytes): {abs_path}",
+                    meta.len(),
+                    limit
+                )));
             }
             Ok(tokio::fs::read(&path).await?)
         }

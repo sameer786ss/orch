@@ -110,45 +110,30 @@ pub async fn get_auth_user(state: State<'_, AppState>) -> Result<Option<UserDisp
                     return Ok(Some(display));
                 }
             }
-            Err(_) => {}
+            Err(_) => {
+                state.set_token(None);
+            }
         }
     }
 
-    let refresh_token = match auth::load_refresh_token_async().await {
-        Ok(Some(token)) => token,
-        Ok(None) => {
-            state.reset_session_memory();
-            return Ok(None);
-        }
-        Err(error) => {
-            return match cached_display(&state).await {
-                Some(display) => Ok(Some(display)),
-                None => Err(format!("Could not access the system keychain: {error}")),
+    match state.ensure_fresh_token().await {
+        Ok(()) => {
+            let Some(token) = state.access_token() else {
+                return Ok(None);
             };
-        }
-    };
-
-    match client.refresh_session(refresh_token.expose_secret()).await {
-        Ok(session) => {
-            if let Some(rt) = session.refresh_token.as_ref() {
-                if rt.expose_secret() != refresh_token.expose_secret() {
-                    auth::save_refresh_token_async(rt.expose_secret()).await.map_err(|e| e.to_string())?;
+            match client.get_user(token.expose_secret()).await {
+                Ok(profile) => {
+                    state.set_authenticated_user(&profile.id);
+                    auth::save_cached_user_async(state.data_dir.clone(), profile.clone()).await;
+                    Ok(Some(UserDisplay::from_profile(&profile)))
                 }
+                Err(error) if error.is_transient() => Ok(cached_display(&state).await),
+                Err(error) => Err(error.to_string()),
             }
-            state.set_secret_token(Some(session.access_token.clone()));
-            let profile = match session.user {
-                Some(u) => u,
-                None => match client.get_user(session.access_token.expose_secret()).await {
-                    Ok(profile) => profile,
-                    Err(error) if error.is_transient() => {
-                        return Ok(cached_display(&state).await);
-                    }
-                    Err(error) => return Err(error.to_string()),
-                },
-            };
-            state.set_authenticated_user(&profile.id);
-            auth::save_cached_user_async(state.data_dir.clone(), profile.clone()).await;
-            Ok(Some(UserDisplay::from_profile(&profile)))
+        }
+        Err(AppError::NoToken) => {
+            state.reset_session_memory();
+            Ok(None)
         }
         Err(error) if error.is_fatal_auth() => {
             state.sign_out().await;
@@ -453,7 +438,7 @@ pub async fn start_chat(
 
     let mut attachments = attachments;
     for att in &mut attachments {
-        if att.data_base64.is_none() {
+        if att.raw_bytes.is_none() && att.data_base64.is_none() {
             if let Ok(meta) = tokio::fs::metadata(&att.path).await {
                 if meta.is_file() {
                     if meta.len() > orchharness::config::MAX_ATTACHMENT_SOURCE_BYTES {
@@ -464,8 +449,7 @@ pub async fn start_chat(
                         ));
                     }
                     if let Ok(bytes) = tokio::fs::read(&att.path).await {
-                        att.data_base64 =
-                            Some(base64::engine::general_purpose::STANDARD.encode(&bytes));
+                        att.raw_bytes = Some(bytes);
                     }
                 }
             }
@@ -480,17 +464,15 @@ pub async fn start_chat(
         .ok_or_else(|| "authentication required".to_string())?;
     let workspace_string = current.key();
 
-    let (run_id, cancel) = state
+    let (run_guard, cancel) = state
         .start_run(&session_id, Some(current.as_ref().clone()), run_owner.clone())
         .map_err(|error| error.to_string())?;
+    let run_id = run_guard.run_id().to_string();
 
     let workspace = match current.as_ref() {
         Workspace::Local(path) => path.clone(),
-        Workspace::Cloud(cloud_ws) => {
-            state.ensure_fresh_token().await.map_err(|e| {
-                state.finish_run(&session_id, &run_id);
-                e.to_string()
-            })?;
+        Workspace::Cloud(_) => {
+            state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
 
             let event_sink: Arc<dyn EventSink> = Arc::new(TauriEventSink {
                 channel: on_event.clone(),
@@ -500,16 +482,22 @@ pub async fn start_chat(
             let mut cloud_attachments = Vec::with_capacity(attachments.len());
             let mut total_bytes = 0usize;
             for att in &attachments {
-                match &att.data_base64 {
+                let encoded = if let Some(raw) = &att.raw_bytes {
+                    total_bytes += raw.len();
+                    ensure_cloud_attachment_budget(total_bytes)?;
+                    Some(base64::engine::general_purpose::STANDARD.encode(raw))
+                } else if let Some(data_base64) = &att.data_base64 {
+                    total_bytes += data_base64.len() / 4 * 3;
+                    ensure_cloud_attachment_budget(total_bytes)?;
+                    Some(data_base64.clone())
+                } else {
+                    None
+                };
+                match encoded {
                     Some(data_base64) => {
-                        total_bytes += data_base64.len() / 4 * 3;
-                        if let Err(error) = ensure_cloud_attachment_budget(total_bytes) {
-                            state.finish_run(&session_id, &run_id);
-                            return Err(error);
-                        }
                         cloud_attachments.push(CloudAttachment {
                             name: att.name.clone(),
-                            data_base64: data_base64.clone(),
+                            data_base64,
                         });
                     }
                     None => {
@@ -537,7 +525,7 @@ pub async fn start_chat(
                 .cloud_stream_chat(&req, event_sink.clone(), cancel.clone())
                 .await;
 
-            state.finish_run(&session_id, &run_id);
+            drop(run_guard);
             let _ = app.emit("sessions-updated", ());
             if let Err(error) = stream_res {
                 let message = error.to_string();
@@ -561,19 +549,12 @@ pub async fn start_chat(
     } = match ready {
         Ok(ready) => ready,
         Err(error) => {
-            state.finish_run(&session_id, &run_id);
             sentry::capture_message(&format!("chat preflight failed: {error}"), sentry::Level::Error);
             return Err(error);
         }
     };
 
-    let parsed_effort = match parse_thinking_effort(&thinking_effort, &model_info) {
-        Ok(effort) => effort,
-        Err(error) => {
-            state.finish_run(&session_id, &run_id);
-            return Err(error);
-        }
-    };
+    let parsed_effort = parse_thinking_effort(&thinking_effort, &model_info)?;
 
     let event_sink: Arc<dyn EventSink> = Arc::new(TauriEventSink {
         channel: on_event.clone(),
@@ -581,10 +562,7 @@ pub async fn start_chat(
     });
 
     let stored_owner = state.memory.session_owner(&session_id).await.map_err(|e| e.to_string())?;
-    if let Err(error) = ensure_owner(Some(stored_owner.as_deref().unwrap_or(run_owner.as_str())), &user_id) {
-        state.finish_run(&session_id, &run_id);
-        return Err(error);
-    }
+    ensure_owner(Some(stored_owner.as_deref().unwrap_or(run_owner.as_str())), &user_id)?;
 
     let prepared = tokio::select! {
         biased;
@@ -594,7 +572,6 @@ pub async fn start_chat(
     let (connectors, connector_tools) = match prepared {
         Ok(c) => (c.connectors, c.tools),
         Err(error) => {
-            state.finish_run(&session_id, &run_id);
             sentry::capture_message(&format!("connectors prepare failed: {error}"), sentry::Level::Error);
             return Err(error);
         }
@@ -616,7 +593,6 @@ pub async fn start_chat(
     {
         Ok(built) => built,
         Err(error) => {
-            state.finish_run(&session_id, &run_id);
             sentry::capture_message(&format!("build_user_message failed: {error}"), sentry::Level::Error);
             return Err(error);
         }
@@ -630,7 +606,6 @@ pub async fn start_chat(
         .touch_session(&session_id, &workspace_string, &user_id)
         .await
     {
-        state.finish_run(&session_id, &run_id);
         sentry::capture_error(&error);
         return Err(format!("failed to save the chat request: {error}"));
     }
@@ -656,7 +631,6 @@ pub async fn start_chat(
     {
         Ok(chat) => chat,
         Err(error) => {
-            state.finish_run(&session_id, &run_id);
             sentry::capture_error(&error);
             return Err(format!("failed to open the conversation: {error}"));
         }
@@ -683,7 +657,8 @@ pub async fn start_chat(
         connector_tools,
         thinking_effort: parsed_effort,
         skills,
-    });
+    })
+    .await;
 
     let result = run_chat(agent, &chat, built.message.clone()).await;
     ops.cleanup_foreground_commands(&run_id).await;
@@ -693,7 +668,7 @@ pub async fn start_chat(
         sentry::capture_error(&error);
     }
 
-    state.finish_run(&session_id, &run_id);
+    drop(run_guard);
     let _ = app.emit("sessions-updated", ());
     let closing = match result.outcome {
         RunOutcome::Completed => vec![ChatEvent::Done],
@@ -728,14 +703,11 @@ pub async fn resume_chat(
     let run_owner = state
         .current_user_id()
         .ok_or_else(|| "authentication required".to_string())?;
-    let (run_id, cancel) = state
+    let (run_guard, cancel) = state
         .start_run(&session_id, Some(current.as_ref().clone()), run_owner)
         .map_err(|error| error.to_string())?;
 
-    if let Err(error) = state.ensure_fresh_token().await {
-        state.finish_run(&session_id, &run_id);
-        return Err(error.to_string());
-    }
+    state.ensure_fresh_token().await.map_err(|error| error.to_string())?;
 
     let event_sink: Arc<dyn EventSink> = Arc::new(TauriEventSink {
         channel: on_event.clone(),
@@ -746,7 +718,7 @@ pub async fn resume_chat(
         .cloud_resume_chat(&session_id, event_sink, cancel)
         .await;
 
-    state.finish_run(&session_id, &run_id);
+    drop(run_guard);
     let _ = app.emit("sessions-updated", ());
     if let Err(error) = result {
         let _ = on_event.send(ChatEvent::error(error.to_string()));
@@ -782,6 +754,19 @@ pub async fn cancel_chat(state: State<'_, AppState>, session_id: String) -> Resu
     let user_id = state
         .current_user_id()
         .ok_or_else(|| "authentication required".to_string())?;
+
+    if state.active_cloud_workspace().is_some() {
+        ensure_owner(state.run_owner(&session_id).as_deref(), &user_id)?;
+        state.cancel_run(&session_id);
+        state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+        state
+            .gateway
+            .cloud_cancel_chat(&session_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     let mut owner = state
         .memory
         .session_owner(&session_id)
@@ -792,9 +777,6 @@ pub async fn cancel_chat(state: State<'_, AppState>, session_id: String) -> Resu
     }
     ensure_owner(owner.as_deref(), &user_id)?;
     state.cancel_run(&session_id);
-    if state.active_cloud_workspace().is_some() {
-        let _ = state.gateway.cloud_cancel_chat(&session_id).await;
-    }
     Ok(())
 }
 
@@ -803,6 +785,25 @@ pub async fn clear_session(app: tauri::AppHandle, state: State<'_, AppState>, se
     let user_id = state
         .current_user_id()
         .ok_or_else(|| "authentication required".to_string())?;
+
+    if state.active_cloud_workspace().is_some() {
+        state.cancel_run(&session_id);
+        state
+            .wait_for_runs(std::slice::from_ref(&session_id), Duration::from_secs(10))
+            .await;
+        state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
+        state
+            .gateway
+            .cloud_delete_session(&session_id)
+            .await
+            .map_err(|e| {
+                sentry::capture_error(&e);
+                e.to_string()
+            })?;
+        let _ = app.emit("sessions-updated", ());
+        return Ok(());
+    }
+
     let local_meta = state.memory.session_meta(&session_id).await.map_err(|e| e.to_string())?;
     let local_exists = local_meta.is_some();
     let local_owner = local_meta.flatten();
@@ -815,17 +816,6 @@ pub async fn clear_session(app: tauri::AppHandle, state: State<'_, AppState>, se
         state
             .memory
             .delete_session(&session_id)
-            .await
-            .map_err(|e| {
-                sentry::capture_error(&e);
-                e.to_string()
-            })?;
-    }
-    if state.active_cloud_workspace().is_some() {
-        state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-        state
-            .gateway
-            .cloud_delete_session(&session_id)
             .await
             .map_err(|e| {
                 sentry::capture_error(&e);
@@ -846,12 +836,9 @@ pub async fn get_session_records(
     let user_id = state
         .current_user_id()
         .ok_or_else(|| "authentication required".to_string())?;
-    let local_meta = state.memory.session_meta(&session_id).await.map_err(|e| e.to_string())?;
-    let local_owner = local_meta.flatten();
-    let is_cloud_active = state.active_cloud_workspace().is_some();
     let capped_limit = limit.unwrap_or(50).clamp(1, 200);
 
-    if is_cloud_active {
+    if state.active_cloud_workspace().is_some() {
         state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
         return state
             .gateway
@@ -860,6 +847,12 @@ pub async fn get_session_records(
             .map_err(|e| e.to_string());
     }
 
+    let local_owner = state
+        .memory
+        .session_meta(&session_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .flatten();
     ensure_owner(local_owner.as_deref(), &user_id)?;
     state
         .memory
@@ -882,18 +875,22 @@ fn prefs_key(state: &AppState, key: &str, scoped: bool) -> Result<String, String
 }
 
 #[tauri::command]
-pub fn get_user_pref(
+pub async fn get_user_pref(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     key: String,
     scoped: Option<bool>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_store::StoreExt;
-    let store = app.store("prefs.json").map_err(|e| e.to_string())?;
     let full_key = prefs_key(&state, &key, scoped.unwrap_or(false))?;
-    Ok(store
-        .get(&full_key)
-        .and_then(|v| v.as_str().map(|s| s.to_string())))
+    tokio::task::spawn_blocking(move || {
+        let store = app.store("prefs.json").map_err(|e| e.to_string())?;
+        Ok(store
+            .get(&full_key)
+            .and_then(|v| v.as_str().map(|s| s.to_string())))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -910,13 +907,14 @@ pub async fn set_user_pref(
         .acquire()
         .await
         .map_err(|e| e.to_string())?;
-    let store = app.store("prefs.json").map_err(|e| e.to_string())?;
     let full_key = prefs_key(&state, &key, scoped.unwrap_or(false))?;
-    store.set(full_key, serde_json::Value::String(value));
-    tokio::task::spawn_blocking(move || store.save())
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || {
+        let store = app.store("prefs.json").map_err(|e| e.to_string())?;
+        store.set(full_key, serde_json::Value::String(value));
+        store.save().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1031,11 +1029,17 @@ pub async fn terminal_open(
 
 #[tauri::command]
 pub async fn terminal_write(state: State<'_, AppState>, id: String, data: String) -> Result<(), String> {
-    let guard = state.terminals.lock();
-    match guard.get(&id) {
-        Some(s) if s.write(&data) => Ok(()),
-        Some(_) => Err(format!("terminal session closed: {id}")),
-        None => Err(format!("no terminal session: {id}")),
+    let writer = {
+        let guard = state.terminals.lock();
+        guard.get(&id).map(terminal::TerminalSession::writer)
+    };
+    let Some(writer) = writer else {
+        return Err(format!("no terminal session: {id}"));
+    };
+    if writer.write(data).await {
+        Ok(())
+    } else {
+        Err(format!("terminal session closed: {id}"))
     }
 }
 
@@ -1184,6 +1188,35 @@ pub async fn disconnect_connector(state: State<'_, AppState>, connector_id: Stri
             sentry::capture_error(&e);
             e.to_string()
         })
+}
+
+#[derive(Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestReleaseInfo {
+    pub version: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default, alias = "pub_date")]
+    pub pub_date: Option<String>,
+}
+
+#[tauri::command]
+pub async fn check_latest_release() -> Result<LatestReleaseInfo, String> {
+    let resp = orchharness::util::http_client()
+        .get(config::LATEST_RELEASE_URL)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("failed to check latest release: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "release check failed with HTTP {}",
+            resp.status().as_u16()
+        ));
+    }
+    resp.json::<LatestReleaseInfo>()
+        .await
+        .map_err(|e| format!("invalid release manifest: {e}"))
 }
 
 #[tauri::command]

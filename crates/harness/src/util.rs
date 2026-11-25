@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub fn now_ms() -> i64 {
@@ -20,31 +20,27 @@ pub fn fast_hash_hex(input: &str) -> String {
 pub const USER_AGENT: &str = concat!("Orch/", env!("CARGO_PKG_VERSION"));
 
 pub fn http_client() -> reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                .user_agent(USER_AGENT)
-                .connect_timeout(Duration::from_secs(15))
-                .timeout(Duration::from_secs(120))
-                .build()
-                .expect("failed to build shared http client")
-        })
-        .clone()
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(120))
+            .build()
+            .expect("failed to build shared http client")
+    });
+    CLIENT.clone()
 }
 
 pub fn streaming_http_client() -> reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                .user_agent(USER_AGENT)
-                .connect_timeout(Duration::from_secs(15))
-                .tcp_nodelay(true)
-                .build()
-                .expect("failed to build streaming http client")
-        })
-        .clone()
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(15))
+            .tcp_nodelay(true)
+            .build()
+            .expect("failed to build streaming http client")
+    });
+    CLIENT.clone()
 }
 
 pub struct NoRateLimitRetry;
@@ -73,14 +69,12 @@ pub fn retry_middleware() -> reqwest_retry::RetryTransientMiddleware<
 }
 
 pub fn retry_http_client() -> reqwest_middleware::ClientWithMiddleware {
-    static CLIENT: OnceLock<reqwest_middleware::ClientWithMiddleware> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest_middleware::ClientBuilder::new(http_client())
-                .with(retry_middleware())
-                .build()
-        })
-        .clone()
+    static CLIENT: LazyLock<reqwest_middleware::ClientWithMiddleware> = LazyLock::new(|| {
+        reqwest_middleware::ClientBuilder::new(http_client())
+            .with(retry_middleware())
+            .build()
+    });
+    CLIENT.clone()
 }
 
 pub fn basename(path: &str) -> String {
@@ -197,8 +191,8 @@ pub fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option
 
 #[cfg(feature = "local-fs")]
 pub fn login_shell_path() -> Option<&'static str> {
-    static PATH: OnceLock<Option<String>> = OnceLock::new();
-    PATH.get_or_init(resolve_login_path).as_deref()
+    static PATH: LazyLock<Option<String>> = LazyLock::new(resolve_login_path);
+    PATH.as_deref()
 }
 
 #[cfg(not(feature = "local-fs"))]
@@ -224,15 +218,16 @@ fn resolve_login_path() -> Option<String> {
 
 #[cfg(feature = "local-fs")]
 fn resolve_login_path_from_profiles() -> Option<String> {
-    if let Ok(mut profiles) = envvars::get_profiles() {
-        for profile in &mut profiles {
-            if profile.load().is_ok() {
-                if let Some(ref vars) = profile.envvars {
-                    for (key, value) in vars {
-                        if key.eq_ignore_ascii_case("PATH") && !value.trim().is_empty() {
-                            return Some(value.clone());
-                        }
-                    }
+    let Ok(mut profiles) = envvars::get_profiles() else {
+        return None;
+    };
+    for profile in &mut profiles {
+        if profile.load().is_ok()
+            && let Some(ref vars) = profile.envvars
+        {
+            for (key, value) in vars {
+                if key.eq_ignore_ascii_case("PATH") && !value.trim().is_empty() {
+                    return Some(value.clone());
                 }
             }
         }

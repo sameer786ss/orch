@@ -56,8 +56,5 @@ pub const SKIP_DIRS: &[&str] = &[
 ];
 
 pub fn compaction_trigger_tokens(context_window: u64) -> u64 {
-    context_window
-        .saturating_mul(COMPACTION_TRIGGER_PERCENT)
-        .checked_div(100)
-        .unwrap_or(0)
+    context_window.saturating_mul(COMPACTION_TRIGGER_PERCENT) / 100
 }

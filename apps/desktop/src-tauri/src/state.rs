@@ -9,7 +9,7 @@ use moka::future::Cache;
 use orchharness::backend::local_fs::CommandManager;
 use orchharness::connectors::ConnectorManager;
 use orchharness::error::{AppError, AppResult};
-use orchharness::util::{http_client, now_secs};
+use orchharness::util::now_secs;
 use parking_lot::Mutex;
 use secrecy::{ExposeSecret, SecretString};
 use tauri::{Emitter, Manager};
@@ -38,10 +38,27 @@ struct SignInAttempt {
     session_id: Option<String>,
 }
 
+pub struct RunGuard<'a> {
+    state: &'a AppState,
+    session_id: String,
+    run_id: String,
+}
+
+impl RunGuard<'_> {
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        self.state.finish_run(&self.session_id, &self.run_id);
+    }
+}
+
 pub struct AppState {
     pub token: TokenHandle,
     pub workspace: ArcSwapOption<Workspace>,
-    pub http: reqwest::Client,
     pub data_dir: PathBuf,
     pub gateway: Arc<Gateway>,
     pub catalog: ArcSwapOption<ModelCatalog>,
@@ -70,7 +87,6 @@ impl AppState {
         let gateway = Arc::new(Gateway::new(token.clone())?);
         let memory = SqliteMemory::open(&db_path)?;
         let connector_manager = Arc::new(new_connector_manager(token.clone()));
-        let http = http_client();
 
         let file_cache = Cache::builder()
             .time_to_live(Duration::from_secs(config::FILE_INDEX_TTL_SECS))
@@ -79,7 +95,6 @@ impl AppState {
         Ok(Self {
             token,
             workspace: ArcSwapOption::empty(),
-            http,
             data_dir: data_dir.to_path_buf(),
             gateway,
             catalog: ArcSwapOption::empty(),
@@ -343,7 +358,6 @@ impl AppState {
     }
 
     pub async fn refresh_catalog(&self) -> AppResult<Arc<ModelCatalog>> {
-        self.ensure_fresh_token().await?;
         let fresh = Arc::new(self.gateway.models().await?);
         self.catalog.store(Some(fresh.clone()));
         Ok(fresh)
@@ -390,27 +404,6 @@ impl AppState {
     }
 
     pub fn spawn_background_loops(app: tauri::AppHandle) {
-        let catalog_app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let interval = Duration::from_secs(config::MODEL_CATALOG_REFRESH_INTERVAL_SECS);
-            loop {
-                tokio::time::sleep(interval).await;
-                let state = catalog_app.state::<AppState>();
-                if state.current_user_id().is_none() || !state.has_token() {
-                    continue;
-                }
-                match state.refresh_catalog().await {
-                    Ok(_) => {
-                        let _ = catalog_app.emit("models-updated", ());
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "background model refresh failed");
-                        sentry::capture_error(&e);
-                    }
-                }
-            }
-        });
-
         tauri::async_runtime::spawn(async move {
             let interval = Duration::from_secs(config::TOKEN_REFRESH_CHECK_INTERVAL_SECS);
             loop {
@@ -441,7 +434,7 @@ impl AppState {
         session_id: &str,
         workspace: Option<Workspace>,
         owner_id: String,
-    ) -> AppResult<(String, CancellationToken)> {
+    ) -> AppResult<(RunGuard<'_>, CancellationToken)> {
         use dashmap::mapref::entry::Entry;
         let run_id = format!("{}-{}", session_id, uuid::Uuid::new_v4().simple());
         let cancel = CancellationToken::new();
@@ -462,7 +455,12 @@ impl AppState {
             level: sentry::Level::Info,
             ..Default::default()
         });
-        Ok((run_id, cancel))
+        let guard = RunGuard {
+            state: self,
+            session_id: session_id.to_string(),
+            run_id,
+        };
+        Ok((guard, cancel))
     }
 
     pub fn finish_run(&self, session_id: &str, run_id: &str) {

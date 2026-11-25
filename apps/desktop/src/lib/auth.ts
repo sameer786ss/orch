@@ -79,41 +79,36 @@ export const useAuthStore = create(
         const initialAuthVersion = authChangeVersion;
 
         try {
-          if (unlistenAuthChanged) {
-            unlistenAuthChanged();
-            unlistenAuthChanged = null;
-          }
-          if (unlistenAuthError) {
-            unlistenAuthError();
-            unlistenAuthError = null;
-          }
-
-          unlistenAuthChanged = await listen<AuthChangedPayload>("auth-changed", (event) => {
-            authChangeVersion += 1;
-            cancelTimeout();
-            const { user, error } = event.payload;
-            if (user) {
+          if (!unlistenAuthChanged) {
+            unlistenAuthChanged = await listen<AuthChangedPayload>("auth-changed", (event) => {
+              authChangeVersion += 1;
+              cancelTimeout();
+              const { user, error } = event.payload;
+              if (user) {
+                clearWorkspaceState();
+                set((s) => {
+                  s.status = "signedIn";
+                  s.user = user;
+                  s.error = null;
+                  s.signingIn = false;
+                });
+                void useWorkspaceStore.getState().initialize();
+                return;
+              }
               clearWorkspaceState();
-              set((s) => {
-                s.status = "signedIn";
-                s.user = user;
-                s.error = null;
-                s.signingIn = false;
-              });
-              void useWorkspaceStore.getState().initialize();
-              return;
-            }
-            clearWorkspaceState();
-            set((s) => applySignedOut(s, error));
-          });
-
-          unlistenAuthError = await listen<{ error: string }>("auth-error", (event) => {
-            cancelTimeout();
-            set((s) => {
-              s.signingIn = false;
-              s.error = event.payload.error;
+              set((s) => applySignedOut(s, error));
             });
-          });
+          }
+
+          if (!unlistenAuthError) {
+            unlistenAuthError = await listen<{ error: string }>("auth-error", (event) => {
+              cancelTimeout();
+              set((s) => {
+                s.signingIn = false;
+                s.error = event.payload.error;
+              });
+            });
+          }
 
           const user = await api.getAuthUser();
           if (initialAuthVersion !== authChangeVersion) {
@@ -137,10 +132,6 @@ export const useAuthStore = create(
             s.initialized = true;
           });
         } catch (e) {
-          unlistenAuthChanged?.();
-          unlistenAuthChanged = null;
-          unlistenAuthError?.();
-          unlistenAuthError = null;
           clearWorkspaceState();
           set((s) => {
             s.initialized = false;

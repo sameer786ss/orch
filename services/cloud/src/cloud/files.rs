@@ -76,7 +76,7 @@ async fn list_files(
         args.push(format!("!{skipped}/**"));
     }
     args.push("--".to_string());
-    args.push(cloud_ws.repo_dir.clone());
+    args.push(".".to_string());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let (code, stdout, stderr) = lease
         .manager

@@ -85,23 +85,53 @@ fn firestore_budget_limit(stored: &Value) -> Result<f64, String> {
 }
 
 impl FirestoreClient {
-    async fn budget_cost(&self, user_id: &str, period: &Period) -> Result<(f64, f64), String> {
+    async fn budget_cost(
+        &self,
+        user_id: &str,
+        period: &Period,
+    ) -> Result<(f64, f64, String), String> {
         let path = format!("{BUDGET_COLLECTION}/{user_id}");
         for _ in 0..config::BUDGET_WRITE_ATTEMPTS {
             let existing = self.get_document(&path).await?;
             let Some(document) = &existing else {
-                return Err("Firebase budget document is missing".to_string());
+                let mut initial = Map::new();
+                initial.insert("costUsd".to_string(), fields::double(0.0));
+                initial.insert(
+                    "limitUsd".to_string(),
+                    fields::double(config::DEFAULT_BUDGET_LIMIT_USD),
+                );
+                initial.insert("period".to_string(), fields::string(&period.id));
+                let reply = self
+                    .write_document(&path, &initial, false, Precondition::Exists(false))
+                    .await?;
+                if reply.status.is_success() {
+                    let update_time = reply
+                        .body
+                        .get("updateTime")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    return Ok((0.0, config::DEFAULT_BUDGET_LIMIT_USD, update_time));
+                }
+                if !reply.is_precondition_failure() {
+                    return Err(reply.error("budget init"));
+                }
+                continue;
             };
             let stored = document.get("fields").unwrap_or(&Value::Null);
             let limit = firestore_budget_limit(stored)?;
-            if fields::read_string(stored, "period") == period.id {
-                return Ok((fields::read_f64(stored, "costUsd"), limit));
-            }
-
             let update_time = document
                 .get("updateTime")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Firebase budget document has no updateTime".to_string())?;
+            if fields::read_string(stored, "period") == period.id {
+                return Ok((
+                    fields::read_f64(stored, "costUsd"),
+                    limit,
+                    update_time.to_string(),
+                ));
+            }
+
             let mut reset = Map::new();
             reset.insert("costUsd".to_string(), fields::double(0.0));
             reset.insert("limitUsd".to_string(), fields::double(limit));
@@ -115,7 +145,13 @@ impl FirestoreClient {
                 )
                 .await?;
             if reply.status.is_success() {
-                return Ok((0.0, limit));
+                let new_update_time = reply
+                    .body
+                    .get("updateTime")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                return Ok((0.0, limit, new_update_time));
             }
             if !reply.is_precondition_failure() {
                 return Err(reply.error("budget reset"));
@@ -130,22 +166,33 @@ impl FirestoreClient {
         period: &Period,
         cost_usd: f64,
     ) -> Result<f64, String> {
-        self.budget_cost(user_id, period).await?;
         let path = format!("{BUDGET_COLLECTION}/{user_id}");
-        let committed = self
-            .commit(vec![json!({
+        for _ in 0..config::BUDGET_WRITE_ATTEMPTS {
+            let (_cost, _limit, update_time) = self.budget_cost(user_id, period).await?;
+            let mut write = json!({
                 "update": { "name": self.document_name(&path) },
                 "updateMask": { "fieldPaths": [] },
                 "updateTransforms": [{
                     "fieldPath": "costUsd",
                     "increment": { "doubleValue": cost_usd },
                 }],
-            })])
-            .await?;
-        committed
-            .pointer("/writeResults/0/transformResults/0")
-            .map(fields::read_number)
-            .ok_or_else(|| "Firestore budget increment returned no result".to_string())
+            });
+            if !update_time.is_empty() {
+                write["currentDocument"] = json!({ "updateTime": update_time });
+            }
+            let reply = self.commit_reply(vec![write]).await?;
+            if reply.status.is_success() {
+                return reply
+                    .body
+                    .pointer("/writeResults/0/transformResults/0")
+                    .map(fields::read_number)
+                    .ok_or_else(|| "Firestore budget increment returned no result".to_string());
+            }
+            if !reply.is_precondition_failure() {
+                return Err(reply.error("budget increment"));
+            }
+        }
+        Err("Firestore budget increment kept conflicting".to_string())
     }
 }
 
@@ -162,7 +209,7 @@ impl ServerState {
             return Ok(cached);
         }
         let period = current_period();
-        let (cost, limit) = self.firestore.budget_cost(user_id, &period).await?;
+        let (cost, limit, _) = self.firestore.budget_cost(user_id, &period).await?;
         let status = BudgetStatus::new(cost, limit, &period);
         self.budget_cache
             .insert(user_id.to_string(), status.clone())

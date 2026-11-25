@@ -27,6 +27,7 @@ const ENTRIES: &str = "entries";
 const WORKSPACES: &str = "orch_cloud_workspaces";
 const GITHUB_ACCOUNTS: &str = "orch_github_accounts";
 const OAUTH_STATES: &str = "orch_oauth_states";
+const MAX_HYDRATED_MEDIA_BYTES: usize = 24 * 1024 * 1024;
 
 fn session_path(id: &str) -> String {
     format!("{SESSIONS}/{id}")
@@ -493,7 +494,16 @@ impl FirestoreClient {
         let Some(document) = self.get_document(&path).await? else {
             return Ok(None);
         };
-        self.delete_document(&path).await?;
+        let reply = self
+            .commit_reply(vec![json!({
+                "delete": self.document_name(&path),
+                "currentDocument": { "exists": true },
+            })])
+            .await?;
+        if reply.is_precondition_failure() || reply.status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        reply.into_result("consume oauth state")?;
         Ok(OAuthStateRecord::from_document(&document))
     }
 
@@ -1028,7 +1038,11 @@ impl CloudSessionStore {
             .await
     }
 
-    async fn hydrate_media(&self, record: &mut ChatEvent) -> AppResult<()> {
+    async fn hydrate_media(
+        &self,
+        record: &mut ChatEvent,
+        budget_remaining: &std::sync::atomic::AtomicUsize,
+    ) -> AppResult<()> {
         let ChatEvent::User { content } = record else {
             return Ok(());
         };
@@ -1044,6 +1058,11 @@ impl CloudSessionStore {
                 _ => None,
             })
             .collect();
+        if keys.is_empty()
+            || budget_remaining.load(std::sync::atomic::Ordering::Relaxed) == 0
+        {
+            return Ok(());
+        }
         let results = stream::iter(keys)
             .map(|(index, key)| {
                 let storage = self.storage.clone();
@@ -1053,11 +1072,31 @@ impl CloudSessionStore {
             .try_collect::<Vec<_>>()
             .await?;
         for (index, bytes) in results {
-            if let Some(bytes) = bytes {
-                if let HistoryUserPart::Image { data, uri, .. } = &mut content[index] {
-                    *data = Some(STANDARD.encode(&bytes));
-                    *uri = None;
+            let Some(bytes) = bytes else {
+                continue;
+            };
+            let size = bytes.len();
+            let mut cur = budget_remaining.load(std::sync::atomic::Ordering::Relaxed);
+            let allowed = loop {
+                if size > cur {
+                    break false;
                 }
+                match budget_remaining.compare_exchange_weak(
+                    cur,
+                    cur - size,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Relaxed,
+                ) {
+                    Ok(_) => break true,
+                    Err(actual) => cur = actual,
+                }
+            };
+            if !allowed {
+                continue;
+            }
+            if let HistoryUserPart::Image { data, uri, .. } = &mut content[index] {
+                *data = Some(STANDARD.encode(&bytes));
+                *uri = None;
             }
         }
         Ok(())
@@ -1083,41 +1122,71 @@ impl SessionStore for CloudSessionStore {
             return Ok(());
         }
         let prepared = self.externalize_media(records).await?;
+        let payloads: Vec<String> = prepared
+            .iter()
+            .map(|record| {
+                serde_json::to_string(record)
+                    .map_err(|e| AppError::other(format!("serialize history record failed: {e}")))
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+
         let mut next_seq_guard = self.next_seq.lock().await;
-        let mut seq = (*next_seq_guard).max(1);
-        let mut writes = Vec::with_capacity(prepared.len() + 1);
-        for record in &prepared {
-            let payload = serde_json::to_string(record)
-                .map_err(|e| AppError::other(format!("serialize history record failed: {e}")))?;
+        for attempt in 0..2 {
+            let mut seq = (*next_seq_guard).max(1);
+            let mut writes = Vec::with_capacity(payloads.len() + 1);
+            for payload in &payloads {
+                writes.push(json!({
+                    "update": {
+                        "name": self.firestore.document_name(&entry_path(session_id, seq)),
+                        "fields": {
+                            "seq": fields::integer(seq),
+                            "record": fields::string(payload),
+                        }
+                    },
+                    "currentDocument": { "exists": false }
+                }));
+                seq += 1;
+            }
             writes.push(json!({
                 "update": {
-                    "name": self.firestore.document_name(&entry_path(session_id, seq)),
+                    "name": self.firestore.document_name(&session_path(session_id)),
                     "fields": {
-                        "seq": fields::integer(seq),
-                        "record": fields::string(&payload),
+                        "next_seq": fields::integer(seq),
+                        "updated_at": fields::integer(now_ms()),
                     }
+                },
+                "updateMask": {
+                    "fieldPaths": ["next_seq", "updated_at"]
                 }
             }));
-            seq += 1;
-        }
-        writes.push(json!({
-            "update": {
-                "name": self.firestore.document_name(&session_path(session_id)),
-                "fields": {
-                    "next_seq": fields::integer(seq),
-                    "updated_at": fields::integer(now_ms()),
+
+            if writes.len() <= config::FIRESTORE_BATCH_LIMIT {
+                let reply = self
+                    .firestore
+                    .commit_reply(writes)
+                    .await
+                    .map_err(AppError::other)?;
+                if reply.status.is_success() {
+                    *next_seq_guard = seq;
+                    return Ok(());
                 }
-            },
-            "updateMask": {
-                "fieldPaths": ["next_seq", "updated_at"]
+                if reply.is_precondition_failure() && attempt == 0 {
+                    if let Ok(Some(fresh)) = self.firestore.get_session(session_id).await {
+                        *next_seq_guard = fresh.next_seq.max(seq);
+                        continue;
+                    }
+                }
+                return Err(AppError::other(reply.error("append history")));
             }
-        }));
-        self.firestore
-            .commit_chunked(writes)
-            .await
-            .map_err(AppError::other)?;
-        *next_seq_guard = seq;
-        Ok(())
+
+            self.firestore
+                .commit_chunked(writes)
+                .await
+                .map_err(AppError::other)?;
+            *next_seq_guard = seq;
+            return Ok(());
+        }
+        Err(AppError::other("append history seq conflict persisted"))
     }
 
     async fn get_history(
@@ -1162,10 +1231,14 @@ impl SessionStore for CloudSessionStore {
                     })
             })
             .collect::<AppResult<Vec<_>>>()?;
+        let media_budget = Arc::new(std::sync::atomic::AtomicUsize::new(MAX_HYDRATED_MEDIA_BYTES));
         let records = stream::iter(parsed)
-            .map(|(seq, mut record)| async move {
-                self.hydrate_media(&mut record).await?;
-                Ok::<_, AppError>(SessionRecord { seq, record })
+            .map(|(seq, mut record)| {
+                let budget = media_budget.clone();
+                async move {
+                    self.hydrate_media(&mut record, &budget).await?;
+                    Ok::<_, AppError>(SessionRecord { seq, record })
+                }
             })
             .buffered(8)
             .try_collect::<Vec<_>>()

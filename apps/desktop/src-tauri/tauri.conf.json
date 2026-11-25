@@ -36,7 +36,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob: https:; media-src 'self' asset: http://asset.localhost data: blob:; connect-src 'self' https://orchapi.duckdns.org https://orch.live https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://oauth2.googleapis.com ipc: http://ipc.localhost; font-src 'self' data: blob:; frame-src 'none'; object-src 'self' blob:; worker-src 'self' blob:'"
+      "csp": "default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob: https:; media-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; connect-src 'self' https://orchapi.duckdns.org https://orch.live https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://oauth2.googleapis.com ipc: http://ipc.localhost; font-src 'self' data: blob:; frame-src 'none'; object-src 'self' blob:; worker-src 'self' blob:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "plugins": {
@@ -77,8 +81,7 @@
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "startMenuFolder": "Orch",
-        "installerHooks": "installer-hooks.nsh"
+        "startMenuFolder": "Orch"
       }
     },
     "macOS": {

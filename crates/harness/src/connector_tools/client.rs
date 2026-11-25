@@ -72,7 +72,6 @@ pub trait ComposioTransport: Send + Sync {
     async fn connect(&self, toolkit: &str) -> Result<String, ComposioError>;
     async fn disconnect(&self, account_id: &str) -> Result<(), ComposioError>;
     async fn toolkit_tools(&self, toolkit: &str) -> Result<Vec<ToolWire>, ComposioError>;
-    async fn tools_by_slugs(&self, slugs: &[&str]) -> Result<Vec<ToolWire>, ComposioError>;
     async fn execute(
         &self,
         slug: &str,

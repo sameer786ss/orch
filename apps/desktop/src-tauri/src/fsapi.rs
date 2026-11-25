@@ -101,29 +101,6 @@ pub async fn list_workspace_files(
     let query_str = query.unwrap_or_default().trim().to_string();
     let limit = limit.unwrap_or(100).clamp(1, 1000);
 
-    if !query_str.is_empty() {
-        if let Some(cloud) = state.active_cloud_workspace() {
-            state.ensure_fresh_token().await.map_err(|e| e.to_string())?;
-            let entries: Vec<FileEntry> = state
-                .gateway
-                .cloud_files_json(
-                    "list",
-                    &cloud.workspace_uri,
-                    &[
-                        ("query", query_str.clone()),
-                        ("limit", limit.to_string()),
-                    ],
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            let paths = entries
-                .into_iter()
-                .filter_map(|entry| relative_cloud_path(&cloud.repo_dir, &entry.path))
-                .collect();
-            return Ok(build_file_index_from_paths(paths));
-        }
-    }
-
     let index: Arc<Vec<FileEntry>> = state.file_index().await?;
 
     tokio::task::spawn_blocking(move || {

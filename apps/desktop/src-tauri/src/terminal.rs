@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, Sender, UnboundedSender};
+use tokio::sync::mpsc::{self, Sender};
 
 use futures::{SinkExt, StreamExt};
 use orchharness::error::{AppError, AppResult};
@@ -16,6 +16,36 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::config;
 
+enum CloudTermCmd {
+    Input(String),
+    Resize { cols: u16, rows: u16 },
+    Close,
+}
+
+enum TerminalWriterInner {
+    Local(Sender<Vec<u8>>),
+    Cloud {
+        input: Sender<CloudTermCmd>,
+        killed: Arc<AtomicBool>,
+    },
+}
+
+pub struct TerminalWriter(TerminalWriterInner);
+
+impl TerminalWriter {
+    pub async fn write(&self, data: String) -> bool {
+        match &self.0 {
+            TerminalWriterInner::Local(input) => input.send(data.into_bytes()).await.is_ok(),
+            TerminalWriterInner::Cloud { input, killed } => {
+                if killed.load(Ordering::Relaxed) {
+                    return false;
+                }
+                input.send(CloudTermCmd::Input(data)).await.is_ok()
+            }
+        }
+    }
+}
+
 enum TerminalBackend {
     Local {
         master: Box<dyn MasterPty + Send>,
@@ -23,7 +53,7 @@ enum TerminalBackend {
         killer: Box<dyn ChildKiller + Send + Sync>,
     },
     Cloud {
-        input: UnboundedSender<String>,
+        input: Sender<CloudTermCmd>,
         killed: Arc<AtomicBool>,
     },
 }
@@ -38,16 +68,16 @@ impl TerminalSession {
         self.instance_id
     }
 
-    pub fn write(&self, data: &str) -> bool {
+    pub fn writer(&self) -> TerminalWriter {
         match &self.backend {
-            TerminalBackend::Local { input, .. } => input.try_send(data.as_bytes().to_vec()).is_ok(),
+            TerminalBackend::Local { input, .. } => {
+                TerminalWriter(TerminalWriterInner::Local(input.clone()))
+            }
             TerminalBackend::Cloud { input, killed } => {
-                if killed.load(Ordering::Relaxed) {
-                    return false;
-                }
-                input
-                    .send(json!({ "type": "input", "data": data }).to_string())
-                    .is_ok()
+                TerminalWriter(TerminalWriterInner::Cloud {
+                    input: input.clone(),
+                    killed: killed.clone(),
+                })
             }
         }
     }
@@ -64,9 +94,7 @@ impl TerminalSession {
             }
             TerminalBackend::Cloud { input, killed } => {
                 if !killed.load(Ordering::Relaxed) {
-                    let _ = input.send(
-                        json!({ "type": "resize", "cols": cols, "rows": rows }).to_string(),
-                    );
+                    let _ = input.try_send(CloudTermCmd::Resize { cols, rows });
                 }
             }
         }
@@ -79,7 +107,7 @@ impl TerminalSession {
             }
             TerminalBackend::Cloud { input, killed } => {
                 if !killed.swap(true, Ordering::Relaxed) {
-                    let _ = input.send(json!({ "type": "close" }).to_string());
+                    let _ = input.try_send(CloudTermCmd::Close);
                 }
             }
         }
@@ -243,9 +271,8 @@ pub async fn open_cloud(
         .map_err(|e| AppError::other(format!("cloud terminal connection failed: {e}")))?;
 
     let (mut ws_sink, mut ws_stream_rx) = ws_stream.split();
-    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (input_tx, mut input_rx) = mpsc::channel::<CloudTermCmd>(256);
     let killed = Arc::new(AtomicBool::new(false));
-    let killed_pump = killed.clone();
 
     tokio::spawn(async move {
         let mut on_exit = Some(on_exit);
@@ -253,12 +280,25 @@ pub async fn open_cloud(
             tokio::select! {
                 outbound = input_rx.recv() => {
                     match outbound {
-                        Some(msg) => {
-                            let is_close = killed_pump.load(Ordering::Relaxed) && msg.contains("\"close\"");
-                            if ws_sink.send(Message::Text(msg.into())).await.is_err() || is_close {
+                        Some(CloudTermCmd::Input(data)) => {
+                            let msg = json!({ "type": "input", "data": data }).to_string();
+                            if ws_sink.send(Message::Text(msg.into())).await.is_err() {
                                 let _ = ws_sink.close().await;
                                 break;
                             }
+                        }
+                        Some(CloudTermCmd::Resize { cols, rows }) => {
+                            let msg = json!({ "type": "resize", "cols": cols, "rows": rows }).to_string();
+                            if ws_sink.send(Message::Text(msg.into())).await.is_err() {
+                                let _ = ws_sink.close().await;
+                                break;
+                            }
+                        }
+                        Some(CloudTermCmd::Close) => {
+                            let msg = json!({ "type": "close" }).to_string();
+                            let _ = ws_sink.send(Message::Text(msg.into())).await;
+                            let _ = ws_sink.close().await;
+                            break;
                         }
                         None => {
                             let _ = ws_sink.close().await;

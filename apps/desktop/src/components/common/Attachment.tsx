@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { LuX } from "react-icons/lu";
 import { useImageDataUrl } from "../../lib/images";
 import { FileIcon } from "./FileIcon";
@@ -12,9 +13,14 @@ interface AttachmentProps {
   onRemove?: () => void;
 }
 
+function isLocalAbsolutePath(path?: string): path is string {
+  return Boolean(path && !path.startsWith("cloud://") && /^([a-zA-Z]:[\\/]|\/)/.test(path));
+}
+
 export const Attachment = memo(function Attachment({ name, isImage, path, dataUrl, onOpen, onRemove }: AttachmentProps) {
-  const fetched = useImageDataUrl(isImage && !dataUrl ? path : null);
-  const src = dataUrl ?? fetched.src;
+  const localAssetSrc = isImage && !dataUrl && isLocalAbsolutePath(path) ? convertFileSrc(path) : null;
+  const fetched = useImageDataUrl(isImage && !dataUrl && !localAssetSrc ? path : null);
+  const src = dataUrl ?? localAssetSrc ?? fetched.src;
 
   return (
     <div

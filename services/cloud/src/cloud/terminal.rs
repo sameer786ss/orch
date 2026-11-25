@@ -41,28 +41,35 @@ struct Utf8Decoder {
 impl Utf8Decoder {
     fn decode(&mut self, chunk: &[u8]) -> String {
         self.pending.extend_from_slice(chunk);
-        match std::str::from_utf8(&self.pending) {
-            Ok(s) => {
-                let out = s.to_string();
-                self.pending.clear();
-                out
-            }
-            Err(err) => {
-                let valid_up_to = err.valid_up_to();
-                let mut out = String::from_utf8_lossy(&self.pending[..valid_up_to]).into_owned();
-                if let Some(err_len) = err.error_len() {
-                    out.push('\u{FFFD}');
-                    self.pending.drain(..valid_up_to + err_len);
-                    if !self.pending.is_empty() {
-                        let rest = std::mem::take(&mut self.pending);
-                        out.push_str(&self.decode(&rest));
-                    }
-                } else {
-                    self.pending.drain(..valid_up_to);
+        let mut out = String::new();
+        loop {
+            match std::str::from_utf8(&self.pending) {
+                Ok(s) => {
+                    out.push_str(s);
+                    self.pending.clear();
+                    break;
                 }
-                out
+                Err(err) => {
+                    let valid_up_to = err.valid_up_to();
+                    if valid_up_to > 0 {
+                        out.push_str(
+                            std::str::from_utf8(&self.pending[..valid_up_to]).unwrap_or_default(),
+                        );
+                    }
+                    if let Some(err_len) = err.error_len() {
+                        out.push('\u{FFFD}');
+                        self.pending.drain(..valid_up_to + err_len);
+                        if self.pending.is_empty() {
+                            break;
+                        }
+                    } else {
+                        self.pending.drain(..valid_up_to);
+                        break;
+                    }
+                }
             }
         }
+        out
     }
 
     fn flush(&mut self) -> String {
@@ -84,34 +91,49 @@ pub async fn ws_handler(
     let lease = Arc::new(state.sandbox_manager.acquire(&user.id, &cloud_ws).await?);
     let cols = query.cols.unwrap_or(80).clamp(10, 500);
     let rows = query.rows.unwrap_or(24).clamp(4, 200);
+    let repo_dir = cloud_ws.repo_dir;
 
-    let mut envs = HashMap::new();
-    envs.insert("TERM".to_string(), "xterm-256color".to_string());
-    envs.insert("COLORTERM".to_string(), "truecolor".to_string());
-    envs.insert("TERM_PROGRAM".to_string(), "Orch".to_string());
-
-    let resp = lease
-        .manager
-        .start_process_stream(
-            &lease.conn,
-            "/bin/bash",
-            &["-l"],
-            Some(&cloud_ws.repo_dir),
-            Some(envs),
-            Some((cols, rows)),
-            true,
-        )
-        .await?;
-
-    Ok(ws.on_upgrade(move |socket| bridge(socket, lease, resp)))
+    Ok(ws.on_upgrade(move |socket| bridge(socket, lease, repo_dir, cols, rows)))
 }
 
 async fn send_ws(sender: &mut futures::stream::SplitSink<WebSocket, Message>, val: Value) -> bool {
     sender.send(Message::Text(val.to_string().into())).await.is_ok()
 }
 
-async fn bridge(socket: WebSocket, lease: Arc<SandboxLease>, resp: reqwest::Response) {
+async fn bridge(
+    socket: WebSocket,
+    lease: Arc<SandboxLease>,
+    repo_dir: String,
+    cols: u16,
+    rows: u16,
+) {
     let (mut ws_tx, mut ws_rx) = socket.split();
+    let mut envs = HashMap::new();
+    envs.insert("TERM".to_string(), "xterm-256color".to_string());
+    envs.insert("COLORTERM".to_string(), "truecolor".to_string());
+    envs.insert("TERM_PROGRAM".to_string(), "Orch".to_string());
+
+    let resp = match lease
+        .manager
+        .start_process_stream(
+            &lease.conn,
+            "/bin/bash",
+            &["-l"],
+            Some(&repo_dir),
+            Some(envs),
+            Some((cols, rows)),
+            true,
+        )
+        .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::warn!(error = %err.message(), "failed to start E2B terminal PTY");
+            let _ = send_ws(&mut ws_tx, json!({ "type": "exit" })).await;
+            let _ = ws_tx.close().await;
+            return;
+        }
+    };
     let mut pty_stream = resp.bytes_stream();
     let mut decoder = ConnectFrameDecoder::default();
     let mut utf8 = Utf8Decoder::default();

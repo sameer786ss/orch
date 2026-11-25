@@ -60,6 +60,10 @@ function buildSegments(items: MessageItem[]): Segment[] {
       else segments.push({ kind: "text", id: item.id, text: item.text });
     } else if (last?.kind === "work") {
       last.items.push(item);
+    } else {
+      const active = item.type === "reasoning" ? item.active : item.status === "running";
+      const run: WorkRunItem = { type: "work", id: `orphan-${item.id}`, active };
+      segments.push({ kind: "work", id: run.id, run, items: [item] });
     }
   }
   return segments;

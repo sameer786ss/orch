@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,8 +23,8 @@ pub struct ServerState {
     pub http: reqwest::Client,
     pub streaming_http: reqwest::Client,
     pub firestore: FirestoreClient,
-    pub auth_cache: Cache<String, CachedUser>,
-    pub auth_key_cache: Cache<String, Arc<DecodingKey>>,
+    pub auth_cache: Cache<[u8; 32], CachedUser>,
+    pub auth_key_cache: Cache<(), Arc<HashMap<String, Arc<DecodingKey>>>>,
     pub budget_cache: Cache<String, BudgetStatus>,
     pub connector_specs_cache: ConnectorSpecCache,
     pub connector_catalog_cache: Cache<(), Arc<Vec<ConnectorCatalogEntry>>>,
@@ -72,7 +73,7 @@ impl ServerState {
                 .build(),
             auth_key_cache: Cache::builder()
                 .time_to_live(Duration::from_secs(3600))
-                .max_capacity(16)
+                .max_capacity(1)
                 .build(),
             budget_cache: Cache::builder()
                 .time_to_live(Duration::from_secs(config::BUDGET_CACHE_TTL_SECS))

@@ -516,6 +516,10 @@ pub async fn disconnect_account(
         _ => return Err(ApiError::not_found("GitHub account not found")),
     }
     state.firestore.delete_github_account(&doc_id).await?;
+    state
+        .sandbox_manager
+        .invalidate_github_account(&user.id, &github_id)
+        .await;
     Ok(Json(json!({ "ok": true })))
 }
 

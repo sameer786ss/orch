@@ -267,6 +267,7 @@ pub fn run() {
             ipc::list_github_repos,
             ipc::get_connector_auth_url,
             ipc::disconnect_connector,
+            ipc::check_latest_release,
             ipc::report_error,
         ])
         .build(tauri::generate_context!())

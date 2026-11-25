@@ -24,10 +24,12 @@ interface GithubActions {
 
 let refreshSeq = 0;
 let stopFocusListener: (() => void) | null = null;
+let preConnectAccountIds: Set<string> | null = null;
 
 function detachFocusListener() {
   stopFocusListener?.();
   stopFocusListener = null;
+  preConnectAccountIds = null;
 }
 
 export const useGithubStore = create<GithubState & GithubActions>()((set, get) => ({
@@ -42,8 +44,14 @@ export const useGithubStore = create<GithubState & GithubActions>()((set, get) =
     try {
       const accounts = await api.listGithubAccounts();
       if (seq !== refreshSeq) return;
-      detachFocusListener();
-      set({ accounts, loaded: true, connecting: false });
+      const connectedNewAccount =
+        preConnectAccountIds !== null && accounts.some((a) => !preConnectAccountIds!.has(a.id));
+      if (connectedNewAccount) {
+        detachFocusListener();
+        set({ accounts, loaded: true, connecting: false });
+      } else {
+        set({ accounts, loaded: true });
+      }
     } catch (e) {
       if (seq !== refreshSeq) return;
       set({ loaded: true, error: api.errorMessage(e) });
@@ -54,6 +62,7 @@ export const useGithubStore = create<GithubState & GithubActions>()((set, get) =
     if (get().connecting) return;
     set({ connecting: true, error: null });
     detachFocusListener();
+    preConnectAccountIds = new Set(get().accounts.map((a) => a.id));
     const onFocus = () => {
       void get().refresh();
     };

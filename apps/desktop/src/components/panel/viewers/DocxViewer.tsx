@@ -4,7 +4,8 @@ import { errorMessage, readBinaryFile } from "../../../lib/api";
 import { ViewerState, ViewerToolbar, useZoom } from "./ViewerToolbar";
 
 export function DocxViewer({ path }: { path: string }) {
-  const pageRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const shadowRef = useRef<ShadowRoot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const zoom = useZoom(0.4, 2, 0.1);
@@ -15,10 +16,16 @@ export function DocxViewer({ path }: { path: string }) {
     setError(null);
     readBinaryFile(path)
       .then(async (buffer) => {
-        const page = pageRef.current;
-        if (cancelled || !page) return;
-        page.innerHTML = "";
-        await renderAsync(buffer, page, undefined, {
+        const host = hostRef.current;
+        if (cancelled || !host) return;
+        const shadow = shadowRef.current ?? host.shadowRoot ?? host.attachShadow({ mode: "open" });
+        shadowRef.current = shadow;
+        shadow.replaceChildren();
+        const styleHost = document.createElement("div");
+        const contentHost = document.createElement("div");
+        contentHost.style.userSelect = "text";
+        shadow.append(styleHost, contentHost);
+        await renderAsync(buffer, contentHost, styleHost, {
           inWrapper: false,
           ignoreWidth: false,
           ignoreHeight: false,
@@ -45,8 +52,8 @@ export function DocxViewer({ path }: { path: string }) {
       <ViewerToolbar path={path} zoom={ready ? zoom : undefined} />
       <ViewerState loading={loading} error={error} label="Loading document…" />
       <div className="canvas-view" hidden={!ready}>
-        <div style={{ zoom: zoom.zoom }}>
-          <div ref={pageRef} className="docx-page selectable" />
+        <div style={{ transform: `scale(${zoom.zoom})`, transformOrigin: "top center" }}>
+          <div ref={hostRef} className="docx-page selectable" />
         </div>
       </div>
     </>

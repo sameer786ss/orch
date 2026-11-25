@@ -44,7 +44,6 @@ const STREAM_CHANNEL_CAPACITY: usize = 128;
 #[serde(rename_all = "camelCase", default)]
 struct GeminiUsage {
     prompt_token_count: u64,
-    cached_content_token_count: u64,
     tool_use_prompt_token_count: u64,
     candidates_token_count: u64,
     thoughts_token_count: u64,
@@ -61,7 +60,6 @@ impl GeminiUsage {
     fn cost_usd(&self, rates: ModelRates) -> f64 {
         rates.cost_usd(
             self.prompt_token_count + self.tool_use_prompt_token_count,
-            self.cached_content_token_count,
             self.candidates_token_count + self.thoughts_token_count,
         )
     }
@@ -297,9 +295,31 @@ async fn send_v1internal(
     let status = response.status();
     if !status.is_success() {
         let detail = response.text().await.unwrap_or_default();
+        if status == StatusCode::BAD_REQUEST
+            && let Some(msg) = extract_context_overflow_message(&detail)
+        {
+            tracing::warn!(service = SERVICE, status = status.as_u16(), detail, "upstream context overflow");
+            return Err(ApiError::bad_request(msg).with_code("CONTEXT_OVERFLOW"));
+        }
         return Err(ApiError::upstream_failure(SERVICE, status.as_u16(), &detail));
     }
     Ok(response)
+}
+
+fn extract_context_overflow_message(detail: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(detail).ok()?;
+    let msg = parsed
+        .pointer("/error/message")
+        .or_else(|| parsed.pointer("/0/error/message"))
+        .and_then(Value::as_str)?
+        .trim();
+    let lower = msg.to_ascii_lowercase();
+    let is_overflow = lower.contains("exceeds the maximum number of tokens")
+        || lower.contains("context length")
+        || lower.contains("too many tokens")
+        || lower.contains("token count exceeds")
+        || lower.contains("input token count");
+    is_overflow.then(|| msg.to_string())
 }
 
 async fn relay_stream(
@@ -449,56 +469,14 @@ fn non_success_rig_error(err: ApiError) -> RigHttpError {
     RigHttpError::non_success_with_details(status, headers, body)
 }
 
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b'%' if i + 2 < bytes.len() => {
-                if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                    out.push((hi << 4) | lo);
-                    i += 3;
-                } else {
-                    out.push(b'%');
-                    i += 1;
-                }
-            }
-            byte => {
-                out.push(byte);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_val(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
 fn parse_query_pairs(uri: &http::Uri) -> HashMap<String, String> {
-    uri.query()
-        .map(|raw| {
-            raw.split('&')
-                .filter_map(|pair| {
-                    let mut it = pair.splitn(2, '=');
-                    let k = it.next()?;
-                    let v = it.next().unwrap_or("");
-                    Some((
-                        percent_decode(k),
-                        percent_decode(v),
-                    ))
-                })
+    let Some(raw) = uri.query() else {
+        return HashMap::new();
+    };
+    reqwest::Url::parse(&format!("http://local/?{raw}"))
+        .map(|url| {
+            url.query_pairs()
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
                 .collect()
         })
         .unwrap_or_default()

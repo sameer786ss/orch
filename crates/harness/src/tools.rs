@@ -1,4 +1,4 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock};
 
 use futures::future::join_all;
 use rig::message::{ImageDetail, ToolResultContent};
@@ -17,10 +17,10 @@ use crate::skills::read_embedded_skill;
 
 macro_rules! cached_schema {
     ($type:ty) => {{
-        static SCHEMA: OnceLock<Value> = OnceLock::new();
-        SCHEMA
-            .get_or_init(|| serde_json::to_value(schemars::schema_for!($type)).unwrap_or_default())
-            .clone()
+        static SCHEMA: LazyLock<Value> = LazyLock::new(|| {
+            serde_json::to_value(schemars::schema_for!($type)).unwrap_or_default()
+        });
+        SCHEMA.clone()
     }};
 }
 
@@ -239,24 +239,26 @@ pub fn window_lines(content: &str, start: Option<usize>, end: Option<usize>) -> 
     let from = start.unwrap_or(1).max(1).min(total);
     let requested_to = match (start, end) {
         (_, Some(e)) => e.max(from).min(total),
-        (Some(_), None) => total,
-        (None, None) => total,
+        (Some(_), None) | (None, None) => total,
     };
     let line_cap = from + config::MAX_READ_FILE_LINES - 1;
     let requested_to = requested_to.min(line_cap);
 
     let mut out = String::new();
+    let mut char_count = 0usize;
     let mut last = from - 1;
     for (idx, line) in lines.iter().enumerate().take(requested_to).skip(from - 1) {
         let numbered = format!("{}: {}", idx + 1, line);
-        let separator = if out.is_empty() { 0 } else { 1 };
-        if out.chars().count() + separator + numbered.chars().count() > config::MAX_READ_FILE_CHARS {
+        let separator = usize::from(!out.is_empty());
+        let added_chars = separator + numbered.chars().count();
+        if char_count + added_chars > config::MAX_READ_FILE_CHARS {
             break;
         }
         if !out.is_empty() {
             out.push('\n');
         }
         out.push_str(&numbered);
+        char_count += added_chars;
         last = idx + 1;
     }
     if last < requested_to || (start.is_none() && end.is_none() && last < total) {
@@ -317,26 +319,16 @@ impl Tool for ViewFile {
         _ctx: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        let resolved = self.ops.resolve_in_workspace(&args.absolute_path)?;
-        let stat = self.ops.stat(&resolved).await?;
-        if !stat.exists {
+        if let (Some(s), Some(e)) = (args.start_line, args.end_line)
+            && s > e
+        {
             return Err(ToolError::msg(format!(
-                "path {} does not exist",
-                file_uri_str(&resolved)
-            )));
-        }
-        if !stat.is_file {
-            return Err(ToolError::msg(format!("not a file: {}", args.absolute_path)));
-        }
-        let rel = self.ops.display_relative(&resolved);
-        if stat.size > config::FILE_SIZE_LIMIT {
-            return Err(ToolError::msg(format!(
-                "file too large ({} bytes, limit {} bytes): {rel}",
-                stat.size,
-                config::FILE_SIZE_LIMIT
+                "StartLine ({s}) must be less than or equal to EndLine ({e})"
             )));
         }
 
+        let resolved = self.ops.resolve_in_workspace(&args.absolute_path)?;
+        let rel = self.ops.display_relative(&resolved);
         let ext = crate::util::lowercase_extension_str(&resolved);
         let bytes = self
             .ops
@@ -346,18 +338,18 @@ impl Tool for ViewFile {
 
         if crate::media::is_raster_extension(&ext) {
             let summary = format!("[Image file: {rel} ({ext}), size: {} bytes]", bytes.len());
-            if self.supports_images {
-                if let Ok((b64, media)) = crate::media::encode_native_image_for_tool(&bytes, &ext) {
-                    return ToolOutput::content(vec![
-                        ToolResultContent::text(summary),
-                        ToolResultContent::image_base64(
-                            b64,
-                            Some(media),
-                            Some(ImageDetail::Auto),
-                        ),
-                    ])
-                    .map_err(|e| ToolError::msg(e.to_string()));
-                }
+            if self.supports_images
+                && let Ok((b64, media)) = crate::media::encode_native_image_for_tool(&bytes, &ext)
+            {
+                return ToolOutput::content(vec![
+                    ToolResultContent::text(summary),
+                    ToolResultContent::image_base64(
+                        b64,
+                        Some(media),
+                        Some(ImageDetail::Auto),
+                    ),
+                ])
+                .map_err(|e| ToolError::msg(e.to_string()));
             }
             return Ok(ToolOutput::text(summary));
         }
@@ -509,21 +501,21 @@ pub struct ReplaceFileContent {
 const EDIT_FAILED_PREFIX: &str =
     "Could not successfully apply any edits. Please review the file and try smaller edits that you are more confident about.";
 
-fn find_diff_hint(content: &str, target: &str) -> Option<String> {
-    let diff = TextDiff::from_lines(content, target);
+fn find_diff_hint(section: &str, section_start_line: usize, target: &str) -> Option<String> {
+    let diff = TextDiff::from_lines(section, target);
     let mut best_op = None;
     let mut max_equal = 0;
     for op in diff.ops() {
-        if let similar::DiffOp::Equal { len, .. } = op {
-            if *len > max_equal {
-                max_equal = *len;
-                best_op = Some(*op);
-            }
+        if let similar::DiffOp::Equal { len, .. } = op
+            && *len > max_equal
+        {
+            max_equal = *len;
+            best_op = Some(*op);
         }
     }
 
     if let Some(similar::DiffOp::Equal { old_index, .. }) = best_op {
-        let content_lines: Vec<&str> = content.lines().collect();
+        let content_lines: Vec<&str> = section.lines().collect();
         let target_line_count = target.lines().count().max(1);
         let start = old_index.saturating_sub(2);
         let end = (old_index + target_line_count + 2).min(content_lines.len());
@@ -538,7 +530,7 @@ fn find_diff_hint(content: &str, target: &str) -> Option<String> {
             if !unified.trim().is_empty() {
                 return Some(format!(
                     "Closest matching section in file (around line {}):\n{}",
-                    start + 1,
+                    section_start_line + start,
                     unified
                 ));
             }
@@ -585,21 +577,16 @@ impl Tool for ReplaceFileContent {
                 "{EDIT_FAILED_PREFIX}: chunk 0: target content is empty"
             )));
         }
+        if let (Some(s), Some(e)) = (args.start_line, args.end_line)
+            && s > e
+        {
+            return Err(ToolError::msg(format!(
+                "{EDIT_FAILED_PREFIX}: StartLine ({s}) must be less than or equal to EndLine ({e})"
+            )));
+        }
 
         let path = self.ops.resolve_in_workspace(&args.target_file)?;
-
-        let stat = self.ops.stat(&path).await?;
         let uri = file_uri_str(&path);
-        if !stat.exists {
-            return Err(ToolError::msg(format!("path {uri} does not exist")));
-        }
-        if !stat.is_file {
-            return Err(ToolError::msg(format!("not a file: {}", args.target_file)));
-        }
-        if stat.size > config::FILE_SIZE_LIMIT {
-            return Err(ToolError::msg(format!("file too large to edit: {uri}")));
-        }
-
         let raw_bytes = self
             .ops
             .read_bytes(&path, Some(config::FILE_SIZE_LIMIT))
@@ -657,9 +644,9 @@ impl Tool for ReplaceFileContent {
 
         let Some((target, replacement, found)) = chosen else {
             let mut message = format!(
-                "{EDIT_FAILED_PREFIX}: chunk 0: target content not found in file"
+                "{EDIT_FAILED_PREFIX}: chunk 0: target content not found in lines {start_line}-{end_line}"
             );
-            if let Some(hint) = find_diff_hint(&content, &args.target_content) {
+            if let Some(hint) = find_diff_hint(range_text, start_line, &args.target_content) {
                 message.push_str("\n\n");
                 message.push_str(&hint);
             }
@@ -708,7 +695,7 @@ pub struct SearchWorkspace {
 }
 
 impl Tool for SearchWorkspace {
-    const NAME: &'static str = "search_workspace";
+    const NAME: &'static str = SEARCH_WORKSPACE;
     type Error = ToolError;
     type Args = SearchWorkspaceArgs;
     type Output = String;
@@ -805,10 +792,6 @@ impl Tool for ExecuteBash {
             Some(sub) => self.ops.resolve_in_workspace(sub)?,
             None => root,
         };
-        let stat = self.ops.stat(&cwd).await?;
-        if !stat.is_dir {
-            return Err(ToolError::msg(format!("cwd is not a directory: {cwd}")));
-        }
 
         let wait_ms = args
             .wait_ms_before_async
@@ -861,7 +844,7 @@ pub struct GetCommandStatus {
 }
 
 impl Tool for GetCommandStatus {
-    const NAME: &'static str = "get_command_status";
+    const NAME: &'static str = GET_COMMAND_STATUS;
     type Error = ToolError;
     type Args = GetCommandStatusArgs;
     type Output = String;
@@ -913,7 +896,7 @@ pub struct StopCommand {
 }
 
 impl Tool for StopCommand {
-    const NAME: &'static str = "stop_command";
+    const NAME: &'static str = STOP_COMMAND;
     type Error = ToolError;
     type Args = StopCommandArgs;
     type Output = String;
@@ -958,7 +941,7 @@ pub struct ReadSkill {
 }
 
 impl Tool for ReadSkill {
-    const NAME: &'static str = "read_skill";
+    const NAME: &'static str = READ_SKILL;
     type Error = ToolError;
     type Args = ReadSkillArgs;
     type Output = String;

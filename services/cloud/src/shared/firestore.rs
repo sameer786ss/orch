@@ -253,15 +253,18 @@ impl FirestoreClient {
         .await
     }
 
-    pub async fn commit(&self, writes: Vec<Value>) -> Result<Value, String> {
+    pub async fn commit_reply(&self, writes: Vec<Value>) -> Result<Reply, String> {
         self.send(
             Method::POST,
             &format!("{}:commit", self.documents_url),
             &[],
             Some(&json!({ "writes": writes })),
         )
-        .await?
-        .into_result("commit")
+        .await
+    }
+
+    pub async fn commit(&self, writes: Vec<Value>) -> Result<Value, String> {
+        self.commit_reply(writes).await?.into_result("commit")
     }
 
     pub async fn commit_chunked(&self, mut writes: Vec<Value>) -> Result<(), String> {

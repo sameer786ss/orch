@@ -37,6 +37,8 @@ export function TerminalView({ id }: { id: string }) {
     const sessionId = `${id}:${api.newId()}`;
     let disposed = false;
     let opened = false;
+    const pendingInput: string[] = [];
+    let pendingResize: { cols: number; rows: number } | null = null;
 
     const term = new Terminal({
       fontSize: 13,
@@ -63,14 +65,31 @@ export function TerminalView({ id }: { id: string }) {
         if (event.type === "data") term.write(event.data);
         else term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
       })
-      .then(() => {
+      .then(async () => {
         opened = true;
-        if (disposed) void api.terminalClose(sessionId).catch(() => undefined);
+        if (disposed) {
+          void api.terminalClose(sessionId).catch(() => undefined);
+          return;
+        }
+        if (pendingResize) {
+          const { cols: c, rows: r } = pendingResize;
+          pendingResize = null;
+          await api.terminalResize(sessionId, c, r).catch(() => undefined);
+        }
+        while (!disposed && pendingInput.length > 0) {
+          const chunk = pendingInput.shift()!;
+          await api.terminalWrite(sessionId, chunk).catch(() => undefined);
+        }
       })
       .catch((e) => !disposed && term.write(`\r\n\x1b[31m${api.errorMessage(e)}\x1b[0m\r\n`));
 
     const input = term.onData((data) => {
-      if (!disposed) void api.terminalWrite(sessionId, data).catch(() => undefined);
+      if (disposed) return;
+      if (!opened) {
+        pendingInput.push(data);
+        return;
+      }
+      void api.terminalWrite(sessionId, data).catch(() => undefined);
     });
 
     let cols = term.cols;
@@ -84,6 +103,10 @@ export function TerminalView({ id }: { id: string }) {
         if (term.cols === cols && term.rows === rows) return;
         cols = term.cols;
         rows = term.rows;
+        if (!opened) {
+          pendingResize = { cols, rows };
+          return;
+        }
         void api.terminalResize(sessionId, cols, rows).catch(() => undefined);
       });
     });
@@ -91,6 +114,8 @@ export function TerminalView({ id }: { id: string }) {
 
     return () => {
       disposed = true;
+      pendingInput.length = 0;
+      pendingResize = null;
       cancelAnimationFrame(raf);
       input.dispose();
       observer.disconnect();

@@ -161,6 +161,7 @@ fn resolve_workspace(
 
 async fn stage_attachments(
     lease: &SandboxLease,
+    run_id: &str,
     attachments: &[CloudAttachment],
 ) -> ApiResult<(Vec<AttachmentRef>, Vec<String>)> {
     let estimated_bytes: usize = attachments
@@ -174,6 +175,7 @@ async fn stage_attachments(
         )));
     }
 
+    let run_prefix = &run_id[..run_id.len().min(8)];
     let mut pending = Vec::new();
     let mut notes = Vec::new();
     for (index, attachment) in attachments.iter().enumerate() {
@@ -182,18 +184,16 @@ async fn stage_attachments(
             continue;
         };
         let safe = safe_file_name(&attachment.name);
-        let remote_path = format!("{}/{}-{}", config::UPLOAD_DIR, index, safe);
+        let remote_path = format!("{}/{}-{}-{}", config::UPLOAD_DIR, run_prefix, index, safe);
         let ext = orchharness::util::lowercase_extension_str(&safe);
         let is_image = is_raster_extension(&ext);
         let is_pdf = is_pdf_extension(&ext);
         let is_text = !is_image && !is_pdf && !orchharness::util::looks_binary(&bytes);
-        let data_base64 = STANDARD.encode(&bytes);
         let attachable = is_image || is_pdf || is_text;
         pending.push((
             attachment.name.clone(),
             remote_path,
             bytes,
-            data_base64,
             is_image,
             attachable,
         ));
@@ -201,25 +201,30 @@ async fn stage_attachments(
 
     let manager = lease.manager.clone();
     let conn = lease.conn.clone();
-    let uploaded = join_all(pending.into_iter().map(|(name, path, bytes, data_base64, is_image, attachable)| {
-        let manager = manager.clone();
-        let conn = conn.clone();
-        async move {
-            let result = manager.write_bytes(&conn, &path, &bytes).await;
-            (name, path, data_base64, is_image, attachable, result)
-        }
-    }))
+    let uploaded = join_all(
+        pending
+            .into_iter()
+            .map(|(name, path, bytes, is_image, attachable)| {
+                let manager = manager.clone();
+                let conn = conn.clone();
+                async move {
+                    let result = manager.write_bytes(&conn, &path, &bytes).await;
+                    (name, path, bytes, is_image, attachable, result)
+                }
+            }),
+    )
     .await;
 
     let mut refs = Vec::new();
-    for (name, remote_path, data_base64, is_image, attachable, result) in uploaded {
+    for (name, remote_path, bytes, is_image, attachable, result) in uploaded {
         result?;
         if attachable {
             refs.push(AttachmentRef {
                 path: remote_path,
                 name,
                 is_image,
-                data_base64: Some(data_base64),
+                data_base64: None,
+                raw_bytes: Some(bytes),
             });
         } else {
             notes.push(format!("Attached binary file uploaded to {remote_path}"));
@@ -385,7 +390,8 @@ async fn launch(
     record: &CloudSessionRecord,
 ) -> ApiResult<Response> {
     let lease = Arc::new(state.sandbox_manager.acquire(&user.id, workspace).await?);
-    let (attachment_refs, extra_notes) = stage_attachments(&lease, &request.attachments).await?;
+    let (attachment_refs, extra_notes) =
+        stage_attachments(&lease, &run.run_id, &request.attachments).await?;
     request.attachments.clear();
 
     let ops: Arc<dyn WorkspaceOps> = Arc::new(CloudWorkspaceOps {
@@ -524,16 +530,21 @@ async fn launch(
         connector_tools,
         thinking_effort,
         skills,
-    });
+    })
+    .await;
 
     if !built.notes.is_empty() {
         event_sink.send(ChatEvent::notice(built.notes.join("\n")));
     }
 
+    let prompt_msg = built.message;
+    chat.persist_user_message(&prompt_msg)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
     let state_bg = state.clone();
     let session_id_bg = request.session_id.clone();
     let run_bg = run.clone();
-    let prompt_msg = built.message;
 
     tokio::spawn(async move {
         let _keep_lease = lease;

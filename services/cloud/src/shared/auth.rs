@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Request, State};
@@ -6,10 +7,12 @@ use axum::http::header::AUTHORIZATION;
 use axum::middleware::Next;
 use axum::response::Response;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use ring::digest;
 use serde::Deserialize;
 
 use crate::shared::config;
 use crate::shared::error::{ApiError, ApiResult};
+use crate::shared::util::now_secs;
 use crate::state::ServerState;
 
 #[derive(Clone)]
@@ -29,15 +32,15 @@ struct FirebaseClaims {
     exp: usize,
 }
 
-fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(i64::MAX)
-}
-
 fn auth_unavailable() -> ApiError {
     ApiError::unavailable("Authentication key service unavailable").with_code("AUTH_UNAVAILABLE")
+}
+
+fn token_cache_key(token: &str) -> [u8; 32] {
+    let hash = digest::digest(&digest::SHA256, token.as_bytes());
+    let mut key = [0u8; 32];
+    key.copy_from_slice(hash.as_ref());
+    key
 }
 
 pub async fn require_user(
@@ -59,47 +62,52 @@ pub async fn require_user(
     Ok(next.run(request).await)
 }
 
-async fn fetch_key(state: &ServerState, kid: &str) -> ApiResult<DecodingKey> {
+async fn fetch_key_map(state: &ServerState) -> Result<Arc<HashMap<String, Arc<DecodingKey>>>, String> {
     let response = state
         .http
         .get(config::GOOGLE_CERTS_URL)
         .timeout(Duration::from_secs(config::AUTH_CACHE_TTL_SECS.min(30)))
         .send()
         .await
-        .map_err(|error| {
-            tracing::error!(error = %error.without_url(), "firebase signing key fetch failed");
-            auth_unavailable()
-        })?;
+        .map_err(|error| format!("firebase signing key fetch failed: {}", error.without_url()))?;
     if !response.status().is_success() {
-        tracing::error!(status = %response.status(), "firebase signing key fetch rejected");
-        return Err(auth_unavailable());
+        return Err(format!(
+            "firebase signing key fetch rejected with HTTP {}",
+            response.status()
+        ));
     }
-    let certs: HashMap<String, String> = response.json().await.map_err(|error| {
-        tracing::error!(error = %error.without_url(), "firebase signing key response was invalid");
-        auth_unavailable()
-    })?;
-    let pem = certs.get(kid).ok_or_else(ApiError::unauthorized)?;
-    DecodingKey::from_rsa_pem(pem.as_bytes()).map_err(|error| {
-        tracing::error!(%error, "firebase signing key was invalid");
-        auth_unavailable()
-    })
+    let certs: HashMap<String, String> = response
+        .json()
+        .await
+        .map_err(|error| format!("firebase signing key response was invalid: {}", error.without_url()))?;
+    let mut keys = HashMap::with_capacity(certs.len());
+    for (kid, pem) in certs {
+        let key = DecodingKey::from_rsa_pem(pem.as_bytes())
+            .map_err(|error| format!("firebase signing key {kid} was invalid: {error}"))?;
+        keys.insert(kid, Arc::new(key));
+    }
+    Ok(Arc::new(keys))
 }
 
-async fn key_for(state: &ServerState, kid: &str) -> ApiResult<std::sync::Arc<DecodingKey>> {
-    if let Some(key) = state.auth_key_cache.get(kid).await {
-        return Ok(key);
-    }
-    let key = std::sync::Arc::new(fetch_key(state, kid).await?);
-    state.auth_key_cache.insert(kid.to_string(), key.clone()).await;
-    Ok(key)
+async fn key_for(state: &ServerState, kid: &str) -> ApiResult<Arc<DecodingKey>> {
+    let keys = state
+        .auth_key_cache
+        .try_get_with((), fetch_key_map(state))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "firebase signing key refresh failed");
+            auth_unavailable()
+        })?;
+    keys.get(kid).cloned().ok_or_else(ApiError::unauthorized)
 }
 
 async fn verify(state: &ServerState, token: &str) -> ApiResult<VerifiedUser> {
-    if let Some(cached) = state.auth_cache.get(token).await {
+    let cache_key = token_cache_key(token);
+    if let Some(cached) = state.auth_cache.get(&cache_key).await {
         if cached.expires_at.is_none_or(|expires_at| expires_at > now_secs()) {
             return Ok(cached.user);
         }
-        state.auth_cache.invalidate(token).await;
+        state.auth_cache.invalidate(&cache_key).await;
     }
 
     let header = decode_header(token).map_err(|_| ApiError::unauthorized())?;
@@ -123,7 +131,7 @@ async fn verify(state: &ServerState, token: &str) -> ApiResult<VerifiedUser> {
     state
         .auth_cache
         .insert(
-            token.to_string(),
+            cache_key,
             CachedUser {
                 user: user.clone(),
                 expires_at: Some(claims.exp as i64),

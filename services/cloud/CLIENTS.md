@@ -1,6 +1,6 @@
 # Cloud session API for clients
 
-All routes need `Authorization: Bearer <Firebase ID token>`, except `GET /models` and `GET /github/callback`.
+All routes need `Authorization: Bearer <Firebase ID token>`, except `GET /healthz`, `GET /readyz`, `GET /models`, and `GET /github/callback`.
 
 Model catalogs are JSON arrays of `{id, name, provider, contextWindow, maxTokens, capabilities, badge, thinkingEfforts}`. Send the `id` as `model`.
 
@@ -47,19 +47,20 @@ Every user gets $20 per calendar month, resetting on the 1st (UTC). Usage is cou
 | `GET /cloud/files/{list,tree,text,image,binary}?workspace=&path=` | Browse the sandbox. `list` takes `query` and `limit` (up to 2000). |
 | `GET /cloud/terminal` | WebSocket PTY session into the sandbox. |
 
-`POST /cloud/chat/stream` body: `{sessionId, prompt, model, workspace, repoUrl, attachments: [{name, dataBase64}], activeConnectors, thinkingEffort}`. Attachments may total 18 MB. Session ids are 1 to 64 characters of `A-Z a-z 0-9 - _`.
+`POST /cloud/chat/stream` body: `{sessionId, prompt, model, workspace, attachments: [{name, dataBase64}], activeConnectors, thinkingEffort}`. Attachments may total 18 MB. Session ids are 1 to 64 characters of `A-Z a-z 0-9 - _`.
 
 ## Local proxies
 
 | Route | Purpose |
 |---|---|
+| `GET /healthz`, `GET /readyz` | Liveness/readiness check (`{"ok":true}`). No auth. |
 | `GET /models` | Model catalog. No auth. |
 | `POST /vertex/{version}/models/{model}:generateContent` | Model proxy through `v1internal`. `:streamGenerateContent` streams SSE. |
 | `POST /tavily` | Web search. |
 | `POST /transcribe` `{audio, format}` | Base64 audio to `{text}`. `format` is flac, m4a, mp3, mp4, mpeg, mpga, ogg, opus, wav or webm. |
 | `POST /title` `{prompt}` | `{title}`. Uses `v1internal` (`gemini-3.5-flash-lite`), unmetered. |
 | `POST /summarize` `{prompt, system?, maxTokens?}` | `{text}`. Uses `v1internal` (`gemini-3.5-flash-lite`), unmetered. |
-| `GET /composio/catalog`, `GET /composio/accounts`, `POST /composio/connect`, `DELETE /composio/accounts/{id}`, `GET /composio/tools?toolkit=` or `?slugs=`, `POST /composio/execute` | Non-GitHub agent tool connectors. |
+| `GET /composio/catalog`, `GET /composio/accounts`, `POST /composio/connect` `{toolkit, platform?}`, `DELETE /composio/accounts/{id}`, `GET /composio/tools?toolkit=`, `POST /composio/execute` | Non-GitHub agent tool connectors. |
 
 ## Runs live on the server
 

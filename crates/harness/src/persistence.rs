@@ -72,4 +72,6 @@ pub struct AttachmentRef {
     pub is_image: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_base64: Option<String>,
+    #[serde(skip)]
+    pub raw_bytes: Option<Vec<u8>>,
 }

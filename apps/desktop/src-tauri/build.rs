@@ -3,7 +3,6 @@ const REQUIRED_VARS: &[&str] = &["FIREBASE_API_KEY"];
 const OPTIONAL_VARS: &[&str] = &["SENTRY_DSN"];
 
 fn main() {
-    std::env::remove_var("STATIC_VCRUNTIME");
     load_dotenv_for_compile();
 
     let target = std::env::var("TARGET").unwrap_or_default();
@@ -11,8 +10,7 @@ fn main() {
 
     if target.contains("windows") {
         let windows = tauri_build::WindowsAttributes::new()
-            .app_manifest(include_str!("orch.exe.manifest"))
-            .static_vc_runtime(true);
+            .app_manifest(include_str!("orch.exe.manifest"));
         attrs = attrs.windows_attributes(windows);
         println!("cargo:rerun-if-changed=orch.exe.manifest");
     }
