@@ -19,7 +19,7 @@ steps:
         apt-get install -y --no-install-recommends musl-tools clang mold ca-certificates pkg-config zstd
         rustup target add x86_64-unknown-linux-musl
         export CARGO_HOME=/workspace/.cargo-home
-        mkdir -p "$CARGO_HOME" target
+        mkdir -p "$$CARGO_HOME" target
         if [ -f /workspace/musl-cache.tar.zst ]; then
           tar --use-compress-program=zstd -xf /workspace/musl-cache.tar.zst -C /workspace || true
           rm -f /workspace/musl-cache.tar.zst
