@@ -345,19 +345,21 @@ impl Tool for ViewFile {
             .map_err(|e| ToolError::msg(format!("cannot read {rel}: {e}")))?;
 
         if crate::media::is_raster_extension(&ext) {
+            let summary = format!("[Image file: {rel} ({ext}), size: {} bytes]", bytes.len());
             if self.supports_images {
                 if let Ok((b64, media)) = crate::media::encode_native_image_for_tool(&bytes, &ext) {
-                    return Ok(ToolOutput::one(ToolResultContent::image_base64(
-                        b64,
-                        Some(media),
-                        Some(ImageDetail::Auto),
-                    )));
+                    return ToolOutput::content(vec![
+                        ToolResultContent::text(summary),
+                        ToolResultContent::image_base64(
+                            b64,
+                            Some(media),
+                            Some(ImageDetail::Auto),
+                        ),
+                    ])
+                    .map_err(|e| ToolError::msg(e.to_string()));
                 }
             }
-            return Ok(ToolOutput::text(format!(
-                "[Image file: {rel} ({ext}), size: {} bytes]",
-                bytes.len()
-            )));
+            return Ok(ToolOutput::text(summary));
         }
 
         if crate::util::looks_binary(&bytes) {
