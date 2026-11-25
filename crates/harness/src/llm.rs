@@ -10,7 +10,8 @@ use rig::agent::{
     RequestPatch, RunSettled,
 };
 use rig::catalog::ModelSpec;
-use rig::completion::{Effort, Message, PromptError, Reasoning, Section, SystemPrompt};
+pub use rig::completion::Effort;
+use rig::completion::{Message, PromptError, Reasoning, Section, SystemPrompt};
 use rig::conversation::{Conversation, Halt};
 use rig::error::{ErrorReport, ProviderError};
 use rig::message::{ImageDetail, UserContent};
