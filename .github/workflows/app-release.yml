@@ -1,4 +1,4 @@
-name: Mobile App Release (app)
+name: Mobile Build
 
 # Builds apps/mobile from main via workflow_dispatch:
 #   gh workflow run app-release.yml -f version=1.0.6

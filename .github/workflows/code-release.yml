@@ -1,4 +1,4 @@
-name: Desktop Release (code)
+name: Desktop Build
 
 # Builds apps/desktop from main via workflow_dispatch:
 #   gh workflow run code-release.yml -f version=1.0.6
