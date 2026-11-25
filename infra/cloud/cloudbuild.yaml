@@ -1,13 +1,4 @@
 steps:
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: restore-cache
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        gcloud storage cp gs://orchllc-artifacts/build-cache/musl-cache.tar.zst /workspace/musl-cache.tar.zst || true
-
   - name: rust:slim
     id: build
     entrypoint: bash
@@ -16,34 +7,9 @@ steps:
       - |
         set -euo pipefail
         apt-get update
-        apt-get install -y --no-install-recommends musl-tools clang mold ca-certificates pkg-config zstd
+        apt-get install -y --no-install-recommends musl-tools clang mold ca-certificates pkg-config
         rustup target add x86_64-unknown-linux-musl
-        export CARGO_HOME=/workspace/.cargo-home
-        mkdir -p "$$CARGO_HOME" target
-        if [ -f /workspace/musl-cache.tar.zst ]; then
-          tar --use-compress-program=zstd -xf /workspace/musl-cache.tar.zst -C /workspace || true
-          rm -f /workspace/musl-cache.tar.zst
-        fi
-        cargo build --locked --profile dist --package orch-cloud-harness --target x86_64-unknown-linux-musl
-        tar --use-compress-program="zstd -T0 -3" -cf /workspace/musl-cache.tar.zst \
-          -C /workspace \
-          .cargo-home/registry/cache \
-          .cargo-home/registry/index \
-          .cargo-home/git \
-          target/x86_64-unknown-linux-musl/dist/deps \
-          target/x86_64-unknown-linux-musl/dist/build \
-          target/x86_64-unknown-linux-musl/dist/.fingerprint || true
-
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: save-cache
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        if [ -f /workspace/musl-cache.tar.zst ]; then
-          gcloud storage cp /workspace/musl-cache.tar.zst gs://orchllc-artifacts/build-cache/musl-cache.tar.zst || true
-        fi
+        cargo build --profile dist --package orch-cloud-harness --target x86_64-unknown-linux-musl
 
 artifacts:
   objects:
