@@ -936,9 +936,7 @@ pub struct ReadSkillArgs {
     pub name: String,
 }
 
-pub struct ReadSkill {
-    ops: Arc<dyn WorkspaceOps>,
-}
+pub struct ReadSkill;
 
 impl Tool for ReadSkill {
     const NAME: &'static str = READ_SKILL;
@@ -964,9 +962,6 @@ impl Tool for ReadSkill {
         _ctx: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        if let Some(content) = self.ops.read_skill(&args.name).await? {
-            return Ok(content);
-        }
         read_embedded_skill(&args.name).map_err(ToolError::msg)
     }
 }
@@ -1131,9 +1126,7 @@ impl ToolContext {
         }
     }
     pub fn read_skill(&self) -> ReadSkill {
-        ReadSkill {
-            ops: self.ops.clone(),
-        }
+        ReadSkill
     }
     pub fn write_to_file(&self) -> WriteToFile {
         WriteToFile {

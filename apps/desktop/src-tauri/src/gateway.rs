@@ -182,7 +182,7 @@ impl Gateway {
     }
 
     fn url_with_segment(base: String, segment: &str) -> AppResult<reqwest::Url> {
-        let mut url = reqwest::Url::parse(&base)?;
+        let mut url = parse_url(&base)?;
         url.path_segments_mut()
             .map_err(|_| AppError::other(format!("invalid url base: {base}")))?
             .push(segment);
@@ -300,7 +300,7 @@ impl Gateway {
         if !query.trim().is_empty() {
             params.push(("query", query.trim()));
         }
-        let url = reqwest::Url::parse_with_params(&base, &params)?;
+        let url = parse_url_with_params(&base, &params)?;
         self.get(url.as_str(), Duration::from_secs(30)).await
     }
 
@@ -351,7 +351,7 @@ impl Gateway {
         let base = config::cloud_url(&format!("/files/{sub}"));
         let mut params: Vec<(&str, String)> = vec![("workspace", workspace.to_string())];
         params.extend(extra.iter().map(|(k, v)| (*k, v.clone())));
-        Ok(reqwest::Url::parse_with_params(&base, &params)?.to_string())
+        Ok(parse_url_with_params(&base, &params)?.to_string())
     }
 
     pub async fn cloud_files_json<T: DeserializeOwned>(
@@ -379,7 +379,7 @@ impl Gateway {
 
     pub async fn cloud_list_sessions(&self, workspace: &str) -> AppResult<Vec<SessionSummary>> {
         let base = config::cloud_url("/sessions");
-        let url = reqwest::Url::parse_with_params(&base, &[("workspace", workspace)])?;
+        let url = parse_url_with_params(&base, &[("workspace", workspace)])?;
         self.get(url.as_str(), Duration::from_secs(20)).await
     }
 
@@ -453,7 +453,7 @@ impl Gateway {
     async fn open_resume(&self, session_id: &str, last_event_id: u64) -> AppResult<reqwest::Response> {
         let token = self.require_token()?;
         let base = config::cloud_url("/chat/resume");
-        let url = reqwest::Url::parse_with_params(
+        let url = parse_url_with_params(
             &base,
             &[
                 ("sessionId", session_id.to_string()),
@@ -656,4 +656,19 @@ fn parse_server_error(raw: &str) -> (String, Option<String>) {
         Some(message) if !message.is_empty() => (message.to_string(), code),
         _ => (raw.to_string(), code),
     }
+}
+
+fn parse_url(base: &str) -> AppResult<reqwest::Url> {
+    reqwest::Url::parse(base).map_err(|e| AppError::other(format!("invalid url {base}: {e}")))
+}
+
+fn parse_url_with_params<I, K, V>(base: &str, params: I) -> AppResult<reqwest::Url>
+where
+    I: IntoIterator,
+    I::Item: std::borrow::Borrow<(K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    reqwest::Url::parse_with_params(base, params)
+        .map_err(|e| AppError::other(format!("invalid url {base}: {e}")))
 }

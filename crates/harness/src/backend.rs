@@ -365,7 +365,6 @@ pub trait WorkspaceOps: Send + Sync {
     async fn stop_command(&self, task_id: &str) -> AppResult<bool>;
     async fn cancel_run_commands(&self, _run_id: &str) {}
     async fn cleanup_foreground_commands(&self, _run_id: &str) {}
-    async fn read_skill(&self, name: &str) -> AppResult<Option<String>>;
 }
 
 #[async_trait]
@@ -802,7 +801,6 @@ pub mod local_fs {
 
     pub struct LocalWorkspaceOps {
         pub workspace: Option<PathBuf>,
-        pub data_dir: PathBuf,
         pub command_manager: CommandManager,
     }
 
@@ -999,10 +997,6 @@ pub mod local_fs {
 
         async fn cleanup_foreground_commands(&self, run_id: &str) {
             self.command_manager.kill_foreground_for_run(run_id);
-        }
-
-        async fn read_skill(&self, name: &str) -> AppResult<Option<String>> {
-            Ok(crate::skills::read_skill_from_dir(self.data_dir.clone(), name).await)
         }
     }
 

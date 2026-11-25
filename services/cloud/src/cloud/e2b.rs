@@ -1583,20 +1583,4 @@ impl WorkspaceOps for CloudWorkspaceOps {
     async fn cleanup_foreground_commands(&self, run_id: &str) {
         self.cmd_mgr.kill_foreground_for_run(run_id);
     }
-
-    async fn read_skill(&self, name: &str) -> AppResult<Option<String>> {
-        let clean = name.trim();
-        if clean.is_empty()
-            || clean.contains('/')
-            || clean.contains('\\')
-            || clean.contains("..")
-        {
-            return Ok(None);
-        }
-        let candidate = format!("{}/.orch/skills/{clean}/SKILL.md", self.repo_dir);
-        let Ok(bytes) = self.read_bytes(&candidate, Some(hconfig::FILE_SIZE_LIMIT)).await else {
-            return Ok(None);
-        };
-        Ok(String::from_utf8(bytes).ok())
-    }
 }

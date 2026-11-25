@@ -8,7 +8,7 @@ use orchharness::backend::{SessionStore, SummarizerBackend, WebSearchBackend, Wo
 use orchharness::error::AppError;
 use orchharness::events::{ChatEvent, EventSink};
 use crate::ipc_types::{DictationEvent, TerminalEvent};
-use orchharness::skills::load_all_skills;
+use orchharness::skills::load_embedded_skills;
 use orchharness::tools::ToolContext;
 use orchharness::util::truncate_chars;
 use secrecy::ExposeSecret;
@@ -579,7 +579,6 @@ pub async fn start_chat(
 
     let ops: Arc<dyn WorkspaceOps> = Arc::new(LocalWorkspaceOps {
         workspace: Some(workspace.clone()),
-        data_dir: state.data_dir.clone(),
         command_manager: (*state.command_manager).clone(),
     });
 
@@ -646,7 +645,7 @@ pub async fn start_chat(
         run_id: run_id.clone(),
         supports_images: model_info.supports_images(),
     };
-    let skills = load_all_skills(state.data_dir.clone()).await;
+    let skills = load_embedded_skills();
     let agent = build_agent(AgentInputs {
         client: &client,
         model: &model_info,
