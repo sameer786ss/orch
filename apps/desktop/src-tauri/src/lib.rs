@@ -182,7 +182,7 @@ pub fn run() {
                 ..Default::default()
             });
             warm_login_shell_path();
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = app.path().data_dir()?.join("Orch");
             std::fs::create_dir_all(&data_dir)?;
 
             let app_state = AppState::new(&data_dir)?;
