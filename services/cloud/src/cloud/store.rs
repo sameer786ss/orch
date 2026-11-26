@@ -234,10 +234,11 @@ pub struct CloudSessionRecord {
     pub run_id: String,
     pub run_heartbeat: i64,
     pub cancel_requested: bool,
+    pub update_time: String,
 }
 
 impl CloudSessionRecord {
-    fn from_fields(id: &str, stored: &Value) -> Self {
+    fn from_fields(id: &str, stored: &Value, update_time: String) -> Self {
         Self {
             id: id.to_string(),
             title: fields::read_string(stored, "title"),
@@ -255,13 +256,19 @@ impl CloudSessionRecord {
             run_id: fields::read_string(stored, "run_id"),
             run_heartbeat: fields::read_i64(stored, "run_heartbeat"),
             cancel_requested: fields::read_bool(stored, "cancel_requested"),
+            update_time,
         }
     }
 
     fn from_document(document: &Value) -> Option<Self> {
         let name = document.get("name")?.as_str()?;
         let stored = document.get("fields")?;
-        Some(Self::from_fields(id_from_name(name), stored))
+        let update_time = document
+            .get("updateTime")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Some(Self::from_fields(id_from_name(name), stored, update_time))
     }
 
     fn initial(id: &str, workspace_path: &str, user_id: &str, repo_url: &str, now: i64) -> Self {
@@ -282,6 +289,7 @@ impl CloudSessionRecord {
             run_id: String::new(),
             run_heartbeat: 0,
             cancel_requested: false,
+            update_time: String::new(),
         }
     }
 
@@ -357,12 +365,19 @@ impl FirestoreClient {
         &self,
         doc_id: &str,
     ) -> Result<Option<CloudWorkspaceRecord>, String> {
+        if let Some(cached) = self.workspace_cache.get(doc_id).await {
+            return Ok(cached);
+        }
         let Some(document) = self.get_document(&workspace_path(doc_id)).await? else {
+            self.workspace_cache.insert(doc_id.to_string(), None).await;
             return Ok(None);
         };
-        CloudWorkspaceRecord::from_document(&document)
-            .map(Some)
-            .ok_or_else(|| format!("workspace document {doc_id} is malformed"))
+        let record = CloudWorkspaceRecord::from_document(&document)
+            .ok_or_else(|| format!("workspace document {doc_id} is malformed"))?;
+        self.workspace_cache
+            .insert(doc_id.to_string(), Some(record.clone()))
+            .await;
+        Ok(Some(record))
     }
 
     pub async fn upsert_workspace(&self, record: &CloudWorkspaceRecord) -> Result<(), String> {
@@ -374,8 +389,11 @@ impl FirestoreClient {
             Precondition::Unconditional,
         )
         .await?
-        .into_result("upsert workspace")
-        .map(|_| ())
+        .into_result("upsert workspace")?;
+        self.workspace_cache
+            .insert(record.doc_id.clone(), Some(record.clone()))
+            .await;
+        Ok(())
     }
 
     pub async fn list_workspaces(
@@ -405,19 +423,30 @@ impl FirestoreClient {
     }
 
     pub async fn delete_workspace(&self, doc_id: &str) -> Result<(), String> {
-        self.delete_document(&workspace_path(doc_id)).await
+        self.delete_document(&workspace_path(doc_id)).await?;
+        self.workspace_cache.invalidate(doc_id).await;
+        Ok(())
     }
 
     pub async fn get_github_account(
         &self,
         user_id: &str,
     ) -> Result<Option<GithubAccountRecord>, String> {
+        if let Some(cached) = self.github_account_cache.get(user_id).await {
+            return Ok(cached);
+        }
         let Some(document) = self.get_document(&github_account_path(user_id)).await? else {
+            self.github_account_cache
+                .insert(user_id.to_string(), None)
+                .await;
             return Ok(None);
         };
-        GithubAccountRecord::from_document(&document)
-            .map(Some)
-            .ok_or_else(|| format!("github account document {user_id} is malformed"))
+        let record = GithubAccountRecord::from_document(&document)
+            .ok_or_else(|| format!("github account document {user_id} is malformed"))?;
+        self.github_account_cache
+            .insert(user_id.to_string(), Some(record.clone()))
+            .await;
+        Ok(Some(record))
     }
 
     pub async fn upsert_github_account(
@@ -432,12 +461,17 @@ impl FirestoreClient {
             Precondition::Unconditional,
         )
         .await?
-        .into_result("upsert github account")
-        .map(|_| ())
+        .into_result("upsert github account")?;
+        self.github_account_cache
+            .insert(record.user_id.clone(), Some(record.clone()))
+            .await;
+        Ok(())
     }
 
     pub async fn delete_github_account(&self, user_id: &str) -> Result<(), String> {
-        self.delete_document(&github_account_path(user_id)).await
+        self.delete_document(&github_account_path(user_id)).await?;
+        self.github_account_cache.invalidate(user_id).await;
+        Ok(())
     }
 
     pub async fn put_oauth_state(&self, record: &OAuthStateRecord) -> Result<(), String> {
@@ -515,14 +549,20 @@ impl FirestoreClient {
     pub async fn ensure_session(
         &self,
         id: &str,
+        existing: Option<CloudSessionRecord>,
         workspace_path: &str,
         user_id: &str,
         repo_url: &str,
         model: &str,
     ) -> Result<(CloudSessionRecord, bool), String> {
         let now = now_ms();
+        let mut current = existing;
         for _ in 0..2 {
-            if let Some(mut record) = self.get_session(id).await? {
+            let found = match current.take() {
+                Some(rec) => Some(rec),
+                None => self.get_session(id).await?,
+            };
+            if let Some(mut record) = found {
                 if record.workspace_path != workspace_path {
                     return Err("session belongs to a different workspace".to_string());
                 }
@@ -530,11 +570,20 @@ impl FirestoreClient {
                 update.insert("updated_at".into(), fields::integer(now));
                 update.insert("model".into(), fields::string(model));
                 record.updated_at = now;
-                self.patch_session(id, update).await?;
+                let reply = self
+                    .write_document(&session_path(id), &update, true, Precondition::Exists(true))
+                    .await?;
+                if reply.status == StatusCode::NOT_FOUND {
+                    continue;
+                }
+                let doc = reply.into_result("patch session")?;
+                if let Some(ut) = doc.get("updateTime").and_then(Value::as_str) {
+                    record.update_time = ut.to_string();
+                }
                 return Ok((record, false));
             }
 
-            let record = CloudSessionRecord::initial(id, workspace_path, user_id, repo_url, now);
+            let mut record = CloudSessionRecord::initial(id, workspace_path, user_id, repo_url, now);
             let mut document = record.to_fields();
             document.insert("model".into(), fields::string(model));
             document.insert("created_at".into(), fields::integer(now));
@@ -547,6 +596,9 @@ impl FirestoreClient {
                 )
                 .await?;
             if reply.status.is_success() {
+                if let Some(ut) = reply.body.get("updateTime").and_then(Value::as_str) {
+                    record.update_time = ut.to_string();
+                }
                 return Ok((record, true));
             }
             if !reply.is_precondition_failure() {
@@ -610,21 +662,32 @@ impl FirestoreClient {
         })
     }
 
-    pub async fn acquire_run(&self, id: &str, run_id: &str) -> Result<Acquire, String> {
-        let document = self
-            .get_document(&session_path(id))
-            .await?
-            .ok_or_else(|| format!("session {id} disappeared before the run started"))?;
-        let update_time = document
-            .get("updateTime")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("session {id} has no updateTime"))?
-            .to_string();
-        let record = CloudSessionRecord::from_document(&document)
-            .ok_or_else(|| format!("session document {id} is malformed"))?;
-
+    pub async fn acquire_run(
+        &self,
+        id: &str,
+        run_id: &str,
+        known: Option<&CloudSessionRecord>,
+    ) -> Result<Acquire, String> {
         let now = now_ms();
-        if record.run_status == "running" && record.is_running(now) {
+        let (is_running, update_time) = match known.filter(|r| !r.update_time.is_empty()) {
+            Some(record) => (record.is_running(now), record.update_time.clone()),
+            None => {
+                let document = self
+                    .get_document(&session_path(id))
+                    .await?
+                    .ok_or_else(|| format!("session {id} disappeared before the run started"))?;
+                let update_time = document
+                    .get("updateTime")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("session {id} has no updateTime"))?
+                    .to_string();
+                let record = CloudSessionRecord::from_document(&document)
+                    .ok_or_else(|| format!("session document {id} is malformed"))?;
+                (record.is_running(now), update_time)
+            }
+        };
+
+        if is_running {
             return Ok(Acquire::Busy);
         }
 

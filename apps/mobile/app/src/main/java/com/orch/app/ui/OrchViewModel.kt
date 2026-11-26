@@ -221,6 +221,10 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     private var lastLoadedAccounts: List<ConnectorAccount> = emptyList()
     private var connectorDefinitions: List<ConnectorDefinition> = emptyList()
     private val deleting = HashSet<String>()
+    private var lastForegroundSyncMs = 0L
+    private val sessionCache = object : LinkedHashMap<String, HistoryPage>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, HistoryPage>?) = size > 15
+    }
 
     init {
         loadModels(reportFailure = true)
@@ -698,13 +702,18 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onForeground() {
+        val now = System.currentTimeMillis()
+        if (now - lastForegroundSyncMs < 60_000L) return
+        lastForegroundSyncMs = now
         refreshBudget()
         if (_modelUi.value.models.isEmpty()) loadModels(reportFailure = false)
         loadConnectors()
         refreshGithubAccounts()
         viewModelScope.launch {
-            loadProjects()
-            val remote = loadSessions() ?: return@launch
+            val projectsDeferred = async { loadProjects() }
+            val sessionsDeferred = async { loadSessions() }
+            projectsDeferred.await()
+            val remote = sessionsDeferred.await() ?: return@launch
             val current = _chat.value
             val running = remote.firstOrNull { it.id == current.sessionId }?.running == true
             if (running && streamJob?.isActive != true && !current.streaming && !current.loading) {
@@ -740,12 +749,26 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
         val initialProject = findProjectForWorkspace(summary?.workspacePath)
             ?: _chat.value.project.takeIf { sameSession }
         reducer.setContextTokens(summary?.contextTokens ?: 0)
-        _chat.value = ChatUi(
-            sessionId = id,
-            loading = true,
-            project = initialProject,
-            contextTokens = summary?.contextTokens ?: 0
-        )
+        val cached = if (!force) sessionCache[id] else null
+        if (cached != null) {
+            reducer.load(cached.records)
+            earliestSeq = cached.earliestSeq
+            hasMore = cached.hasMore
+            _chat.value = ChatUi(
+                sessionId = id,
+                loading = false,
+                project = initialProject,
+                contextTokens = summary?.contextTokens ?: 0
+            )
+            publishNow()
+        } else {
+            _chat.value = ChatUi(
+                sessionId = id,
+                loading = true,
+                project = initialProject,
+                contextTokens = summary?.contextTokens ?: 0
+            )
+        }
         historyJob = viewModelScope.launch {
             val history = async { runCatchingSuspend { api.history(id, HISTORY_LIMIT, null) } }
             val list = async { loadSessions() }
@@ -754,10 +777,13 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
                 if (ws.projects.isEmpty() || ws.projectsFailed) loadProjects() else ws.projects
             }
             val page = history.await().getOrElse {
-                report(it)
-                _chat.update { ui -> ui.copy(loading = false, loadFailed = true) }
+                if (cached == null) {
+                    report(it)
+                    _chat.update { ui -> ui.copy(loading = false, loadFailed = true) }
+                }
                 return@launch
             }
+            sessionCache[id] = page
             val remoteSummary = list.await()?.firstOrNull { it.id == id }
             val loadedProjects = projectsList.await() ?: _workspace.value.projects
             val running = remoteSummary?.running ?: (summary?.running == true)
@@ -811,6 +837,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteSession(id: String) {
         deleting += id
+        sessionCache.remove(id)
         val sessionWorkspace = _workspace.value.sessions.firstOrNull { it.id == id }?.workspacePath
         val targetProjectId = findProjectForWorkspace(sessionWorkspace)?.id
             ?: _chat.value.project?.id

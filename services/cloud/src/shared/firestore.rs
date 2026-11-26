@@ -2,9 +2,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gcp_auth::TokenProvider;
+use moka::future::Cache;
 use reqwest::{Method, StatusCode};
 use serde_json::{json, Map, Value};
 
+use crate::cloud::store::{CloudWorkspaceRecord, GithubAccountRecord};
 use crate::shared::config;
 
 pub mod fields {
@@ -116,6 +118,8 @@ pub struct FirestoreClient {
     auth: Arc<dyn TokenProvider>,
     documents_name: String,
     documents_url: String,
+    pub(crate) workspace_cache: Cache<String, Option<CloudWorkspaceRecord>>,
+    pub(crate) github_account_cache: Cache<String, Option<GithubAccountRecord>>,
 }
 
 impl FirestoreClient {
@@ -129,6 +133,14 @@ impl FirestoreClient {
             auth,
             documents_url: format!("https://firestore.googleapis.com/v1/{documents_name}"),
             documents_name,
+            workspace_cache: Cache::builder()
+                .time_to_live(Duration::from_secs(60))
+                .max_capacity(config::AUTH_CACHE_CAPACITY)
+                .build(),
+            github_account_cache: Cache::builder()
+                .time_to_live(Duration::from_secs(60))
+                .max_capacity(config::AUTH_CACHE_CAPACITY)
+                .build(),
         }
     }
 

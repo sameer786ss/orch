@@ -3,7 +3,7 @@ import { useChatStore } from "./store";
 import { useGithubStore } from "./github";
 import { useWorkspaceStore } from "./workspace";
 
-const MIN_GAP_MS = 15_000;
+const MIN_GAP_MS = 120_000;
 
 export function useCrossDeviceSync() {
   useEffect(() => {

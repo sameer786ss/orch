@@ -52,13 +52,6 @@ pub async fn history(
     ApiPath(session_id): ApiPath<String>,
     ApiQuery(query): ApiQuery<HistoryQuery>,
 ) -> ApiResult<Json<SessionRecordPage>> {
-    let Some(record) = owned_session(&state, &session_id, &user).await? else {
-        return Ok(Json(SessionRecordPage {
-            records: Vec::new(),
-            has_more: false,
-            earliest_seq: None,
-        }));
-    };
     let limit = query
         .limit
         .unwrap_or(config::DEFAULT_HISTORY_LIMIT)
@@ -68,12 +61,24 @@ pub async fn history(
         state.http.clone(),
         &state.config.gcs_bucket,
         &session_id,
-        record.next_seq,
+        1,
     );
-    let page = store
-        .get_history(&session_id, limit, query.before)
-        .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let (record, page) = tokio::try_join!(
+        owned_session(&state, &session_id, &user),
+        async {
+            store
+                .get_history(&session_id, limit, query.before)
+                .await
+                .map_err(|e| ApiError::internal(e.to_string()))
+        }
+    )?;
+    if record.is_none() {
+        return Ok(Json(SessionRecordPage {
+            records: Vec::new(),
+            has_more: false,
+            earliest_seq: None,
+        }));
+    }
     Ok(Json(page))
 }
 
@@ -107,7 +112,20 @@ pub async fn delete(
 ) -> ApiResult<Json<Value>> {
     let record = owned_session(&state, &session_id, &user).await?;
     if record.is_some() {
-        purge_session(&state, &session_id).await?;
+        if let Some((_, run)) = state.active_runs.remove(&session_id) {
+            run.cancel.cancel();
+        }
+        state
+            .firestore
+            .delete_document(&format!("orch_cloud_sessions/{session_id}"))
+            .await?;
+        let state_bg = state.clone();
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            if let Err(error) = purge_session(&state_bg, &sid).await {
+                tracing::warn!(session = %sid, %error, "background session cleanup failed");
+            }
+        });
     } else if let Some((_, run)) = state.active_runs.remove(&session_id) {
         run.cancel.cancel();
     }

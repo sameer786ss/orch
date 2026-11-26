@@ -191,6 +191,24 @@ function resolveThinkingEffort(model: ModelDto | null, preferred?: string | null
 
 const activeStreamFlushes = new Map<string, () => void>();
 
+interface CachedSession {
+  messages: ChatMessage[];
+  hasMoreMessages: boolean;
+  earliestSeq: number | null;
+}
+
+const SESSION_CACHE_LIMIT = 20;
+const sessionCache = new Map<string, CachedSession>();
+
+function putSessionCache(id: string, entry: CachedSession) {
+  if (sessionCache.has(id)) sessionCache.delete(id);
+  else if (sessionCache.size >= SESSION_CACHE_LIMIT) {
+    const oldest = sessionCache.keys().next().value;
+    if (oldest !== undefined) sessionCache.delete(oldest);
+  }
+  sessionCache.set(id, entry);
+}
+
 export const useChatStore = create(
   immer<ChatStore>((set, get) => ({
     ...INITIAL_STATE,
@@ -248,6 +266,7 @@ export const useChatStore = create(
       }
       const wsPath = useWorkspaceStore.getState().current?.path ?? null;
       const freshId = newId();
+      sessionCache.clear();
       useArtifactsStore.getState().dropWorkspaceTabs();
 
       const sessions = wsPath
@@ -273,6 +292,7 @@ export const useChatStore = create(
       activeStreamFlushes.clear();
       initEpoch += 1;
       isInitializing = false;
+      sessionCache.clear();
       unbindListeners();
       set((s) => {
         Object.assign(s, INITIAL_STATE, { currentSessionId: newId() });
@@ -290,26 +310,40 @@ export const useChatStore = create(
     selectSession: async (id: string) => {
       if (get().streaming || get().currentSessionId === id) return;
       const target = get().sessions.find((s) => s.id === id);
+      const cached = sessionCache.get(id);
 
       set((s) => {
         showSession(s, id, target ? usageFrom(target) : ZERO_USAGE);
+        if (cached) {
+          s.messages = cached.messages;
+          s.hasMoreMessages = cached.hasMoreMessages;
+          s.earliestSeq = cached.earliestSeq;
+        }
       });
 
       try {
         const page = await api.getSessionRecords(id, 50);
+        const messages = mergeAdjacentAssistantMessages(recordsToMessages(page.records));
+        putSessionCache(id, {
+          messages,
+          hasMoreMessages: page.hasMore,
+          earliestSeq: page.earliestSeq,
+        });
         set((s) => {
           if (s.currentSessionId !== id) return;
           s.hasMoreMessages = page.hasMore;
           s.earliestSeq = page.earliestSeq;
-          s.messages = mergeAdjacentAssistantMessages(recordsToMessages(page.records));
+          s.messages = messages;
         });
         if (get().sessions.find((sess) => sess.id === id)?.running) {
           void get().resumeRun(id);
         }
       } catch (e) {
-        set((s) => {
-          if (s.currentSessionId === id) s.error = api.errorMessage(e);
-        });
+        if (!cached) {
+          set((s) => {
+            if (s.currentSessionId === id) s.error = api.errorMessage(e);
+          });
+        }
       }
     },
 
@@ -321,6 +355,7 @@ export const useChatStore = create(
 
       try {
         const page = await api.getSessionRecords(id, 50, state.earliestSeq);
+        let mergedMessages: ChatMessage[] | null = null;
         set((s) => {
           if (s.currentSessionId !== id) return;
           s.loadingEarlierMessages = false;
@@ -328,7 +363,15 @@ export const useChatStore = create(
           s.earliestSeq = page.earliestSeq;
           const earlierMessages: ChatMessage[] = recordsToMessages(page.records);
           s.messages = mergeAdjacentAssistantMessages([...earlierMessages, ...s.messages]);
+          mergedMessages = s.messages;
         });
+        if (mergedMessages) {
+          putSessionCache(id, {
+            messages: mergedMessages,
+            hasMoreMessages: page.hasMore,
+            earliestSeq: page.earliestSeq,
+          });
+        }
       } catch (e) {
         set((s) => {
           if (s.currentSessionId === id) {
@@ -351,6 +394,7 @@ export const useChatStore = create(
         set((s) => { s.error = api.errorMessage(e); });
         return;
       }
+      sessionCache.delete(id);
       set((s) => {
         s.sessions = s.sessions.filter((sess) => sess.id !== id);
         delete s.connectorSelections[id];
@@ -853,6 +897,14 @@ async function streamRun(
       return true;
     } finally {
       activeStreamFlushes.delete(sessionId);
+      const current = useChatStore.getState();
+      if (current.currentSessionId === sessionId && current.messages.length > 0) {
+        putSessionCache(sessionId, {
+          messages: current.messages,
+          hasMoreMessages: current.hasMoreMessages,
+          earliestSeq: current.earliestSeq,
+        });
+      }
     }
 }
 

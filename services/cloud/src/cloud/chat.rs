@@ -298,8 +298,10 @@ pub async fn stream(
         ));
     }
 
-    let existing = owned_session(&state, &request.session_id, &user).await?;
-    state.require_budget(&user.id).await?;
+    let (existing, _) = tokio::try_join!(
+        owned_session(&state, &request.session_id, &user),
+        state.require_budget(&user.id),
+    )?;
     let workspace = resolve_workspace(&request, existing.as_ref())?;
 
     let run = LiveRun::new(uuid::Uuid::new_v4().to_string());
@@ -319,6 +321,7 @@ pub async fn stream(
     let outcome = start_turn(
         &state,
         request,
+        existing,
         &user,
         &workspace,
         &model,
@@ -338,6 +341,7 @@ pub async fn stream(
 async fn start_turn(
     state: &ServerState,
     request: CloudChatStreamReq,
+    existing: Option<CloudSessionRecord>,
     user: &VerifiedUser,
     workspace: &CloudWorkspace,
     model: &ModelInfo,
@@ -348,6 +352,7 @@ async fn start_turn(
         .firestore
         .ensure_session(
             &request.session_id,
+            existing,
             &workspace.uri,
             &user.id,
             &workspace.repo_url,
@@ -476,7 +481,7 @@ async fn launch(
 
     match state
         .firestore
-        .acquire_run(&request.session_id, &run.run_id)
+        .acquire_run(&request.session_id, &run.run_id, Some(record))
         .await?
     {
         Acquire::Acquired => {}
