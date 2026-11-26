@@ -123,7 +123,7 @@ pub async fn delete(
         let sid = session_id.clone();
         tokio::spawn(async move {
             if let Err(error) = purge_session(&state_bg, &sid).await {
-                tracing::warn!(session = %sid, %error, "background session cleanup failed");
+                tracing::warn!(session = %sid, ?error, "background session cleanup failed");
             }
         });
     } else if let Some((_, run)) = state.active_runs.remove(&session_id) {
