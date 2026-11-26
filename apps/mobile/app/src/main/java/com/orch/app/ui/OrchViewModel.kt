@@ -30,6 +30,7 @@ import com.orch.app.data.FileEntry
 import com.orch.app.data.GithubAccount
 import com.orch.app.data.GithubConnectRequest
 import com.orch.app.data.GithubRepo
+import com.orch.app.data.HistoryPage
 import com.orch.app.data.ModelInfo
 import com.orch.app.data.OpenProjectRequest
 import com.orch.app.data.OrchClient
