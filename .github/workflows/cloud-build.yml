@@ -1,0 +1,77 @@
+name: Cloud Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - .cargo/**
+      - crates/harness/**
+      - services/cloud/**
+      - .github/workflows/cloud-build.yml
+  workflow_dispatch:
+
+concurrency:
+  group: cloud-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build & Deploy Cloud Harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install musl build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools clang mold
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cloud-build
+
+      - name: Build orch-cloud-harness
+        run: cargo build --release --package orch-cloud-harness --target x86_64-unknown-linux-musl
+
+      - name: Deploy to VM via SSH
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          : "${VM_HOST:?Missing VM_HOST}"
+          : "${VM_USER:?Missing VM_USER}"
+          : "${VM_SSH_KEY:?Missing VM_SSH_KEY}"
+
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$VM_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          trap 'rm -f "$HOME/.ssh/deploy_key"' EXIT
+
+          SSH_OPTS="-i $HOME/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
+          TARGET="${VM_USER}@${VM_HOST}"
+          BIN="target/x86_64-unknown-linux-musl/release/orch-cloud-harness"
+          test -s "$BIN"
+
+          scp $SSH_OPTS "$BIN" "${TARGET}:/tmp/orch-cloud-harness"
+          ssh $SSH_OPTS "$TARGET" '
+            set -euo pipefail
+            test -s /tmp/orch-cloud-harness
+            sudo install -o root -g root -m 755 /tmp/orch-cloud-harness /opt/orch/orch-cloud-harness.new
+            sudo mv /opt/orch/orch-cloud-harness.new /opt/orch/orch-cloud-harness
+            rm -f /tmp/orch-cloud-harness
+            sudo systemctl restart orch
+          '
