@@ -7,12 +7,13 @@ import "./global.css";
 
 if (import.meta.env.PROD) {
   window.addEventListener("error", (event) => {
-    void reportError(event.error?.stack || event.message || "Unknown error").catch(() => {});
+    const err = event.error instanceof Error ? event.error : null;
+    void reportError(err?.stack || event.message || "Unknown error", err?.name || "WindowError").catch(() => {});
   });
   window.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason;
-    const message = reason instanceof Error ? reason.stack || reason.message : String(reason);
-    void reportError(`Unhandled rejection: ${message}`).catch(() => {});
+    const err = reason instanceof Error ? reason : null;
+    void reportError(err?.stack || err?.message || String(reason), err?.name || "UnhandledRejection").catch(() => {});
   });
 }
 

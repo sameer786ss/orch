@@ -525,6 +525,6 @@ export function checkLatestRelease(): Promise<LatestReleaseInfo> {
   return invoke("check_latest_release");
 }
 
-export function reportError(message: string): Promise<void> {
-  return invoke("report_error", { message });
+export function reportError(message: string, kind?: string): Promise<void> {
+  return invoke("report_error", { message, kind });
 }

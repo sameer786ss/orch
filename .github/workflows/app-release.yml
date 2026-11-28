@@ -41,6 +41,7 @@ jobs:
           STORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          SENTRY_DSN_MOB: ${{ secrets.SENTRY_DSN_MOB }}
         run: |
           version="${{ inputs.version }}"
           tag="app-v${version}"

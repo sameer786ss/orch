@@ -5,6 +5,7 @@ import com.orch.app.data.OrchClient
 import com.orch.app.data.OrchJson
 import com.orch.app.data.parseErrorBody
 import com.orch.app.data.toApiError
+import io.sentry.Sentry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -138,6 +139,7 @@ class SandboxTerminal(private val client: OrchClient) {
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    Sentry.captureException(t)
                     synchronized(lock) {
                         if (connectionGen != gen) return
                         socket = null

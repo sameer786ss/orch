@@ -45,6 +45,8 @@ import com.orch.app.data.toApiError
 import com.orch.app.terminal.SandboxTerminal
 import com.orch.app.terminal.TerminalUi
 import com.orch.app.ui.chat.clearThumbnailCache
+import io.sentry.Sentry
+import io.sentry.SentryLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -992,9 +994,12 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         if (frame.type in LIVE_STEP_EVENTS) resynced = false
-                        if (resynced && frame.type == "error") {
-                            tailError = (frame.data["message"] as? JsonPrimitive)?.contentOrNull
+                        if (frame.type == "error") {
+                            val err = (frame.data["message"] as? JsonPrimitive)?.contentOrNull
                                 ?: (frame.data["error"] as? JsonPrimitive)?.contentOrNull
+                                ?: "Stream error"
+                            if (resynced) tailError = err
+                            Sentry.captureMessage(err, SentryLevel.ERROR)
                         }
                         if (frame.type == "fileWritten") {
                             onFileWritten((frame.data["path"] as? JsonPrimitive)?.contentOrNull)
@@ -1007,6 +1012,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
+                    Sentry.captureException(failure)
                     failure.toApiError()
                 }
                 if (finished) break
@@ -1227,6 +1233,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
+                Sentry.captureException(failure)
                 ArtifactState.Failed(name, path, failure.toApiError().message)
             }
             _artifactUi.update { it.copy(state = next) }
@@ -1260,6 +1267,7 @@ class OrchViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
+                Sentry.captureException(failure)
                 failure.toApiError().message
             } finally {
                 _artifactUi.update { it.copy(saving = false) }

@@ -69,6 +69,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Co
 import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import io.sentry.Sentry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
@@ -245,6 +246,7 @@ fun AuthScreen(
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
+                            Sentry.captureException(failure)
                             Log.e("Auth", "Google Sign-In failed", failure)
                             errorMessage = failure.localizedMessage ?: "Unable to sign in."
                         } finally {

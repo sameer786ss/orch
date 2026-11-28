@@ -4,6 +4,9 @@ import com.orch.app.BuildConfig
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
+import io.sentry.Sentry
+import io.sentry.okhttp.SentryOkHttpEventListener
+import io.sentry.okhttp.SentryOkHttpInterceptor
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -43,6 +46,7 @@ inline fun <T> runCatchingSuspend(block: () -> T): Result<T> = try {
 } catch (cancelled: CancellationException) {
     throw cancelled
 } catch (failure: Throwable) {
+    if ((failure as? HttpException)?.code()?.let { it >= 500 } != true) Sentry.captureException(failure)
     Result.failure(failure)
 }
 
@@ -204,6 +208,8 @@ class OrchClient {
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(120, TimeUnit.SECONDS)
         .addInterceptor(authInterceptor)
+        .addInterceptor(SentryOkHttpInterceptor())
+        .eventListener(SentryOkHttpEventListener())
         .authenticator(tokenAuthenticator)
         .build()
 

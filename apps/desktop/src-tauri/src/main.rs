@@ -17,8 +17,10 @@ fn main() {
                 auto_session_tracking: true,
                 attach_stacktrace: true,
                 send_default_pii: false,
+                traces_sample_rate: 0.2,
                 ..Default::default()
-            },
+            }
+            .in_app_include(vec!["orch", "orch_lib", "orchharness"]),
         )))
     } else {
         None

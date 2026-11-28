@@ -1209,7 +1209,20 @@ pub async fn check_latest_release() -> Result<LatestReleaseInfo, String> {
 }
 
 #[tauri::command]
-pub fn report_error(message: String) {
-    let truncated = truncate_chars(&message, 2000);
-    sentry::capture_message(truncated, sentry::Level::Error);
+pub fn report_error(message: String, kind: Option<String>) {
+    let truncated = truncate_chars(&message, 2000).to_string();
+    let ty = kind
+        .as_deref()
+        .map(|k| truncate_chars(k, 120).to_string())
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| "FrontendError".to_string());
+    let mut event = sentry::protocol::Event::new();
+    event.level = sentry::Level::Error;
+    event.exception = vec![sentry::protocol::Exception {
+        ty,
+        value: Some(truncated),
+        ..Default::default()
+    }]
+    .into();
+    sentry::capture_event(event);
 }

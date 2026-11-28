@@ -24,6 +24,8 @@ android {
     buildConfigField("String", "ORCH_UPDATE_REPO", "\"sameer786ss/orch\"")
     buildConfigField("String", "ORCH_TERMS_URL", "\"https://orch.live/terms\"")
     buildConfigField("String", "ORCH_PRIVACY_URL", "\"https://orch.live/privacy\"")
+    val sentryDsn = System.getenv("SENTRY_DSN_MOB")?.trim().orEmpty()
+    buildConfigField("String", "SENTRY_DSN", "\"${sentryDsn.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
   }
 
   signingConfigs {
@@ -65,6 +67,9 @@ android {
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
+  implementation(platform(libs.sentry.bom))
+  implementation(libs.sentry.android)
+  implementation(libs.sentry.okhttp)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.browser)
   implementation(libs.androidx.core.ktx)

@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type ErrorInfo, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 import { reportError } from "./lib/api";
@@ -39,8 +39,7 @@ function Fatal({ error, resetErrorBoundary }: FallbackProps) {
   const err = error instanceof Error ? error : new Error(String(error));
   useEffect(() => {
     void getCurrentWindow().show();
-    if (import.meta.env.PROD) void reportError(err.stack || err.message).catch(() => {});
-  }, [err]);
+  }, []);
 
   return (
     <Window>
@@ -108,9 +107,16 @@ function Root() {
   );
 }
 
+function onBoundaryError(error: unknown, info: ErrorInfo) {
+  if (!import.meta.env.PROD) return;
+  const err = error instanceof Error ? error : new Error(String(error));
+  const detail = [err.stack || err.message, info.componentStack].filter(Boolean).join("\n");
+  void reportError(detail, err.name).catch(() => {});
+}
+
 export default function App() {
   return (
-    <ErrorBoundary FallbackComponent={Fatal}>
+    <ErrorBoundary FallbackComponent={Fatal} onError={onBoundaryError}>
       <TooltipProvider delayDuration={400} skipDelayDuration={150} disableHoverableContent>
         <Root />
       </TooltipProvider>

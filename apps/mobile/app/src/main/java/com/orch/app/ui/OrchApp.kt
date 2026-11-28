@@ -40,6 +40,7 @@ import com.orch.app.ui.sheets.FilesSheet
 import com.orch.app.ui.sheets.ModelSheet
 import com.orch.app.ui.sheets.NewProjectSheet
 import com.orch.app.ui.sheets.TerminalSheet
+import io.sentry.Sentry
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -79,6 +80,7 @@ fun OrchApp(
             runCatching {
                 openOAuthBrowser(context, url)
             }.onFailure {
+                Sentry.captureException(it)
                 Toast.makeText(context, "Unable to open browser.", Toast.LENGTH_SHORT).show()
             }
         }

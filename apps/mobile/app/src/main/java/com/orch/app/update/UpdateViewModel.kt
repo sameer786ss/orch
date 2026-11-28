@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.orch.app.data.runCatchingSuspend
 import com.orch.app.data.toApiError
+import io.sentry.Sentry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -109,6 +110,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
+            Sentry.captureException(failure)
             state.value = UpdateState.Failed(info, failure.toApiError().message)
         }
     }

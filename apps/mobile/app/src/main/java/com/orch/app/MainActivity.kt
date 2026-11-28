@@ -27,6 +27,8 @@ import com.orch.app.ui.auth.AuthScreen
 import com.orch.app.ui.theme.OrchTheme
 import com.orch.app.update.UpdateDialog
 import com.orch.app.update.UpdateViewModel
+import io.sentry.Sentry
+import io.sentry.protocol.User
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -82,6 +84,7 @@ private fun AppRoot(
     val authState = remember(auth) { auth.authState() }
     val user by authState.collectAsStateWithLifecycle(initialValue = auth.currentUser)
     val current = user
+    LaunchedEffect(current?.uid) { Sentry.setUser(current?.let { User().apply { id = it.uid } }) }
     if (current == null) {
         LaunchedEffect(Unit) { userScope.reset() }
         AuthScreen(
