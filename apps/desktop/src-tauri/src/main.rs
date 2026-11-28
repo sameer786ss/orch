@@ -18,9 +18,9 @@ fn main() {
                 attach_stacktrace: true,
                 send_default_pii: false,
                 traces_sample_rate: 0.2,
+                in_app_include: vec!["orch", "orch_lib", "orchharness"],
                 ..Default::default()
-            }
-            .in_app_include(vec!["orch", "orch_lib", "orchharness"]),
+            },
         )))
     } else {
         None

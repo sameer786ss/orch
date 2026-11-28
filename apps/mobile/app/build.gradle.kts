@@ -6,7 +6,7 @@ plugins {
 }
 
 kotlin {
-  jvmToolchain(17)
+  jvmToolchain(21)
 }
 
 android {
@@ -17,14 +17,14 @@ android {
     applicationId = "com.orch.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1_000_000
-    versionName = System.getenv("VERSION_NAME") ?: "1.0.0"
+    versionCode = providers.environmentVariable("VERSION_CODE").orNull?.toIntOrNull() ?: 1_000_000
+    versionName = providers.environmentVariable("VERSION_NAME").orNull ?: "1.0.0"
 
     buildConfigField("String", "ORCH_API_BASE_URL", "\"https://orchapi.duckdns.org\"")
     buildConfigField("String", "ORCH_UPDATE_REPO", "\"sameer786ss/orch\"")
     buildConfigField("String", "ORCH_TERMS_URL", "\"https://orch.live/terms\"")
     buildConfigField("String", "ORCH_PRIVACY_URL", "\"https://orch.live/privacy\"")
-    val sentryDsn = System.getenv("SENTRY_DSN_MOB")?.trim().orEmpty()
+    val sentryDsn = providers.environmentVariable("SENTRY_DSN_MOB").orNull?.trim().orEmpty()
     buildConfigField("String", "SENTRY_DSN", "\"${sentryDsn.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
   }
 
@@ -32,11 +32,11 @@ android {
     // Release signing is driven entirely by the environment (set by CI). There are no
     // fallback keys: an assembleRelease without these variables fails at configuration.
     create("release") {
-      System.getenv("KEYSTORE_PATH")?.let { path ->
+      providers.environmentVariable("KEYSTORE_PATH").orNull?.let { path ->
         storeFile = file(path)
-        storePassword = System.getenv("STORE_PASSWORD")
-        keyAlias = System.getenv("KEY_ALIAS")
-        keyPassword = System.getenv("KEY_PASSWORD")
+        storePassword = providers.environmentVariable("STORE_PASSWORD").orNull
+        keyAlias = providers.environmentVariable("KEY_ALIAS").orNull
+        keyPassword = providers.environmentVariable("KEY_PASSWORD").orNull
       }
     }
   }
@@ -51,8 +51,8 @@ android {
     }
   }
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
   }
   buildFeatures {
     compose = true

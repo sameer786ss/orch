@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -145,7 +144,7 @@ class SandboxTerminal(private val client: OrchClient) {
                         socket = null
                     }
                     val message = if (response != null && !response.isSuccessful) {
-                        parseErrorBody(response.code, runCatching { response.body?.string().orEmpty() }.getOrDefault("")).message
+                        parseErrorBody(response.code, runCatching { response.body.string() }.getOrDefault("")).message
                     } else {
                         t.toApiError().message
                     }

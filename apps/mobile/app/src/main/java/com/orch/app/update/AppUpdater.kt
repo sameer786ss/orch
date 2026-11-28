@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -14,7 +15,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -54,7 +54,7 @@ class AppUpdater(private val context: Context) {
             .url("https://github.com/${BuildConfig.ORCH_UPDATE_REPO}/releases.atom")
             .build()
         val feed = http.newCall(feedRequest).execute().use { response ->
-            if (response.isSuccessful) response.body?.string() else null
+            if (response.isSuccessful) response.body.string() else null
         } ?: return@withContext null
         val tag = APP_TAG_REGEX.find(feed)?.groupValues?.getOrNull(1) ?: return@withContext null
 
@@ -63,7 +63,7 @@ class AppUpdater(private val context: Context) {
             .header("Accept", "application/json")
             .build()
         val body = http.newCall(request).execute().use { response ->
-            if (response.isSuccessful) response.body?.string() else null
+            if (response.isSuccessful) response.body.string() else null
         } ?: return@withContext null
         val manifest = runCatching { OrchJson.decodeFromString<ReleaseManifest>(body) }.getOrNull()
             ?: return@withContext null
@@ -90,7 +90,7 @@ class AppUpdater(private val context: Context) {
         val partial = File(directory, target.name + ".part")
         http.newCall(Request.Builder().url(info.apkUrl).build()).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Download failed (HTTP ${response.code}).")
-            val body = response.body ?: throw IOException("Download failed.")
+            val body = response.body
             val total = body.contentLength().takeIf { it > 0 } ?: info.sizeBytes
             var copied = 0L
             body.byteStream().use { input ->
@@ -168,7 +168,7 @@ class AppUpdater(private val context: Context) {
         val expected = runCatching {
             http.newCall(Request.Builder().url(info.checksumUrl).build()).execute().use { response ->
                 if (!response.isSuccessful) return false
-                response.body?.string()?.trim()?.split(Regex("\\s+"))?.firstOrNull()?.lowercase()
+                response.body.string().trim().split(Regex("\\s+")).firstOrNull()?.lowercase()
             }
         }.getOrNull()?.takeIf { it.length == 64 } ?: return false
         val digest = MessageDigest.getInstance("SHA-256")
@@ -187,10 +187,14 @@ class AppUpdater(private val context: Context) {
     private fun isValid(file: File, info: UpdateInfo): Boolean =
         file.isFile && archiveVersion(file) == info.versionCode
 
-    @Suppress("DEPRECATION")
     private fun archiveVersion(file: File): Long? {
         if (!file.isFile || file.extension != "apk") return null
-        val archive = context.packageManager.getPackageArchiveInfo(file.path, 0) ?: return null
+        val archive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageArchiveInfo(file.path, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageArchiveInfo(file.path, 0)
+        } ?: return null
         if (archive.packageName != context.packageName) return null
         return PackageInfoCompat.getLongVersionCode(archive)
     }

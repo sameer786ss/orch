@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -100,7 +99,7 @@ class OrchStream(private val client: OrchClient, cacheDir: File) {
 
                 override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                     val failure = if (response != null && !response.isSuccessful) {
-                        parseErrorBody(response.code, response.body?.string().orEmpty())
+                        parseErrorBody(response.code, response.body.string())
                     } else {
                         t?.toApiError() ?: ApiError(0, "Connection lost.")
                     }

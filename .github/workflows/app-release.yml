@@ -9,7 +9,7 @@ on:
         type: string
 
 concurrency:
-  group: release
+  group: mobile-release
   cancel-in-progress: false
 
 permissions:
@@ -24,6 +24,8 @@ jobs:
         working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v7
+        with:
+          sparse-checkout: apps/mobile
 
       - uses: actions/setup-java@v6
         with:
@@ -43,16 +45,31 @@ jobs:
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           SENTRY_DSN_MOB: ${{ secrets.SENTRY_DSN_MOB }}
         run: |
+          set -euo pipefail
           version="${{ inputs.version }}"
+          if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Invalid version '$version' (expected X.Y.Z)" >&2
+            exit 1
+          fi
+          : "${GOOGLE_SERVICES_JSON_BASE64:?Missing GOOGLE_SERVICES_JSON_BASE64}"
+          : "${RELEASE_KEYSTORE_BASE64:?Missing RELEASE_KEYSTORE_BASE64}"
+          : "${STORE_PASSWORD:?Missing RELEASE_KEYSTORE_PASSWORD}"
+          : "${KEY_ALIAS:?Missing RELEASE_KEY_ALIAS}"
+          : "${KEY_PASSWORD:?Missing RELEASE_KEY_PASSWORD}"
           tag="app-v${version}"
-          IFS=. read -r major minor patch <<< "$version"
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
           export VERSION_NAME="$version"
           export VERSION_CODE=$(( major * 1000000 + minor * 1000 + patch ))
           echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
           echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           export KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
-          gradle :app:assembleRelease
-          cp "$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)" Orch.apk
+          trap 'rm -f app/google-services.json "$RUNNER_TEMP/release.jks"' EXIT
+          gradle :app:assembleRelease --no-watch-fs
+          apk="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$apk"
+          cp "$apk" Orch.apk
           sha256sum Orch.apk > Orch.apk.sha256
           size_bytes=$(stat -c%s Orch.apk)
           cat > app-latest.json <<EOF
@@ -70,6 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           version="${{ inputs.version }}"
           tag="app-v${version}"
           gh release delete "$tag" --yes --cleanup-tag || true
